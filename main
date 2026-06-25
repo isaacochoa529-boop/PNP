@@ -1,0 +1,98 @@
+import pygame
+import sys
+
+pygame.init()
+
+WIDTH = 1000
+HEIGHT = 700
+
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("PNP - Piano Night Playin'")
+
+clock = pygame.time.Clock()
+
+lane_x = WIDTH // 2
+hit_line_y = 550
+
+note_width = 50
+note_height = 50
+note_y = -100
+note_speed = 5
+
+running = True
+
+while running:
+
+    # ---------------- EVENTS ----------------
+    for event in pygame.event.get():
+
+        if event.type == pygame.QUIT:
+            running = False
+
+        if event.type == pygame.KEYDOWN:
+
+            if event.key == pygame.K_SPACE:
+
+                if note_is_hittable:
+                    print("HIT!")
+                    note_y = -100
+
+    # ---------------- UPDATE ----------------
+    note_y += note_speed
+
+    if note_y > HEIGHT:
+        note_y = -100
+
+    note_top = note_y
+    note_bottom = note_y + note_height
+
+    note_is_hittable = (
+        note_top <= hit_line_y and
+        note_bottom >= hit_line_y
+    )
+
+    # ---------------- DRAW ----------------
+    screen.fill((30, 30, 40))
+
+    pygame.draw.rect(
+        screen,
+        (60, 60, 80),
+        (lane_x - 60, 0, 120, HEIGHT)
+    )
+
+    hit_line_color = (
+        (0, 255, 120)
+        if note_is_hittable
+        else (255, 255, 255)
+    )
+
+    pygame.draw.line(
+        screen,
+        hit_line_color,
+        (lane_x - 60, hit_line_y),
+        (lane_x + 60, hit_line_y),
+        4
+    )
+
+    note_color = (
+        (0, 255, 120)
+        if note_is_hittable
+        else (100, 220, 255)
+    )
+
+    pygame.draw.rect(
+        screen,
+        note_color,
+        (
+            lane_x - note_width // 2,
+            note_y,
+            note_width,
+            note_height
+        )
+    )
+
+    pygame.display.flip()
+    clock.tick(60)
+
+pygame.quit()
+sys.exit()
