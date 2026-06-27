@@ -134,6 +134,12 @@ class Game:
                     self.handle_playing_events(event)
 
     def handle_start_events(self, event):
+        if event.key == pygame.K_w:
+           self.toggle_play_mode()
+
+        if event.key == pygame.K_s:
+            self.toggle_play_mode()
+
         if event.key == pygame.K_a or event.key == pygame.K_LEFT:
                self.selected_song_index = (self.selected_song_index - 1) % len(self.songs)
                self.load_selected_song()
@@ -164,6 +170,9 @@ class Game:
                 self.process_calibration_press(pressed_key)
 
     def handle_playing_events(self, event):
+        if event.key == pygame.K_SPACE:
+            self.debug_press_next_note()
+
         if event.key == pygame.K_p:
             self.paused = not self.paused
 
@@ -179,12 +188,24 @@ class Game:
             if pressed_key < len(self.keyboard_notes):
                 self.process_key_press(pressed_key)
 
+    def align_learn_view(self):
+        if self.learn_index >= len(self.notes):
+            return
+
+        target_note = self.notes[self.learn_index]
+        offset = HIT_LINE_Y - target_note.center_y()
+
+        for note in self.notes:
+            note.y += offset
+
     def start_song(self):
         self.reset_stats()
         self.reset_chart()
         self.restart_countdown = 0
         self.paused = False
         self.mode = "playing"
+        if self.play_mode == "learn":
+           self.align_learn_view()
 
     def process_calibration_press(self, pressed_key):
         self.key_flash[pressed_key] = 10
@@ -205,6 +226,20 @@ class Game:
         else:
             pressed_label = self.keyboard_notes[pressed_key]
             self.calibration_message = f"That was {pressed_label}. Need {needed_note}."
+
+    def debug_press_next_note(self):
+        if self.play_mode == "learn":
+            if self.learn_index >= len(self.notes):
+                return
+
+            next_note = self.notes[self.learn_index]
+            self.process_key_press(next_note.lane)
+            return
+
+        for note in self.notes:
+            if not note.hit:
+                self.process_key_press(note.lane)
+                return
 
     def process_key_press(self, pressed_key):
         self.key_flash[pressed_key] = 10
@@ -309,6 +344,9 @@ class Game:
                 self.reset_chart()
 
             return
+        
+        if self.play_mode == "learn":
+           return
 
         for note in self.notes:
             if not note.hit:
@@ -323,16 +361,27 @@ class Game:
 
     def handle_learn_key_press(self, pressed_key):
         if self.learn_index >= len(self.notes):
-           return
+            return
 
         current_note = self.notes[self.learn_index]
 
         if pressed_key == current_note.lane:
-           current_note.hit = True
-           self.register_hit(current_note, 0, 0)
-           self.learn_index += 1
+            current_note.hit = True
+            self.register_hit(current_note, 0, 0)
+            self.learn_index += 1
+            self.align_learn_view()
         else:
-           self.register_miss()
+            self.register_miss()
+
+    def toggle_play_mode(self):
+        if self.play_mode == "practice":
+            self.play_mode = "learn"
+        else:
+            self.play_mode = "practice"
+
+        self.reset_stats()
+        self.reset_chart()
+        self.learn_index = 0
 
     def load_selected_song(self):
         self.current_song = self.songs[self.selected_song_index]

@@ -20,6 +20,10 @@ def draw_start_screen(game):
         True,
         PERFECT_COLOR
     )
+
+    mode = game.font.render(f"Mode: {game.play_mode.title()}", True, WHITE)
+    game.screen.blit(mode, mode.get_rect(center=(WIDTH // 2, 300)))
+
     game.screen.blit(tempo, tempo.get_rect(center=(WIDTH // 2, 260)))
     
     mode_text = f"Mode: {game.play_mode.title()}"
@@ -35,7 +39,8 @@ def draw_start_screen(game):
         "M = Reconnect MIDI",
         "Enter = Key Check",
         "Esc = Quit",
-        "A / D or Left / Right = Change Song", 
+        "A / D or Left / Right = Change Song",
+        "W / S = Change Mode", 
     ]
 
     for i, text in enumerate(controls):

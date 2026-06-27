@@ -73,6 +73,7 @@ class Renderer:
             screen.blit(note_label, note_rect)
 
     def draw_notes(self, screen, game):
+
          if game.restart_countdown > 0:
             return
 
@@ -82,6 +83,9 @@ class Renderer:
 
          for note in game.notes:
              if note.hit:
+                continue
+             
+             if note.y < -NOTE_HEIGHT or note.y > HEIGHT:
                 continue
 
              key_x = game.key_positions[note.lane]
@@ -102,36 +106,40 @@ class Renderer:
              screen.blit(label, label.get_rect(center=note_rect.center))
     
     def draw_learn_notes(self, screen, game):
-        start = game.learn_index
-        end = min(len(game.notes), start + game.learn_visible_count)
-
-        center_x = WIDTH // 2
-        start_y = 120
-
         title = self.font.render("Learn Mode - press the next note", True, WHITE)
-        screen.blit(title, title.get_rect(center=(center_x, 70)))
+        screen.blit(title, title.get_rect(center=(WIDTH // 2, 70)))
 
-        for display_index, note_index in enumerate(range(start, end)):
+        vertical_gap = 58
+
+        for note_index in range(game.learn_index, len(game.notes)):
             note = game.notes[note_index]
+            distance_from_current = note_index - game.learn_index
+
+            y = HIT_LINE_Y - (distance_from_current * vertical_gap)
+
+            if y < -NOTE_HEIGHT or y > HEIGHT:
+                continue
+
             note_name = game.keyboard_notes[note.lane]
 
-            box_width = 120
-            box_height = 45
-            x = center_x - box_width // 2
-            y = start_y + display_index * 58
+            key_x = game.key_positions[note.lane]
+            key_width = game.key_widths[note.lane]
 
-            color = HIT_NOTE_COLOR if display_index == 0 else NOTE_COLOR
-            rect = pygame.Rect(x, y, box_width, box_height)
+            note_width = max(24, key_width - 8)
+            note_x = key_x + key_width // 2 - note_width // 2
 
-            pygame.draw.rect(screen, color, rect, border_radius=10)
-            pygame.draw.rect(screen, (15, 15, 25), rect, 3, border_radius=10)
+            color = HIT_NOTE_COLOR if note_index == game.learn_index else NOTE_COLOR
+            rect = pygame.Rect(note_x, y, note_width, NOTE_HEIGHT)
 
-            label = self.font.render(note_name, True, (15, 15, 25))
+            pygame.draw.rect(screen, color, rect, border_radius=8)
+            pygame.draw.rect(screen, (15, 15, 25), rect, 3, border_radius=8)
+
+            label = self.small_font.render(note_name, True, (15, 15, 25))
             screen.blit(label, label.get_rect(center=rect.center))
 
         if game.learn_index >= len(game.notes):
             done = self.big_font.render("Complete!", True, PERFECT_COLOR)
-            screen.blit(done, done.get_rect(center=(center_x, 260)))
+            screen.blit(done, done.get_rect(center=(WIDTH // 2, 260)))
     
     def draw_ui(self, screen, game):
         total_attempts = game.hits + game.misses
