@@ -93,6 +93,7 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
     <li><b>Turn:</b> right stick. <b>Respawn:</b> B or Y button.</li>
     <li><b>Desktop:</b> WASD, mouse, Space jump, Shift run, E grab/throw, V see yourself, R respawn.</li>
     <li>Grab all 12 glow berries 🫐 as fast as you can!</li>
+    <li><b>Slicing Yard:</b> walk through the glowing portal by the spawn stump. Pull the sword from the stone and slice cubes like butter ⚔️🧈 Green button = more cubes, red = reset. Desktop: E grabs, click swings.</li>
   </ul>
   <div class="row">Ground height (A or X in VR fits it to you exactly):
     <button class="alt" id="btnSize">Small</button>
@@ -109,7 +110,7 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
 <div class="toast" id="toast" style="opacity:0" aria-live="polite"></div>
 
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/", "rapier": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js" } }
 </script>
 <script type="module">
 import * as THREE from 'three';
@@ -1039,6 +1040,7 @@ function toast(msg, secs = 3) { const el = $('toast'); el.textContent = msg; el.
 function updateHud() { $('hudB').textContent = `🫐 ${state.got} / ${BERRIES_TOTAL}`; drawWrist(); }
 
 function respawn() {
+  if (state.area === 'arena') return arenaRespawn();
   rig.position.copy(SPAWN); rig.position.y += state.bodyH - eyeLocal(_e).y + .05;
   state.vel.set(0, 0, 0); state.velBuf.length = 0; state.wasStuck = false;
   hands.forEach(h => { h.stuck = false; h.ready = false; });
@@ -1129,7 +1131,7 @@ function sampleHands(dt) {
       h.lost = (h.lost || 0) + dt;
       h.tracked = h.ready && h.lost < .35;
     }
-    if (!h.tracked) { h.ready = false; h.stuck = false; if (h.holding) dropProp(h); }
+    if (!h.tracked) { h.ready = false; h.stuck = false; if (h.holding || h.sword || h.piece) dropAny(h); }
   }
 }
 // h.target is where the paw's contact point should be. While holding a toy, the toy is the contact point:
@@ -1338,7 +1340,7 @@ function animateWorld(dt, t) {
 addEventListener('keydown', e => {
   state.keys[e.code] = true;
   if (e.code === 'KeyR' && state.mode === 'play') respawn();
-  if (e.code === 'KeyE' && state.mode === 'play' && !state.xr) deskGrab();
+  if (e.code === 'KeyE' && state.mode === 'play' && !state.xr) deskInteract();
   if (e.code === 'KeyV' && state.mode === 'play' && !state.xr) { state.third = !state.third; camera.layers[state.third ? 'enable' : 'disable'](SELF_LAYER); camera.layers[state.third ? 'disable' : 'enable'](FP_LAYER); }
   if (e.code === 'Escape' && state.mode === 'play' && !state.xr) openMenu();
   if (e.key && e.key.length === 1) { state.typed = (state.typed + e.key.toLowerCase()).slice(-4); if (state.typed === 'bonk' && state.mode === 'play') clapParty(); }
@@ -1364,11 +1366,12 @@ canvas.addEventListener('pointerdown', e => {
 addEventListener('pointerup', () => { dragging = false; });
 document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && state.mode === 'play' && !state.xr && !dragging) openMenu(); });
 
-function openMenu() { state.mode = 'menu'; $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true; hands.forEach(h => h.paw.visible = false); }
+function openMenu() { if (state.mode === 'play') state.savedPos = rig.position.clone(); state.mode = 'menu'; $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true; hands.forEach(h => h.paw.visible = false); }
 function startDesktop() {
   audioOn(); state.mode = 'play'; $('menu').hidden = true; $('hud').hidden = false; $('cross').hidden = false;
   camera.position.set(0, state.bodyH, 0);
   if (state.done || (!state.running && state.got === 0)) { resetRun(); respawn(); }
+  else if (state.savedPos) rig.position.copy(state.savedPos);   // the menu's fly-over moved the camera rig; put you back
   try { const r = canvas.requestPointerLock && canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
   toast('🐾 WASD to run, Space to jump, E to grab, V to see yourself!', 4);
 }
@@ -1384,8 +1387,8 @@ for (let i = 0; i < 2; i++) {
   const ctl = renderer.xr.getController(i); rig.add(ctl);
   const xh = renderer.xr.getHand(i); rig.add(xh);
   const h = hands[i]; h.grip = grip; h.xhand = xh; h.ctl = ctl;
-  ctl.addEventListener('squeezestart', () => grabProp(h)); ctl.addEventListener('squeezeend', () => dropProp(h));
-  ctl.addEventListener('selectstart', () => { if (h.src && h.src.hand) grabProp(h); }); ctl.addEventListener('selectend', () => { if (h.src && h.src.hand) dropProp(h); });
+  ctl.addEventListener('squeezestart', () => grabAny(h)); ctl.addEventListener('squeezeend', () => dropAny(h));
+  ctl.addEventListener('selectstart', () => { if (h.src && h.src.hand) grabAny(h); }); ctl.addEventListener('selectend', () => { if (h.src && h.src.hand) dropAny(h); });
   ctl.addEventListener('connected', e => { h.src = e.data; h.side = e.data.handedness === 'left' ? 'left' : 'right'; setSide(h); if (h.side === 'left') hands[i].paw.add(wrist.mesh); });
   ctl.addEventListener('disconnected', () => { h.src = null; h.stuck = false; h.paw.visible = false; });
 }
@@ -1458,8 +1461,9 @@ function update(dt) {
   tAll += dt;
   if (state.mode === 'play') {
     if (state.xr || sim.on) { pollGamepads(); stepArms(dt); } else stepDesktop(dt);
-    if (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45) respawn();
+    if (state.area === 'arena' ? rig.position.y < -14 : (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45)) respawn();
     stepProps(dt);
+    stepArena(dt);
     poseAvatar(dt);
     collectCheck();
     if (state.running) { state.time += dt; $('hudT').textContent = fmtTime(state.time); const s = Math.floor(state.time); if (state.xr && s !== lastWristSec) { lastWristSec = s; drawWrist(); } }
@@ -1467,7 +1471,7 @@ function update(dt) {
     AV.root.visible = false; AV.fpRoot.visible = false; if (AV.head) AV.head.visible = false; AV.arms.forEach(a => a.up.visible = a.fore.visible = a.elbow.visible = false);
     rig.position.set(Math.sin(tAll * .05) * 14, 3, Math.cos(tAll * .05) * 14); rig.rotation.y = tAll * .05; camera.rotation.set(-.12, 0, 0);
   }
-  animateWorld(dt, tAll); stepFx(dt);
+  animateWorld(dt, tAll); animPortals(dt, tAll); stepFx(dt);
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').style.opacity = 0; }
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
@@ -1476,9 +1480,823 @@ function update(dt) {
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
 window.__kg.start = () => { state.mode = 'play'; $('menu').hidden = true; resetRun(); respawn(); };
+window.__kg.renderOnce = () => renderer.render(scene, camera); window.__kg.scene = scene;
 window.__kg.respawn = respawn; window.__kg.props = props; window.__kg.grab = grabProp; window.__kg.drop = dropProp; window.__kg.pawHit = pawHit; window.__kg.tris = tris;
 updateHud();
 renderer.setAnimationLoop(() => { if (window.__kg.paused) return; update(Math.min(.05, clock.getDelta())); selfie.update(); renderer.render(scene, camera); });
+
+/* ======================================================================
+   THE SLICING YARD: a flat baseplate floating in the sky, reached through the
+   glowing portal next to the spawn stump. A sword in a stone, five cubes on
+   pedestals, a green SPAWN and a red RESET button.
+   Cubes really get cut: the mesh is split along the plane the blade swept
+   through, both halves get a cap face, and every piece is a Rapier rigid body.
+   ====================================================================== */
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+const ARENA = V(400, 0, 0);                 // far past the grove's view distance, so only one place renders at a time
+const GROVE_PORTAL = V(3.8, 0, 2.6);
+const AR_SPAWN = V(0, 0, 4.6);             // everything below is arena-local
+const AR_PORTAL = V(0, 0, 6.8);
+const CUBE = .22, MAX_PIECES = 70, MIN_VOL = 1.0e-6, MIN_THICK = .012;
+const BLADE_A = V(0, .115, 0), BLADE_B = V(0, .735, 0);   // sword-local blade line, guard to tip
+const SWING_T = .24, RETURN_T = .16;
+state.area = 'grove';
+
+const arena = new THREE.Group(); arena.position.copy(ARENA); scene.add(arena); arena.updateMatrixWorld(true);
+const AR = { R: null, world: null, ready: false, failed: false, pieces: [], portalCool: 0, swing: { t: 2, r: 2, dir: -1, queued: false }, snap: true,
+  btnT: [0, 0], greenTimes: [], bladeOk: false, bladeV: V(), b0: V(), t0: V(), b1: V(), t1: V(), cuts: 0, spawnQ: [], cutQ: [] };
+const pmrem = new THREE.PMREMGenerator(renderer);
+const ENV = pmrem.fromScene(new RoomEnvironment(), .04).texture;
+const _a1 = V(), _a2 = V(), _a3 = V(), _a4 = V(), _a5 = V(), _aq = new THREE.Quaternion(), _aq2 = new THREE.Quaternion();
+
+/* ---------- little helpers ---------- */
+const labelFns = [];
+function labelTex(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d');
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const redraw = () => { g.clearRect(0, 0, w, h); draw(g, w, h); t.needsUpdate = true; };
+  redraw(); labelFns.push(redraw); return t;
+}
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => labelFns.forEach(f => f()));
+function signText(g, w, h, lines, bg, border) {
+  g.fillStyle = bg; g.beginPath(); g.roundRect(6, 6, w - 12, h - 12, 28); g.fill();
+  g.lineWidth = 8; g.strokeStyle = border; g.stroke();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  lines.forEach(([txt, size, col, y]) => { g.font = `${size}px "Lilita One", Impact, sans-serif`; g.lineWidth = size / 7; g.strokeStyle = 'rgba(0,0,0,.35)'; g.strokeText(txt, w / 2, y); g.fillStyle = col; g.fillText(txt, w / 2, y); });
+}
+const smat = (color, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: .6, flatShading: false }, o));
+function part(geo, m, x = 0, y = 0, z = 0, parent) { const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); me.castShadow = true; me.receiveShadow = true; if (parent) parent.add(me); return me; }
+
+/* ======================= the baseplate ======================= */
+{
+  const tex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
+    g.fillStyle = '#a7afb9'; g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 1400; i++) { g.fillStyle = `rgba(${rnd() < .5 ? '255,255,255' : '20,30,40'},${.025 + rnd() * .04})`; g.fillRect(rnd() * 256, rnd() * 256, 2, 2); }
+    g.strokeStyle = 'rgba(60,68,80,.6)'; g.lineWidth = 5; g.strokeRect(2.5, 2.5, 251, 251);
+    g.strokeStyle = 'rgba(255,255,255,.22)'; g.lineWidth = 2; g.strokeRect(8, 8, 240, 240);
+    [[20, 20], [236, 20], [20, 236], [236, 236]].forEach(([x, y]) => { g.fillStyle = 'rgba(60,68,80,.35)'; g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill(); });   // bolt heads
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(18, 18); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+  })();
+  const top = new THREE.MeshStandardMaterial({ map: tex, roughness: .88 }), side = smat(0x6a7380, { roughness: .8 });
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(36, 1, 36), [side, side, top, side, side, side]); plate.position.y = -.5; plate.receiveShadow = true; arena.add(plate);
+  // hazard-stripe trim round the edge
+  const st = (() => { const c = document.createElement('canvas'); c.width = 128; c.height = 32; const g = c.getContext('2d'); g.fillStyle = '#ffcf33'; g.fillRect(0, 0, 128, 32); g.fillStyle = '#2a2a30';
+    for (let x = -32; x < 160; x += 32) { g.beginPath(); g.moveTo(x, 32); g.lineTo(x + 16, 32); g.lineTo(x + 32, 0); g.lineTo(x + 16, 0); g.fill(); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping; t.repeat.set(36, 1); t.colorSpace = THREE.SRGBColorSpace; return t; })();
+  const trimM = new THREE.MeshStandardMaterial({ map: st, roughness: .6 });
+  for (let k = 0; k < 4; k++) { const tr = new THREE.Mesh(new THREE.BoxGeometry(36.3, .06, .22), trimM); const a = k * Math.PI / 2; tr.position.set(Math.sin(a) * 18.04, .03, Math.cos(a) * 18.04); tr.rotation.y = a; tr.receiveShadow = true; arena.add(tr); }
+  // a rocky underside so it reads as a floating island when you peek over the edge
+  const under = new THREE.Mesh(new THREE.CylinderGeometry(25.2, 5, 9, 4, 3), smat(0x59606b, { flatShading: true, roughness: 1 }));
+  under.rotation.y = Math.PI / 4; under.position.y = -5.5; arena.add(under);
+  const lump = mat(0x6f7781);
+  for (let i = 0; i < 9; i++) { const r = new THREE.Mesh(new THREE.DodecahedronGeometry(1.5 + rnd() * 2, 0), lump); const a = rnd() * 6.28, d = 4 + rnd() * 9; r.position.set(Math.cos(a) * d, -9 - rnd() * 3, Math.sin(a) * d); arena.add(r); }
+  addCol({ t: 0, x: ARENA.x, y: -.5, z: ARENA.z, hx: 18, hy: .5, hz: 18, tag: 'rock' });
+  // big sign at the far side of the cubes
+  const sg = new THREE.Group(); sg.position.set(0, 0, .6); arena.add(sg);
+  const tex2 = labelTex(1024, 256, (g, w, h) => signText(g, w, h, [['⚔️ THE SLICING YARD 🧈', 104, '#ffd25a', 132]], 'rgba(22,30,44,.92)', '#3fe0bd'));
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(2.6, .65), new THREE.MeshBasicMaterial({ map: tex2, transparent: true })); board.position.set(0, 1.55, .03); sg.add(board);
+  const back = part(new THREE.BoxGeometry(2.72, .76, .05), smat(0x2b3446, { roughness: .5 }), 0, 1.55, 0, sg);
+  const postM = smat(0x8c96a4, { metalness: .6, roughness: .35 });
+  [-1.1, 1.1].forEach(x => { part(new THREE.CylinderGeometry(.04, .05, 1.6, 12), postM, x, .8, -.04, sg); part(new THREE.SphereGeometry(.07, 14, 10), mat(0x3fe0bd, { emissive: 0x3fe0bd, emissiveIntensity: .7, flatShading: false }), x, 1.98, -.04, sg); });
+}
+
+/* ======================= portals ======================= */
+const portalMat = (c1, c2) => new THREE.ShaderMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
+  uniforms: { t: { value: 0 }, c1: { value: new THREE.Color(c1) }, c2: { value: new THREE.Color(c2) } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }',
+  fragmentShader: 'uniform float t; uniform vec3 c1; uniform vec3 c2; varying vec2 vUv; void main(){ vec2 p = vUv*2.-1.; float r = length(p); float a = atan(p.y,p.x); float s = sin(a*5. + r*13. - t*3.2)*.5+.5; float s2 = sin(a*3. - r*9. + t*2.1)*.5+.5; vec3 col = mix(c1, c2, s*.7+s2*.3) + (1.-r)*(1.-r)*.55; gl_FragColor = vec4(col, smoothstep(1.,.86,r)*.9); }' });
+const portals = [];
+function makePortal(pos, yaw, text, c1, c2, worldPos) {
+  const g = new THREE.Group(); g.position.copy(pos); g.rotation.y = yaw;
+  const stone = smat(0xc9ced6, { roughness: .7 }), gold = new THREE.MeshStandardMaterial({ color: 0xffc54a, metalness: 1, roughness: .3, envMap: ENV });
+  part(new THREE.CylinderGeometry(1.05, 1.15, .12, 32), stone, 0, .06, 0, g);
+  part(new THREE.CylinderGeometry(.9, .95, .05, 32), smat(0x8a93a0), 0, .145, 0, g);
+  const ring = part(new THREE.TorusGeometry(.86, .085, 14, 56), stone, 0, 1.0, 0, g);
+  part(new THREE.TorusGeometry(.95, .02, 8, 56), gold, 0, 1.0, 0, g); part(new THREE.TorusGeometry(.77, .02, 8, 56), gold, 0, 1.0, 0, g);
+  const runeM = new THREE.MeshStandardMaterial({ color: c1, emissive: c1, emissiveIntensity: .9 });
+  for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2; const b = part(new THREE.BoxGeometry(.07, .12, .2), runeM, Math.cos(a) * .86, 1.0 + Math.sin(a) * .86, 0, g); b.rotation.z = a; }
+  [-1, 1].forEach(s => { const f = part(new THREE.BoxGeometry(.22, .2, .3), stone, s * .55, .24, 0, g); f.rotation.z = s * .3; });
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(.8, 48), portalMat(c1, c2)); disc.position.y = 1.0; g.add(disc);
+  const tex = labelTex(512, 128, (cg, w, h) => signText(cg, w, h, [[text, 54, '#ffffff', 66]], 'rgba(22,30,44,.9)', '#' + new THREE.Color(c1).getHexString()));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.3, .325), new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })); sign.position.set(0, 2.15, 0); g.add(sign);
+  const sparks = []; const sm = new THREE.MeshBasicMaterial({ color: c2 });
+  for (let k = 0; k < 10; k++) { const s = new THREE.Mesh(new THREE.OctahedronGeometry(.035, 0), sm); g.add(s); sparks.push({ s, a: k / 10 * 6.283, sp: .6 + rnd() * .6, r: .95 + rnd() * .25, y: rnd() }); }
+  const P = { g, disc, sparks, ring, world: worldPos };
+  portals.push(P); return P;
+}
+const portalGrove = makePortal(GROVE_PORTAL, Math.atan2(-GROVE_PORTAL.x, -GROVE_PORTAL.z), 'SLICING YARD ⚔️', 0x3fe0bd, 0x8b6bff); scene.add(portalGrove.g); portalGrove.g.updateMatrixWorld(true);
+addCol({ t: 1, x: GROVE_PORTAL.x, z: GROVE_PORTAL.z, cy: .06, hy: .06, r: 1.1, tag: 'rock' });
+const portalYard = makePortal(AR_PORTAL, Math.PI, 'BACK TO THE GROVE 🌳', 0x6fdc4f, 0xffd25a); arena.add(portalYard.g); portalYard.g.updateMatrixWorld(true);
+addCol({ t: 1, x: ARENA.x + AR_PORTAL.x, z: ARENA.z + AR_PORTAL.z, cy: .06, hy: .06, r: 1.1, tag: 'rock' });
+
+/* ======================= pedestals for the cubes ======================= */
+const PEDS = [-50, -25, 0, 25, 50].map(a => { const r = a * Math.PI / 180; return V(Math.sin(r) * 1.8, 0, AR_SPAWN.z - .2 - Math.cos(r) * 1.8); });
+const PED_TOP = .3;
+{
+  const stone = smat(0xe3e6eb, { roughness: .55 }), dark = smat(0x4f5866, { roughness: .45, metalness: .3 });
+  const glow = new THREE.MeshBasicMaterial({ color: 0x7ff0ff });
+  const g1 = new THREE.CylinderGeometry(.21, .23, .05, 24), g2 = new THREE.CylinderGeometry(.17, .19, .03, 24), g3 = new THREE.CylinderGeometry(.11, .12, .17, 18),
+    g4 = new THREE.CylinderGeometry(.19, .15, .035, 24), g5 = new THREE.CylinderGeometry(.2, .2, .03, 28), gf = new THREE.BoxGeometry(.016, .16, .016), gr = new THREE.TorusGeometry(.2, .008, 6, 40);
+  PEDS.forEach(p => {
+    const g = new THREE.Group(); g.position.copy(p); arena.add(g);
+    part(g1, dark, 0, .025, 0, g); part(g2, stone, 0, .065, 0, g); part(g3, stone, 0, .165, 0, g);
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; part(gf, dark, Math.cos(a) * .116, .165, Math.sin(a) * .116, g); }   // flutes
+    part(g4, stone, 0, .2675, 0, g); part(g5, dark, 0, .285, 0, g);
+    const r = new THREE.Mesh(gr, glow); r.rotation.x = Math.PI / 2; r.position.y = .3; g.add(r);
+    addCol({ t: 1, x: ARENA.x + p.x, z: ARENA.z + p.z, cy: .15, hy: .15, r: .2, tag: 'rock' });
+  });
+}
+
+/* ======================= the button console ======================= */
+const CONSOLE = V(1.7, 0, AR_SPAWN.z + .35);
+const buttons = [];
+{
+  const g = new THREE.Group(); g.position.copy(CONSOLE); g.rotation.y = Math.atan2(AR_SPAWN.x - CONSOLE.x, AR_SPAWN.z - CONSOLE.z); arena.add(g);
+  const body = smat(0x37506e, { roughness: .45, metalness: .35, envMap: ENV, envMapIntensity: .5 }), dark = smat(0x1e2633, { roughness: .5 }), steel = new THREE.MeshStandardMaterial({ color: 0xc9d2dc, metalness: 1, roughness: .25, envMap: ENV });
+  part(new THREE.BoxGeometry(.62, .28, .36), body, 0, .16, 0, g);
+  part(new THREE.BoxGeometry(.66, .03, .4), dark, 0, .315, 0, g);
+  part(new THREE.BoxGeometry(.5, .16, .01), dark, 0, .15, .181, g);   // front panel inset
+  for (let k = 0; k < 4; k++) part(new THREE.BoxGeometry(.4, .012, .012), steel, 0, .1 + k * .035, .188, g);   // vent slats
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([x, z]) => part(new THREE.CylinderGeometry(.03, .035, .03, 12), dark, x * .27, .015, z * .15, g));
+  // blinking beacon on a little mast
+  part(new THREE.CylinderGeometry(.008, .008, .2, 8), steel, .27, .42, -.14, g);
+  const beacon = part(new THREE.SphereGeometry(.025, 14, 10), new THREE.MeshStandardMaterial({ color: 0xffd25a, emissive: 0xffd25a, emissiveIntensity: 1 }), .27, .53, -.14, g);
+  [['SPAWN', 0x36e06a, '#5dff8f', -.15], ['RESET', 0xff4057, '#ff7a8a', .15]].forEach(([name, col, css, x], i) => {
+    part(new THREE.CylinderGeometry(.085, .092, .03, 28), dark, x, .345, 0, g);
+    const ring = part(new THREE.TorusGeometry(.08, .009, 8, 36), steel, x, .36, 0, g); ring.rotation.x = Math.PI / 2;
+    const cap = new THREE.Group(); cap.position.set(x, .36, 0); g.add(cap);
+    const cm = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: .35, roughness: .25, envMap: ENV, envMapIntensity: .6 });
+    part(new THREE.CylinderGeometry(.066, .068, .028, 28), cm, 0, .014, 0, cap);
+    const dome = part(new THREE.SphereGeometry(.066, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2), cm, 0, .028, 0, cap); dome.scale.y = .38;
+    const tex = labelTex(256, 96, (cg, w, h) => signText(cg, w, h, [[name, 52, css, 50]], 'rgba(14,20,30,.95)', css));
+    const lab = new THREE.Mesh(new THREE.PlaneGeometry(.17, .064), new THREE.MeshBasicMaterial({ map: tex, transparent: true })); lab.position.set(x, .272, .183); g.add(lab);
+    buttons.push({ i, cap, cm, top: V(), down: 0, g });
+  });
+  g.updateMatrixWorld(true);
+  buttons.forEach(b => { b.cap.getWorldPosition(b.top); b.top.y += .04; });
+  AR.beacon = beacon;
+  AR.consoleG = g;
+  addCol({ t: 0, x: ARENA.x + CONSOLE.x, y: .165, z: ARENA.z + CONSOLE.z, hx: .33, hy: .165, hz: .2, yaw: g.rotation.y, tag: 'wood' });
+}
+
+/* ======================= the sword ======================= */
+const runeTex = (() => {
+  const c = document.createElement('canvas'); c.width = 32; c.height = 512; const g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, 32, 512); g.strokeStyle = '#fff'; g.lineWidth = 2.4; g.lineCap = 'round'; g.shadowColor = '#fff'; g.shadowBlur = 5;
+  for (let i = 0; i < 13; i++) {           // made-up glyphs, a few strokes each
+    const cy = 50 + i * 33;
+    g.beginPath();
+    for (let s = 0; s < 3 + (i % 2); s++) { const x0 = 8 + rnd() * 16, y0 = cy - 10 + rnd() * 20, x1 = 8 + rnd() * 16, y1 = cy - 10 + rnd() * 20; g.moveTo(x0, y0); if (rnd() < .4) g.arc(16, cy, 5 + rnd() * 4, rnd() * 3, 2 + rnd() * 3); else g.lineTo(x1, y1); }
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+function makeSword() {
+  const g = new THREE.Group();
+  const steel = new THREE.MeshStandardMaterial({ color: 0xdfe6ee, metalness: 1, roughness: .2, envMap: ENV, envMapIntensity: 1.1 });
+  const edge = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: .06, envMap: ENV, envMapIntensity: 1.5 });
+  const fullerM = new THREE.MeshStandardMaterial({ color: 0x9aa7b6, metalness: 1, roughness: .32, envMap: ENV, emissive: 0x47e6ff, emissiveMap: runeTex, emissiveIntensity: 1.4 });
+  const gold = new THREE.MeshStandardMaterial({ color: 0xffc54a, metalness: 1, roughness: .26, envMap: ENV, envMapIntensity: 1.2 });
+  const leather = new THREE.MeshStandardMaterial({ color: 0x6b3a22, roughness: .85 });
+  const cord = new THREE.MeshStandardMaterial({ color: 0x2d1a10, roughness: .9 });
+  const gem = new THREE.MeshStandardMaterial({ color: 0x47e6ff, emissive: 0x20b8e6, emissiveIntensity: .9, roughness: .08, metalness: .1, envMap: ENV });
+  const gemR = new THREE.MeshStandardMaterial({ color: 0xff4f8a, emissive: 0xd0204f, emissiveIntensity: .7, roughness: .08, envMap: ENV });
+  /* blade: a lofted diamond cross-section with bevelled edges and a rune-lit fuller, tapering to a point */
+  const L = BLADE_B.y - BLADE_A.y, RINGS = 30;
+  const wAt = s => { const w84 = .029 - .007 * .84; if (s < .84) return .029 - .007 * s; const u = (s - .84) / .16; return w84 * Math.pow(Math.max(0, 1 - u), .8) * (1 + .3 * u * (1 - u)); };
+  const tAt = s => (.0095 - .0045 * s) * (s < .84 ? 1 : Math.max(.15, 1 - (s - .84) / .16));
+  const fullerAt = s => { const a = clamp((s - .03) / .05, 0, 1) * clamp((.7 - s) / .08, 0, 1); return a * a * (3 - 2 * a); };
+  const prof = s => {
+    const w = wAt(s), t = tAt(s), fz = .5 * t - .22 * t * fullerAt(s), fw = .17 * w;
+    return [[w, 0], [.6 * w, .5 * t], [.3 * w, .5 * t], [fw, fz], [-fw, fz], [-.3 * w, .5 * t], [-.6 * w, .5 * t], [-w, 0], [-.6 * w, -.5 * t], [-.3 * w, -.5 * t], [-fw, -fz], [fw, -fz], [.3 * w, -.5 * t], [.6 * w, -.5 * t]];
+  };
+  const kindOf = k => (k === 0 || k === 6 || k === 7 || k === 13) ? 0 : (k === 3 || k === 10) ? 2 : 1;   // 0 edge, 1 flat steel, 2 fuller
+  const bufs = [[], [], []].map(() => ({ p: [], uv: [], idx: [] }));
+  const ss = []; for (let i = 0; i <= RINGS; i++) { const u = i / RINGS; ss.push(u < .75 ? u * .84 / .75 : .84 + (u - .75) / .25 * .16); }
+  const rings = ss.map(prof);
+  for (let k = 0; k < 14; k++) {
+    const b = bufs[kindOf(k)], base = b.p.length / 3;
+    for (let i = 0; i <= RINGS; i++) {
+      const y = BLADE_A.y + ss[i] * L, A = rings[i][k], B = rings[i][(k + 1) % 14];
+      b.p.push(A[0], y, A[1], B[0], y, B[1]); b.uv.push(0, ss[i] / .72, 1, ss[i] / .72);
+    }
+    for (let i = 0; i < RINGS; i++) { const a = base + i * 2; b.idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+  }
+  [edge, steel, fullerM].forEach((m, i) => {
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(bufs[i].p, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(bufs[i].uv, 2)); geo.setIndex(bufs[i].idx);
+    geo.computeVertexNormals(); part(geo, m, 0, 0, 0, g);
+  });
+  // base cap of the blade (hidden under the guard, but keeps it closed)
+  { const sh = new THREE.Shape(); rings[0].forEach(([x, z], i) => i ? sh.lineTo(x, z) : sh.moveTo(x, z)); const cg = new THREE.ShapeGeometry(sh); cg.rotateX(Math.PI / 2); part(cg, steel, 0, BLADE_A.y, 0, g); }
+  // langets: little gold tongues hugging the blade above the guard
+  [1, -1].forEach(s => { const l = part(new THREE.ConeGeometry(.013, .045, 3), gold, 0, .135, s * .0052, g); l.scale.z = .25; });
+  /* crossguard: curved quillons with ball finials and a gem-set centre block */
+  const qc = new THREE.CatmullRomCurve3([V(-.128, .142, 0), V(-.104, .113, 0), V(-.055, .099, 0), V(0, .096, 0), V(.055, .099, 0), V(.104, .113, 0), V(.128, .142, 0)]);
+  part(new THREE.TubeGeometry(qc, 48, .0095, 10), gold, 0, 0, 0, g);
+  [-1, 1].forEach(s => {
+    part(new THREE.SphereGeometry(.0165, 16, 12), gold, s * .13, .146, 0, g);
+    const tip = part(new THREE.ConeGeometry(.007, .022, 10), gold, s * .137, .165, 0, g); tip.rotation.z = -s * .45;
+  });
+  const blk = part(new THREE.CylinderGeometry(.027, .027, .024, 6), gold, 0, .1, 0, g); blk.rotation.x = Math.PI / 2;
+  [1, -1].forEach(s => {
+    const gm = part(new THREE.SphereGeometry(.0115, 16, 10), gemR, 0, .1, s * .0115, g); gm.scale.z = .55;
+    const rr = part(new THREE.TorusGeometry(.0125, .0022, 6, 20), gold, 0, .1, s * .0118, g);
+  });
+  /* grip: a waisted leather handle with a spiral cord wrap and gold ferrules */
+  const gpts = []; for (let i = 0; i <= 12; i++) { const y = -.085 + i / 12 * .17; gpts.push(new THREE.Vector2(.0152 + .0028 * Math.sin(Math.PI * i / 12), y)); }
+  part(new THREE.LatheGeometry(gpts, 20), leather, 0, 0, 0, g);
+  const hp = []; for (let i = 0; i <= 140; i++) { const u = i / 140, y = -.079 + u * .158, a = u * Math.PI * 2 * 6.5, r = .0154 + .0028 * Math.sin(Math.PI * (y + .085) / .17) + .0012; hp.push(V(Math.cos(a) * r, y, Math.sin(a) * r)); }
+  part(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hp), 220, .0021, 5), cord, 0, 0, 0, g);
+  [.087, -.087].forEach(y => { part(new THREE.CylinderGeometry(.0196, .0196, .012, 20), gold, 0, y, 0, g); const bd = part(new THREE.TorusGeometry(.0196, .0022, 6, 22), gold, 0, y + Math.sign(y) * .006, 0, g); bd.rotation.x = Math.PI / 2; });
+  /* pommel: a gold bulb with a ring and gems */
+  const pp = [[.0, -.0915], [.012, -.092], [.022, -.098], [.029, -.11], [.027, -.124], [.018, -.135], [.007, -.1405], [0, -.141]].map(([r, y]) => new THREE.Vector2(r, y));
+  part(new THREE.LatheGeometry(pp, 24), gold, 0, 0, 0, g);
+  const prg = part(new THREE.TorusGeometry(.0293, .0028, 8, 30), gold, 0, -.11, 0, g); prg.rotation.x = Math.PI / 2;
+  part(new THREE.SphereGeometry(.0075, 12, 8), gem, 0, -.141, 0, g);
+  [1, -1].forEach(s => { const pg = part(new THREE.SphereGeometry(.0085, 12, 8), gem, 0, -.112, s * .027, g); pg.scale.z = .5; });
+  return g;
+}
+const sword = { g: makeSword(), held: null, mode: 'stone', body: null, pq: new THREE.Quaternion(), ppos: V(), av: V(), lv: V() };
+arena.add(sword.g);
+const STONE = V(-1.7, 0, AR_SPAWN.z + .35);
+{
+  const g = new THREE.Group(); g.position.copy(STONE); arena.add(g);
+  const rock = mat(0x8e959e), moss = mat(0x58b84a);
+  const b = part(new THREE.DodecahedronGeometry(.38, 1), rock, 0, .12, 0, g); b.scale.set(1, .55, .9);
+  [[.33, .05, .15, .12], [-.3, .04, -.2, .1], [.1, .03, -.34, .08], [-.18, .04, .3, .09]].forEach(([x, y, z, r]) => part(new THREE.DodecahedronGeometry(r, 0), rock, x, y, z, g));
+  [[.13, .3, .1, .06], [-.15, .29, -.06, .05], [.21, .23, -.15, .045], [-.05, .31, .16, .04], [-.24, .22, .12, .045]].forEach(([x, y, z, r]) => { const m = part(new THREE.SphereGeometry(r, 10, 8), moss, x, y, z, g); m.scale.y = .35; });
+  // a wooden "PULL!" sign
+  const tex = labelTex(256, 128, (cg, w, h) => signText(cg, w, h, [['PULL ME!', 56, '#ffd25a', 66]], 'rgba(92,58,30,.98)', '#3a2412'));
+  const sg = new THREE.Mesh(new THREE.PlaneGeometry(.3, .15), new THREE.MeshBasicMaterial({ map: tex, transparent: true })); sg.position.set(.05, .42, .42); sg.rotation.y = .25; g.add(sg);
+  part(new THREE.CylinderGeometry(.012, .012, .36, 8), mat(0x6b4426), .05, .18, .4, g);
+  addCol({ t: 1, x: ARENA.x + STONE.x, z: ARENA.z + STONE.z, cy: .16, hy: .16, r: .34, tag: 'rock' });
+}
+const STONE_POSE = { p: V().copy(STONE).add(V(0, .53, 0)), q: new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI, .7, .07)) };
+function swordToStone() {
+  if (sword.body) { AR.world.removeRigidBody(sword.body); sword.body = null; }
+  if (sword.held) { sword.held.sword = false; sword.held = null; }
+  sword.mode = 'stone'; sword.g.position.copy(STONE_POSE.p); sword.g.quaternion.copy(STONE_POSE.q); AR.bladeOk = false;
+}
+swordToStone();
+
+/* trail behind the blade when you swing fast */
+const TRAIL_N = 16;
+const trail = (() => {
+  const pos = new Float32Array(TRAIL_N * 2 * 3), al = new Float32Array(TRAIL_N * 2), idx = [];
+  for (let i = 0; i < TRAIL_N - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('a', new THREE.BufferAttribute(al, 1)); geo.setIndex(idx);
+  const m = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false,
+    uniforms: { col: { value: new THREE.Color(0x9ff4ff) } },
+    vertexShader: 'attribute float a; varying float va; void main(){ va = a; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }',
+    fragmentShader: 'uniform vec3 col; varying float va; void main(){ gl_FragColor = vec4(col * va, va); }' });
+  const mesh = new THREE.Mesh(geo, m); mesh.frustumCulled = false; arena.add(mesh);
+  return { mesh, pos, al, geo, hist: [], k: 0 };
+})();
+
+/* ======================= cubes and their pieces ======================= */
+const KINDS = [
+  { out: 0xff4f6d, ins: 0xffd9df }, { out: 0xff9a3c, ins: 0xffe9c9 }, { out: 0x5fd94a, ins: 0xebffd9 },
+  { out: 0x3fb2ff, ins: 0xdaf2ff }, { out: 0x9a6bff, ins: 0xf0e6ff }, { out: 0xffd84f, ins: 0xfff6c9, butter: true }];
+function cubeMat(k) {
+  const m = new THREE.MeshStandardMaterial({ color: k.out, roughness: .32, envMap: ENV, envMapIntensity: .45 });
+  const ins = new THREE.Color(k.ins);
+  // cut faces (orig.w = 1) show the inside: a soft swirl with a thin rind of the outer colour round the edge
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uIns = { value: ins }; sh.uniforms.uHalf = { value: CUBE / 2 };
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec4 orig; varying vec4 vOrig;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvOrig = orig;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec3 uIns; uniform float uHalf; varying vec4 vOrig;')
+      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `vec4 diffuseColor = vec4( diffuse, opacity );
+        if (vOrig.w > .5) {
+          vec3 o = vOrig.xyz; float mx = max(abs(o.x), max(abs(o.y), abs(o.z)));
+          float sw = sin(o.x * 61. + sin(o.y * 47. + o.z * 13.) * 2.4 + o.z * 39.) * .5 + .5;
+          float rind = smoothstep(uHalf - .017, uHalf - .008, mx);
+          diffuseColor.rgb = mix(uIns * (.92 + .12 * sw), diffuse * .92, rind);
+        }`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, .72, step(.5, vOrig.w));');
+  };
+  m.customProgramCacheKey = () => 'kgCubeCut';
+  return m;
+}
+const cubeMats = KINDS.map(cubeMat);
+// triangle soups: vis = [px py pz nx ny nz ox oy oz cap] per vertex (S = 10), phys = sharp box [px py pz] (S = 3)
+const VIS_TPL = (() => {
+  const rb = new RoundedBoxGeometry(CUBE, CUBE, CUBE, 2, .026), g = rb.index ? rb.toNonIndexed() : rb, p = g.attributes.position, n = g.attributes.normal, out = new Float32Array(p.count * 10);
+  for (let i = 0; i < p.count; i++) out.set([p.getX(i), p.getY(i), p.getZ(i), n.getX(i), n.getY(i), n.getZ(i), p.getX(i), p.getY(i), p.getZ(i), 0], i * 10);
+  return out;
+})();
+const PHYS_TPL = (() => { const p = new THREE.BoxGeometry(CUBE, CUBE, CUBE).toNonIndexed().attributes.position; return Float32Array.from(p.array); })();
+
+/* ---- the cutter: split a convex triangle soup by the plane n.p = d, and cap both halves ---- */
+const EPS = 1e-6;
+function splitSoup(v, S, n, d) {
+  // flat number arrays out, no per-vertex objects: cutting has to fit inside one VR frame
+  const nt = v.length / (3 * S), outs = [[], []], capPts = [], nx = n.x, ny = n.y, nz = n.z;
+  const ds = [0, 0, 0], bs = [0, 0, 0], cross = [null, null, null];
+  const pushV = (o, b) => { for (let i = 0; i < S; i++) o.push(v[b + i]); };
+  const pushA = (o, a) => { for (let i = 0; i < S; i++) o.push(a[i]); };
+  const lerpV = (a, b, t) => { const r = new Array(S); for (let i = 0; i < S; i++) r[i] = v[a + i] + (v[b + i] - v[a + i]) * t; if (S >= 6) { const L = Math.hypot(r[3], r[4], r[5]) || 1; r[3] /= L; r[4] /= L; r[5] /= L; } return r; };
+  for (let t = 0; t < nt; t++) {
+    let pos = 0, neg = 0;
+    for (let k = 0; k < 3; k++) {
+      const b = bs[k] = (t * 3 + k) * S, dd = ds[k] = nx * v[b] + ny * v[b + 1] + nz * v[b + 2] - d;
+      if (dd > EPS) pos++; else if (dd < -EPS) neg++; else capPts.push(Array.prototype.slice.call(v, b, b + S));
+    }
+    if (!pos && !neg) {   // lies in the plane: give it to the half it faces away from
+      const a = bs[0], b = bs[1], c = bs[2];
+      const ax = v[b] - v[a], ay = v[b + 1] - v[a + 1], az = v[b + 2] - v[a + 2], bx = v[c] - v[a], by = v[c + 1] - v[a + 1], bz = v[c + 2] - v[a + 2];
+      const o = outs[((ay * bz - az * by) * nx + (az * bx - ax * bz) * ny + (ax * by - ay * bx) * nz) > 0 ? 0 : 1];
+      pushV(o, a); pushV(o, b); pushV(o, c); continue;
+    }
+    if (!neg || !pos) { const o = outs[neg ? 0 : 1]; pushV(o, bs[0]); pushV(o, bs[1]); pushV(o, bs[2]); continue; }
+    for (let k = 0; k < 3; k++) {
+      const k2 = (k + 1) % 3; cross[k] = null;
+      if ((ds[k] > EPS && ds[k2] < -EPS) || (ds[k] < -EPS && ds[k2] > EPS)) { const p = lerpV(bs[k], bs[k2], ds[k] / (ds[k] - ds[k2])); cross[k] = p; capPts.push(p); }
+    }
+    for (let side = 0; side < 2; side++) {
+      const sg = side ? 1 : -1, poly = [];   // entries: a number = index into v, an array = new point
+      for (let k = 0; k < 3; k++) { if (ds[k] * sg >= -EPS) poly.push(bs[k]); if (cross[k]) poly.push(cross[k]); }
+      const o = outs[side], put = x => typeof x === 'number' ? pushV(o, x) : pushA(o, x);
+      for (let i = 1; i + 1 < poly.length; i++) { put(poly[0]); put(poly[i]); put(poly[i + 1]); }
+    }
+  }
+  // cap: the cross-section of a convex shape is a convex polygon, so sort its points round the centre and fan it
+  if (capPts.length >= 3) {
+    const u = Math.abs(nx) < .9 ? V(1, 0, 0) : V(0, 1, 0); u.addScaledVector(n, -u.dot(n)).normalize(); const w = V().crossVectors(n, u);
+    let cx = 0, cy = 0, cz = 0; for (const p of capPts) { cx += p[0]; cy += p[1]; cz += p[2]; } cx /= capPts.length; cy /= capPts.length; cz /= capPts.length;
+    const ang = capPts.map(p => ({ p, a: Math.atan2((p[0] - cx) * w.x + (p[1] - cy) * w.y + (p[2] - cz) * w.z, (p[0] - cx) * u.x + (p[1] - cy) * u.y + (p[2] - cz) * u.z) })).sort((a, b) => a.a - b.a);
+    const poly = [];
+    for (const { p } of ang) { const q = poly[poly.length - 1]; if (!q || (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2 > 1e-10) poly.push(p); }
+    while (poly.length > 1) { const a = poly[0], b = poly[poly.length - 1]; if ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2 <= 1e-10) poly.pop(); else break; }
+    if (poly.length >= 3) {
+      for (let side = 0; side < 2; side++) {
+        const cn = side ? -1 : 1, o = outs[side];   // the negative half's cap faces +n, the positive half's faces -n
+        const cv = poly.map(p => { const r = p.slice(); if (S >= 6) { r[3] = nx * cn; r[4] = ny * cn; r[5] = nz * cn; } if (S >= 10) r[9] = 1; return r; });
+        for (let i = 1; i + 1 < cv.length; i++) { pushA(o, cv[0]); if (cn > 0) { pushA(o, cv[i]); pushA(o, cv[i + 1]); } else { pushA(o, cv[i + 1]); pushA(o, cv[i]); } }
+      }
+    }
+  }
+  return [new Float32Array(outs[0]), new Float32Array(outs[1])];
+}
+function volCen(v) {   // signed volume + centre of mass of a closed soup (stride 3)
+  let V6 = 0, cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < v.length; i += 9) {
+    const ax = v[i], ay = v[i + 1], az = v[i + 2], bx = v[i + 3], by = v[i + 4], bz = v[i + 5], qx = v[i + 6], qy = v[i + 7], qz = v[i + 8];
+    const vol = ax * (by * qz - bz * qy) - ay * (bx * qz - bz * qx) + az * (bx * qy - by * qx);
+    V6 += vol; cx += (ax + bx + qx) * vol; cy += (ay + by + qy) * vol; cz += (az + bz + qz) * vol;
+  }
+  return V6 > 1e-12 ? { vol: V6 / 6, c: V(cx / (4 * V6), cy / (4 * V6), cz / (4 * V6)) } : { vol: 0, c: V() };
+}
+function shiftSoup(v, S, c) { for (let i = 0; i < v.length; i += S) { v[i] -= c.x; v[i + 1] -= c.y; v[i + 2] -= c.z; } }
+function hullInfo(phys) {
+  const pts = [], seen = new Set(), planes = []; let rad = 0;
+  for (let i = 0; i < phys.length; i += 3) { const k = Math.round(phys[i] * 1e4) + ',' + Math.round(phys[i + 1] * 1e4) + ',' + Math.round(phys[i + 2] * 1e4); if (!seen.has(k)) { seen.add(k); pts.push(phys[i], phys[i + 1], phys[i + 2]); rad = Math.max(rad, Math.hypot(phys[i], phys[i + 1], phys[i + 2])); } }
+  for (let i = 0; i < phys.length; i += 9) {
+    _a1.set(phys[i + 3] - phys[i], phys[i + 4] - phys[i + 1], phys[i + 5] - phys[i + 2]); _a2.set(phys[i + 6] - phys[i], phys[i + 7] - phys[i + 1], phys[i + 8] - phys[i + 2]);
+    _a3.crossVectors(_a1, _a2); const L = _a3.length(); if (L < 1e-9) continue; _a3.multiplyScalar(1 / L);
+    const d = _a3.x * phys[i] + _a3.y * phys[i + 1] + _a3.z * phys[i + 2];
+    if (!planes.some(p => p[0] * _a3.x + p[1] * _a3.y + p[2] * _a3.z > .9999 && Math.abs(p[3] - d) < 1e-4)) planes.push([_a3.x, _a3.y, _a3.z, d]);
+  }
+  return { hull: new Float32Array(pts), planes, rad };
+}
+function soupGeo(v) {
+  const n = v.length / 10, pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), org = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) { const b = i * 10; pos[i * 3] = v[b]; pos[i * 3 + 1] = v[b + 1]; pos[i * 3 + 2] = v[b + 2]; nrm[i * 3] = v[b + 3]; nrm[i * 3 + 1] = v[b + 4]; nrm[i * 3 + 2] = v[b + 5]; org[i * 4] = v[b + 6]; org[i * 4 + 1] = v[b + 7]; org[i * 4 + 2] = v[b + 8]; org[i * 4 + 3] = v[b + 9]; }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3)); g.setAttribute('orig', new THREE.BufferAttribute(org, 4));
+  g.computeBoundingSphere(); return g;
+}
+// make a piece from soups already centred on their centre of mass; pos/quat are arena-local
+function makePiece(kind, vis, phys, vol, pos, quat, lv, av, pop) {
+  const hi = hullInfo(phys); if (hi.planes.length < 4) return null;
+  const R = AR.R, cd = R.ColliderDesc.convexHull(hi.hull); if (!cd) return null;
+  const body = AR.world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y, pos.z).setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w })
+    .setLinvel(lv.x, lv.y, lv.z).setAngvel({ x: av.x, y: av.y, z: av.z }).setCcdEnabled(true).setAngularDamping(.25).setLinearDamping(.03));
+  cd.setFriction(.5).setRestitution(.06).setDensity(700);
+  AR.world.createCollider(cd, body);
+  const mesh = new THREE.Mesh(soupGeo(vis), cubeMats[kind]); mesh.castShadow = vol > 3.5e-5; mesh.receiveShadow = true;
+  mesh.position.copy(pos); mesh.quaternion.copy(quat); arena.add(mesh);
+  const pc = { kind, vis, phys, vol, body, mesh, planes: hi.planes, hull: hi.hull, rad: hi.rad, cool: .06, trk: null, held: null, dying: 0, born: tAll, pop: pop ? 0 : 1 };
+  if (pop) mesh.scale.setScalar(.01);
+  AR.pieces.push(pc); return pc;
+}
+function removePiece(pc) {
+  const i = AR.pieces.indexOf(pc); if (i >= 0) AR.pieces.splice(i, 1);
+  if (pc.held) { pc.held.piece = null; pc.held = null; }
+  arena.remove(pc.mesh); pc.mesh.geometry.dispose(); if (pc.body) AR.world.removeRigidBody(pc.body); pc.body = null;
+}
+function spawnCube(kind, p, pop) {
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rnd() * .6 - .3, 0));
+  return makePiece(kind, Float32Array.from(VIS_TPL), Float32Array.from(PHYS_TPL), CUBE ** 3, p, q, V(0, pop ? -.5 : 0, 0), V(), pop);
+}
+function spawnSet(drop) {
+  const over = AR.pieces.length + 5 - MAX_PIECES; if (over > 0) AR.pieces.filter(p => !p.held && !p.dying).slice(0, over).forEach(p => p.dying = .3);
+  PEDS.forEach((p, i) => spawnCube(i, V(p.x, drop ? 1.25 + i * .06 : PED_TOP + CUBE / 2 + .002, p.z), drop));
+}
+function butterBlock() {
+  const p = PEDS[2]; spawnCube(5, V(p.x, 1.5, p.z), true); confetti(V().copy(ARENA).add(V(p.x, 1.4, p.z)), 50, [0xffd84f, 0xfff6c9, 0xffffff]);
+  toast('🧈 A wild BUTTER BLOCK appeared! Smooth as… well, you know.', 5);
+  if (ac) [523, 659, 784].forEach((f, i) => tone('triangle', f, f * 1.01, .3, .2, i * .08));
+}
+
+/* ---- slicing: track where the blade enters each piece, and cut along the surface it sweeps ---- */
+const _bl = V(), _tl = V(), _pl = V(), _tlp = V(), _blp = V(), _iq = new THREE.Quaternion(), _pt = V();
+function toLocal(pc, w, out) { const t = pc.body.translation(), r = pc.body.rotation(); _iq.set(r.x, r.y, r.z, r.w).invert(); return out.set(w.x - t.x, w.y - t.y, w.z - t.z).applyQuaternion(_iq); }
+// clip the segment a->b against the piece's planes (shrunk a hair); returns [tIn, tOut] or null
+function clipSeg(planes, a, b) {
+  let t0 = 0, t1 = 1;
+  for (const p of planes) {
+    const num = p[3] - .0004 - (p[0] * a.x + p[1] * a.y + p[2] * a.z), den = p[0] * (b.x - a.x) + p[1] * (b.y - a.y) + p[2] * (b.z - a.z);
+    if (Math.abs(den) < 1e-9) { if (num < 0) return null; continue; }
+    const t = num / den;
+    if (den < 0) { if (t > t0) t0 = t; } else if (t < t1) t1 = t;
+    if (t0 > t1) return null;
+  }
+  return [t0, t1];
+}
+function bladeSlice(dt) {
+  const b0 = AR.b0, t0 = AR.t0, b1 = AR.b1, t1 = AR.t1;
+  const move = Math.max(b0.distanceTo(b1), t0.distanceTo(t1));
+  if (move > .5) { AR.pieces.forEach(pc => pc.trk = null); return; }
+  AR.bladeV.copy(b1).add(t1).sub(b0).sub(t0).multiplyScalar(.5 / Math.max(dt, 1e-3));   // a tracking glitch teleported the blade: don't slice along that jump
+  const mnx = Math.min(b0.x, t0.x, b1.x, t1.x), mxx = Math.max(b0.x, t0.x, b1.x, t1.x), mny = Math.min(b0.y, t0.y, b1.y, t1.y), mxy = Math.max(b0.y, t0.y, b1.y, t1.y), mnz = Math.min(b0.z, t0.z, b1.z, t1.z), mxz = Math.max(b0.z, t0.z, b1.z, t1.z);
+  const cuts = [];
+  for (const pc of AR.pieces) {
+    if (pc.dying || !pc.body || pc.pop < 1) continue;
+    if (pc.cool > 0) { pc.cool -= dt; continue; }
+    const c = pc.body.translation(), r = pc.rad;
+    if (c.x < mnx - r || c.x > mxx + r || c.y < mny - r || c.y > mxy + r || c.z < mnz - r || c.z > mxz + r) { if (pc.trk) finishTrack(pc, cuts); continue; }
+    const travel = clamp(.3 * r, .003, .012), subs = clamp(Math.ceil(move / Math.max(.003, .3 * r)), 1, 16);
+    toLocal(pc, b0, _blp); toLocal(pc, t0, _tlp);
+    for (let s = 1; s <= subs; s++) {
+      const f = s / subs;
+      _a4.lerpVectors(b0, b1, f); _a5.lerpVectors(t0, t1, f); toLocal(pc, _a4, _bl); toLocal(pc, _a5, _tl);
+      const hit = clipSeg(pc.planes, _bl, _tl);
+      if (hit) {
+        const fm = (hit[0] + hit[1]) / 2; _pt.lerpVectors(_bl, _tl, fm);
+        if (!pc.trk) pc.trk = { e: _pt.clone(), ax: V().subVectors(_tl, _bl).normalize(), f: fm, last: _pt.clone(), lm: V() };
+        const k = pc.trk;
+        k.lm.lerpVectors(_bl, _tl, k.f).sub(_a3.lerpVectors(_blp, _tlp, k.f));   // how the blade moved at the contact this sub-step
+        k.last.copy(_pt);
+        _a1.subVectors(_pt, k.e); _a1.addScaledVector(k.ax, -_a1.dot(k.ax));
+        // a quick swing cuts on contact; a slow one cuts like a knife through butter: the halves part once the blade is through
+        const L = _a1.length(), sp = k.lm.length() * subs / Math.max(dt, 1e-3);
+        if (L > travel && (sp > .9 || L > .9 * widthAlong(pc, _a1))) { cuts.push([pc, k.ax.clone(), _a1.clone(), k.e.clone()]); pc.trk = null; break; }
+      } else if (pc.trk) {
+        // the blade came out: cut if it went through, not if it was pulled back the way it came
+        const k = pc.trk; _a1.lerpVectors(_bl, _tl, k.f).sub(k.e); _a1.addScaledVector(k.ax, -_a1.dot(k.ax));
+        if (_a1.length() > travel) cuts.push([pc, k.ax.clone(), _a1.clone(), k.e.clone()]);
+        pc.trk = null; break;
+      }
+      _blp.copy(_bl); _tlp.copy(_tl);
+    }
+  }
+  // at most two cuts per frame; any extra wait a frame so a wild swing through a pile never stutters
+  for (const c of cuts) AR.cutQ.push(c);
+}
+function finishTrack(pc, cuts) { pc.trk = null; }
+function widthAlong(pc, dir) {   // how wide the piece is in this direction
+  const h = pc.hull, L = dir.length() || 1, x = dir.x / L, y = dir.y / L, z = dir.z / L; let lo = 1e9, hi = -1e9;
+  for (let i = 0; i < h.length; i += 3) { const s = h[i] * x + h[i + 1] * y + h[i + 2] * z; if (s < lo) lo = s; if (s > hi) hi = s; }
+  return hi - lo;
+}
+function cutPiece(pc, ax, mv, e) {
+  const t0 = performance.now(), r = cutPiece2(pc, ax, mv, e), ms = performance.now() - t0; AR.cutMs = Math.max(AR.cutMs || 0, ms); return r;
+}
+function cutPiece2(pc, ax, mv, e) {
+  if (!pc.body || pc.dying) return false;
+  const n = V().crossVectors(ax, mv); if (n.lengthSq() < 1e-12) return false; n.normalize();
+  const d = n.dot(e);
+  // no paper-thin shavings: each half must be at least MIN_THICK thick across the cut
+  let lo = 1e9, hi = -1e9; for (let i = 0; i < pc.phys.length; i += 3) { const s = n.x * pc.phys[i] + n.y * pc.phys[i + 1] + n.z * pc.phys[i + 2]; if (s < lo) lo = s; if (s > hi) hi = s; }
+  if (d - lo < MIN_THICK || hi - d < MIN_THICK) { pc.cool = .04; return false; }
+  const ph = splitSoup(pc.phys, 3, n, d), vc = [volCen(ph[0]), volCen(ph[1])];
+  if (vc[0].vol < MIN_VOL || vc[1].vol < MIN_VOL) { pc.cool = .05; return false; }
+  const vh = splitSoup(pc.vis, 10, n, d);
+  const t = pc.body.translation(), r = pc.body.rotation(), lv = pc.body.linvel(), av = pc.body.angvel();
+  const q = new THREE.Quaternion(r.x, r.y, r.z, r.w), T = V(t.x, t.y, t.z), LV = V(lv.x, lv.y, lv.z), AV = V(av.x, av.y, av.z);
+  const wasHeld = pc.held, kind = pc.kind;
+  removePiece(pc);
+  const nW = n.clone().applyQuaternion(q); let made = 0;
+  const bs = AR.bladeV.length(), carry = AR.bladeV.clone().multiplyScalar(.14); if (carry.length() > 1.4) carry.setLength(1.4);
+  for (let s = 0; s < 2; s++) {
+    if (vc[s].vol < 4e-6 && AR.pieces.length > MAX_PIECES - 4) { crumbs(V().copy(vc[s].c).applyQuaternion(q).add(T), kind, 4); continue; }
+    shiftSoup(ph[s], 3, vc[s].c); shiftSoup(vh[s], 10, vc[s].c);
+    const off = vc[s].c.clone().applyQuaternion(q), P = off.clone().add(T);
+    // halves ease apart along the cut, and a quick swing carries them a little in its direction
+    const v = LV.clone().add(_a2.crossVectors(AV, off)).addScaledVector(nW, (s ? 1 : -1) * (.28 + .04 * Math.min(bs, 8))).add(carry);
+    const child = makePiece(kind, vh[s], ph[s], vc[s].vol, P, q, v, AV, false);
+    if (child) { child.cool = .07; made++; }
+  }
+  if (wasHeld) wasHeld.piece = null;
+  // overflow: oldest loose pieces shrink away
+  let over = AR.pieces.length - MAX_PIECES; for (const p of AR.pieces) { if (over <= 0) break; if (!p.held && !p.dying) { p.dying = .3; over--; } }
+  AR.cuts++;
+  const cw = V().copy(e).applyQuaternion(q).add(T).add(ARENA);
+  crumbs(cw, kind, 5); sfxSlice(pc.vol); if (sword.held) buzz(sword.held, .65, 28);
+  return made > 0;
+}
+const CRUMB_G = new THREE.TetrahedronGeometry(.012, 0);
+function crumbs(w, kind, n) {
+  const g = CRUMB_G;
+  for (let i = 0; i < n; i++) {
+    const m = new THREE.Mesh(g, mat(KINDS[kind].ins, { emissive: KINDS[kind].ins, emissiveIntensity: .25 })); m.position.copy(w); scene.add(m);
+    fx.push({ m, v: V((rnd() - .5) * 1.6, .6 + rnd() * 1.2, (rnd() - .5) * 1.6), spin: V(rnd() * 12, rnd() * 12, rnd() * 12), life: .7 + rnd() * .4, drag: 1.2 });
+  }
+}
+function sfxSlice(vol) {
+  if (!ac) return; const t = ac.currentTime, n = noise(), f = ac.createBiquadFilter(), g = ac.createGain();
+  f.type = 'bandpass'; f.Q.value = 1.6; f.frequency.setValueAtTime(5200, t); f.frequency.exponentialRampToValueAtTime(1500, t + .13);
+  g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.45, t + .012); g.gain.exponentialRampToValueAtTime(.001, t + .16);
+  n.connect(f); f.connect(g); g.connect(master); n.start(t); n.stop(t + .18);
+  const p = 300 + 500 * Math.pow(clamp(1 - vol / (CUBE ** 3), 0, 1), 2);
+  tone('sine', p * 1.6, p, .07, .16);
+}
+const sfxShing = () => { if (!ac) return; tone('triangle', 1800, 2600, .35, .12); tone('sine', 3200, 3900, .45, .08, .03); sfxTap('rock', .4); };
+const sfxPress = good => { if (!ac) return; tone('square', good ? 520 : 300, good ? 880 : 180, .12, .14); tone('sine', 140, 90, .08, .3); };
+const sfxWhoosh = () => { if (!ac) return; const t = ac.currentTime, n = noise(), f = ac.createBiquadFilter(), g = ac.createGain(); f.type = 'lowpass'; f.frequency.setValueAtTime(400, t); f.frequency.exponentialRampToValueAtTime(3000, t + .35); g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.001, t + .5); n.connect(f); f.connect(g); g.connect(master); n.start(t); n.stop(t + .5); tone('sine', 200, 900, .45, .2); };
+
+/* ======================= physics world ======================= */
+import('rapier').then(async m => {
+  const R = m.default || m; await R.init();
+  const w = new R.World({ x: 0, y: -9.81, z: 0 });
+  AR.R = R; AR.world = w;
+  const fixed = (desc, x, y, z, q) => { const b = w.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(x, y, z)); if (q) b.setRotation(q, false); w.createCollider(desc.setFriction(.85), b); return b; };
+  fixed(R.ColliderDesc.cuboid(18, .5, 18), 0, -.5, 0);
+  PEDS.forEach(p => fixed(R.ColliderDesc.cylinder(.15, .2), p.x, .15, p.z));
+  _aq.setFromEuler(new THREE.Euler(0, AR.consoleG.rotation.y, 0));
+  fixed(R.ColliderDesc.cuboid(.33, .17, .2), CONSOLE.x, .17, CONSOLE.z, { x: _aq.x, y: _aq.y, z: _aq.z, w: _aq.w });
+  fixed(R.ColliderDesc.cylinder(.16, .34), STONE.x, .16, STONE.z);
+  fixed(R.ColliderDesc.cylinder(.08, 1.1), AR_PORTAL.x, .08, AR_PORTAL.z);
+  // your paws and body shove pieces around
+  AR.pawB = hands.map(() => { const b = w.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -50, 0)); w.createCollider(R.ColliderDesc.ball(PAW_R * .9).setFriction(1), b); return b; });
+  AR.bodyB = w.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -50, 0)); w.createCollider(R.ColliderDesc.capsule(.17, .2), AR.bodyB);
+  spawnSet(false);
+  // warm the cutter up (JIT) so the very first real slice is as quick as the rest
+  for (let i = 0; i < 6; i++) { const nn = V(rnd() - .5, rnd() - .5, rnd() - .5).normalize(); splitSoup(VIS_TPL, 10, nn, .01); hullInfo(splitSoup(PHYS_TPL, 3, nn, .01)[0]); }
+  AR.ready = true;
+}).catch(e => { AR.failed = true; console.warn('Slicing Yard physics did not load', e); });
+
+/* ======================= sword handling ======================= */
+const GRIP_ROT = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, Math.PI / 2, 0, 'XYZ'));   // blade along the fist (-Z), flat facing the palm
+const HAND_ROT = { right: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(V(0, 0, -1), V(-1, 0, 0), V(0, 1, 0))),
+  left: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(V(0, 0, 1), V(1, 0, 0), V(0, 1, 0))) };
+const DESK = { idleH: V(.2, -.25, -.36), idleD: V(-.12, .85, -.5).normalize(),
+  H: [V(.24, -.02, -.3), V(.02, -.2, -.38), V(-.2, -.34, -.32)], D: [V(.35, .85, .3).normalize(), V(-.15, .25, -1).normalize(), V(-.75, -.5, -.4).normalize()] };
+const _Y = V(0, 1, 0), _dq = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
+function deskPose(pos, q) {
+  const s = AR.swing, mir = s.dir;
+  const H = i => _a1.copy(DESK.H[i]).multiply(_a2.set(mir, 1, 1)), Dq = (i, out) => out.setFromUnitVectors(_Y, _a3.copy(DESK.D[i]).multiply(_a2.set(mir, 1, 1)).normalize());
+  _dq[3].setFromUnitVectors(_Y, DESK.idleD);
+  if (s.t < 1) {
+    const e = s.t;
+    if (e < .25) { const k = e / .25, kk = k * k * (3 - 2 * k); pos.lerpVectors(DESK.idleH, H(0), kk); Dq(0, _dq[0]); q.slerpQuaternions(_dq[3], _dq[0], kk); }
+    else { const k = (e - .25) / .75, kk = k * k * (3 - 2 * k);
+      if (kk < .5) { const k2 = kk * 2; _a4.copy(H(0)); pos.lerpVectors(_a4, H(1), k2); Dq(0, _dq[0]); Dq(1, _dq[1]); q.slerpQuaternions(_dq[0], _dq[1], k2); }
+      else { const k2 = (kk - .5) * 2; _a4.copy(H(1)); pos.lerpVectors(_a4, H(2), k2); Dq(1, _dq[1]); Dq(2, _dq[2]); q.slerpQuaternions(_dq[1], _dq[2], k2); } }
+  } else if (s.r < 1) { const k = s.r, kk = k * k * (3 - 2 * k); _a4.copy(H(2)); pos.lerpVectors(_a4, DESK.idleH, kk); Dq(2, _dq[2]); q.slerpQuaternions(_dq[2], _dq[3], kk); }
+  else { pos.copy(DESK.idleH); q.copy(_dq[3]); }
+  camera.updateMatrixWorld(); camera.localToWorld(pos); camera.getWorldQuaternion(_aq2); q.premultiply(_aq2);
+}
+function vrPose(h, pos, q) {
+  _aq2.copy(rig.quaternion).multiply(h.q);
+  if (h.src && h.src.hand) { rig.localToWorld(pos.copy(h.local)); q.copy(_aq2).multiply(HAND_ROT[h.side] || HAND_ROT.right); }
+  else { pos.copy(PAW_OFF).applyQuaternion(h.q).negate().add(h.local); rig.localToWorld(pos); q.copy(_aq2).multiply(GRIP_ROT); }
+}
+function takeSword(h) {
+  if (sword.held && sword.held !== h) sword.held.sword = false;
+  if (sword.body) { AR.world.removeRigidBody(sword.body); sword.body = null; }
+  const fromStone = sword.mode === 'stone';
+  sword.held = h; h.sword = true; sword.mode = 'held'; AR.bladeOk = false; trail.hist.length = 0;
+  buzz(h, .8, 60); if (fromStone) { sfxShing(); crumbs(V().copy(ARENA).add(STONE).add(V(0, .35, 0)), 2, 6); if (!AR.toldSwing) { AR.toldSwing = true; toast(state.xr ? '⚔️ Got it! Swing through a cube to slice it. Let go of grip to drop it.' : '⚔️ Got it! Click to swing, E to drop it.', 5.5); } }
+  else if (ac) tone('triangle', 900, 1300, .12, .12);
+}
+function releaseSword(h, throwV) {
+  if (sword.held !== h) return;
+  h.sword = false; sword.held = null; sword.mode = 'free'; AR.bladeOk = false;
+  const R = AR.R, p = sword.g.position, q = sword.g.quaternion;
+  const b = AR.world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(p.x, p.y, p.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }).setCcdEnabled(true).setAngularDamping(.4));
+  const add = (desc, x, y, z) => AR.world.createCollider(desc.setTranslation(x, y, z).setFriction(.7).setRestitution(.15).setDensity(2500), b);
+  add(R.ColliderDesc.cuboid(.03, .31, .005), 0, .425, 0); add(R.ColliderDesc.cuboid(.135, .013, .015), 0, .1, 0);
+  add(R.ColliderDesc.cylinder(.085, .019), 0, 0, 0); add(R.ColliderDesc.ball(.029), 0, -.115, 0);
+  const v = throwV || sword.lv; b.setLinvel({ x: v.x, y: v.y, z: v.z }, true); b.setAngvel({ x: sword.av.x * .6, y: sword.av.y * .6, z: sword.av.z * .6 }, true);
+  sword.body = b; if (ac) tone('sine', 700, 400, .1, .1);
+}
+
+/* ======================= grabbing pieces ======================= */
+function pieceNear(h, maxD = .1) {
+  let best = null, bd = 1e9;
+  for (const pc of AR.pieces) { if (pc.dying || pc.held || !pc.body) continue; const t = pc.body.translation(); _a1.set(t.x, t.y, t.z).add(ARENA); const d = _a1.distanceTo(h.pos) - pc.rad * .8; if (d < maxD && d < bd) { bd = d; best = pc; } }
+  return best;
+}
+function pawQuat(h, out) { return (state.xr || sim.on) ? out.copy(rig.quaternion).multiply(h.q) : out.copy(h.paw.quaternion); }
+function holdPiece(h, pc) {
+  pc.held = h; h.piece = pc; pc.trk = null;
+  pc.body.setBodyType(AR.R.RigidBodyType.KinematicPositionBased, true);
+  const t = pc.body.translation(), r = pc.body.rotation();
+  pawQuat(h, _aq).invert();
+  pc.relP = V(t.x, t.y, t.z).add(ARENA).sub(h.pos).applyQuaternion(_aq);
+  pc.relQ = _aq.clone().multiply(_aq2.set(r.x, r.y, r.z, r.w));
+  if (!(state.xr || sim.on)) { pc.relP.set(0, -.12, -.5); }
+  buzz(h, .5, 30); if (ac) tone('sine', 500, 800, .08, .2);
+}
+function releasePiece(h, throwV) {
+  const pc = h.piece; if (!pc) return; h.piece = null; pc.held = null;
+  if (!pc.body) return;
+  pc.body.setBodyType(AR.R.RigidBodyType.Dynamic, true);
+  const v = throwV || (h.vel ? _a1.copy(h.vel).multiplyScalar(1.25) : _a1.set(0, 0, 0)); if (v.length() > 14) v.setLength(14);
+  pc.body.setLinvel({ x: v.x, y: v.y, z: v.z }, true); pc.body.setAngvel({ x: (rnd() - .5) * 4, y: (rnd() - .5) * 4, z: (rnd() - .5) * 4 }, true);
+}
+function swordNear(h) {
+  if (sword.mode === 'held' && sword.held === h) return false;
+  _a1.copy(sword.g.position).add(ARENA);
+  return _a1.distanceTo(h.pos) < (sword.mode === 'stone' ? .22 : .2);
+}
+function grabAny(h) {
+  if (state.area === 'arena' && AR.ready && h.tracked) {
+    if (swordNear(h)) { takeSword(h); return; }
+    const pc = pieceNear(h); if (pc) { holdPiece(h, pc); return; }
+  }
+  grabProp(h);
+}
+function dropAny(h) {
+  if (h.sword) { releaseSword(h); return; }
+  if (h.piece) { releasePiece(h); return; }
+  dropProp(h);
+}
+
+/* ======================= desktop: E to grab / drop, click to swing or press ======================= */
+function aimAt(maxD, test) {
+  headWorld(_a1); camera.getWorldQuaternion(_aq); _a2.set(0, 0, -1).applyQuaternion(_aq);
+  let best = null, bs = -1;
+  test((obj, p, r) => { _a3.subVectors(p, _a1); const d = _a3.length(); if (d > maxD) return; const along = _a3.dot(_a2); if (along <= 0) return; const off = Math.sqrt(Math.max(0, d * d - along * along)); const s = 1 - off / (r + .05 + d * .06); if (s > bs) { bs = s; best = obj; } });
+  return bs > 0 ? best : null;
+}
+function aimButton() { return aimAt(2.6, f => buttons.forEach(b => f(b, b.top, .09))); }
+function deskInteract() {
+  const h = hands[1];
+  if (state.area === 'arena' && AR.ready) {
+    if (h.sword) { headWorld(_a1); camera.getWorldQuaternion(_aq); releaseSword(h, V(0, .5, -2.2).applyQuaternion(_aq)); return; }
+    if (h.piece) { camera.getWorldQuaternion(_aq); releasePiece(h, V(0, 1.5, -6.5).applyQuaternion(_aq)); return; }
+    const b = aimButton(); if (b) { pressButton(b, null); return; }
+    const sw = aimAt(3, f => f(sword, _a4.copy(sword.g.position).add(ARENA), .25)); if (sw) { takeSword(h); return; }
+    const pc = aimAt(2.6, f => AR.pieces.forEach(p => { if (!p.dying && p.body && !p.held) { const t = p.body.translation(); f(p, V(t.x, t.y, t.z).add(ARENA), p.rad); } }));
+    if (pc) { holdPiece(h, pc); return; }
+  }
+  deskGrab();
+}
+canvas.addEventListener('pointerdown', e => {
+  if (state.mode !== 'play' || state.xr || e.button !== 0 || document.pointerLockElement !== canvas || state.area !== 'arena') return;
+  if (hands[1].sword) startSwing(); else { const b = aimButton(); if (b) pressButton(b, null); }
+});
+function startSwing() { const s = AR.swing; if (s.t < 1) { s.queued = true; return; } s.dir = -s.dir; s.t = 0; s.r = 0; if (ac) tone('sine', 300, 180, .15, .05); }
+
+/* ======================= buttons ======================= */
+function pressButton(b, h) {
+  if (tAll - AR.btnT[b.i] < .45 || !AR.ready) return;
+  AR.btnT[b.i] = tAll; b.down = 1; sfxPress(b.i === 0); if (h) buzz(h, .6, 40);
+  if (b.i === 0) {
+    AR.greenTimes = AR.greenTimes.filter(t => tAll - t < 2.2); AR.greenTimes.push(tAll);
+    if (AR.greenTimes.length >= 3) { AR.greenTimes.length = 0; butterBlock(); }   // secret: triple-tap SPAWN
+    else spawnSet(true);
+  } else {
+    AR.pieces.forEach((p, i) => { if (!p.held) p.dying = .2 + i * .004; });
+    if (sword.mode !== 'held') swordToStone();
+    AR.spawnQ.push(tAll + .45);
+    toast('🔄 Fresh cubes coming up!', 2.5);
+  }
+}
+function checkButtons(dt) {
+  for (const b of buttons) {
+    for (const h of hands) {
+      if (!b.in) b.in = [false, false];
+      let inside = false;
+      if (h.tracked && (state.xr || sim.on)) { const dx = h.pos.x - b.top.x, dz = h.pos.z - b.top.z, dy = h.pos.y - b.top.y; inside = dx * dx + dz * dz < .085 * .085 && dy < PAW_R + .012 && dy > -.08; }
+      if (inside && !b.in[h.i]) pressButton(b, h);   // only a fresh tap counts, resting your paw on it doesn't repeat
+      b.in[h.i] = inside;
+    }
+    b.down = Math.max(0, b.down - dt * 3.5);
+    b.cap.position.y = .36 - .018 * Math.min(1, b.down * 2);
+    b.cm.emissiveIntensity = .35 + b.down * 1.2;
+  }
+}
+
+/* ======================= portals: walk through to travel ======================= */
+function travel(toArena) {
+  headWorld(_a1);
+  if (!toArena) { hands.forEach(h => { if (h.sword) { swordToStone(); } if (h.piece) releasePiece(h); }); }
+  const dest = toArena ? V().copy(ARENA).add(AR_SPAWN) : V().copy(GROVE_PORTAL).add(V(-GROVE_PORTAL.x, 0, -GROVE_PORTAL.z).normalize().multiplyScalar(1.6));
+  dest.y = (toArena ? ARENA.y : .02) + state.bodyH + .03;
+  rig.position.add(dest.sub(_a1));
+  state.vel.set(0, 0, 0); state.velBuf.length = 0; state.wasStuck = false;
+  hands.forEach(h => { h.stuck = false; h.reset = true; });
+  if (!state.xr) state.yaw = toArena ? 0 : Math.atan2(GROVE_PORTAL.x, GROVE_PORTAL.z);
+  state.area = toArena ? 'arena' : 'grove'; AR.portalCool = 1; AR.snap = true; AR.bladeOk = false;
+  sfxWhoosh(); confetti(V().copy(dest).add(V(0, .3, 0)), 24, toArena ? [0x3fe0bd, 0x8b6bff, 0xffffff] : [0x6fdc4f, 0xffd25a, 0xffffff]);
+  if (toArena) toast(AR.failed ? '😵 The Slicing Yard physics could not load. Check your connection and reload.'
+    : state.xr ? '⚔️ The Slicing Yard! Squeeze grip on the sword handle to pull it out, then slice!' : '⚔️ The Slicing Yard! Look at the sword, press E, then click to slice!', 6);
+  else toast('🌳 Back in the grove!', 2.5);
+}
+function arenaRespawn() {
+  rig.position.copy(ARENA).add(AR_SPAWN); rig.position.y += state.bodyH - eyeLocal(_a2).y + .05;
+  state.vel.set(0, 0, 0); state.velBuf.length = 0; state.wasStuck = false;
+  hands.forEach(h => { h.stuck = false; h.ready = false; });
+  if (!state.xr) { state.yaw = 0; state.pitch = 0; rig.rotation.y = 0; }
+  AR.snap = true;
+}
+function portalCheck(dt) {
+  AR.portalCool = Math.max(0, AR.portalCool - dt);
+  headWorld(_a1);
+  const P = state.area === 'arena' ? portalYard : portalGrove;
+  P.g.worldToLocal(_a2.copy(_a1));
+  const inRing = Math.abs(_a2.z) < .32 && Math.hypot(_a2.x, _a2.y - 1) < .8;
+  if (AR.portalCool <= 0 && inRing) travel(state.area !== 'arena');
+}
+function animPortals(dt, t) {
+  for (const P of portals) {
+    P.disc.material.uniforms.t.value = t;
+    P.sparks.forEach(s => { s.a += s.sp * dt; s.s.position.set(Math.cos(s.a) * s.r, 1 + Math.sin(s.a) * s.r, Math.sin(t * 2 + s.y * 6) * .12); s.s.rotation.y += dt * 3; });
+  }
+  if (AR.beacon) AR.beacon.material.emissiveIntensity = .4 + (Math.sin(t * 5) > .3 ? 1.2 : 0);
+}
+
+/* ======================= per-frame ======================= */
+const _swP = V(), _swQ = new THREE.Quaternion();
+function stepArena(dt) {
+  if (state.mode === 'play') portalCheck(dt);
+  if (state.area !== 'arena' || !AR.ready || state.mode !== 'play') return;
+  const R = AR.R, w = AR.world;
+  // 1) where the sword is this frame
+  if (sword.mode === 'held') {
+    const h = sword.held;
+    sword.ppos.copy(sword.g.position); sword.pq.copy(sword.g.quaternion);
+    if (state.xr || sim.on) vrPose(h, _swP, _swQ); else { deskPose(_swP, _swQ); const s = AR.swing; if (s.t < 1) { s.t += dt / SWING_T; if (s.t >= 1 && s.queued) { s.queued = false; s.t = 1; s.r = 1; startSwing(); } } else if (s.r < 1) s.r += dt / RETURN_T; }
+    sword.g.position.copy(_swP).sub(ARENA); sword.g.quaternion.copy(_swQ);
+    sword.lv.subVectors(sword.g.position, sword.ppos).multiplyScalar(1 / Math.max(dt, 1e-3));
+    _aq.copy(sword.pq).invert().premultiply(sword.g.quaternion); const ang = 2 * Math.acos(clamp(Math.abs(_aq.w), 0, 1)); const sgn = _aq.w < 0 ? -1 : 1;
+    sword.av.set(_aq.x * sgn, _aq.y * sgn, _aq.z * sgn); if (sword.av.lengthSq() > 1e-12) sword.av.normalize().multiplyScalar(ang / Math.max(dt, 1e-3)); else sword.av.set(0, 0, 0);
+    if (!(state.xr || sim.on)) { const hh = hands[1]; hh.paw.position.copy(_swP); hh.paw.quaternion.copy(_swQ).multiply(_aq.setFromEuler(_eul.set(Math.PI / 2, 0, 0))); hh.pos.copy(_swP); }
+  }
+  // 2) kinematic paws, body and held pieces, then step the world
+  hands.forEach((h, i) => {
+    const b = AR.pawB[i];
+    if (h.tracked && (state.xr || sim.on)) _a1.copy(h.pos).sub(ARENA); else _a1.set(i * 3, -50, 0);
+    if (AR.snap || _a1.distanceTo(b.translation()) > 1) b.setTranslation(_a1, false); else b.setNextKinematicTranslation(_a1);
+  });
+  headWorld(_a1); _a1.y -= (state.bodyH - .25) / 2; _a1.sub(ARENA);
+  if (AR.snap || _a1.distanceTo(AR.bodyB.translation()) > 1) AR.bodyB.setTranslation(_a1, false); else AR.bodyB.setNextKinematicTranslation(_a1);
+  for (const h of hands) {
+    const pc = h.piece; if (!pc || !pc.body) continue;
+    pawQuat(h, _aq); _a2.copy(pc.relP).applyQuaternion(_aq).add(h.pos);
+    if (!(state.xr || sim.on)) { camera.getWorldQuaternion(_aq); camera.localToWorld(_a2.set(0, -.12, -.5)); }
+    _a2.sub(ARENA); pc.body.setNextKinematicTranslation(_a2);
+    _aq2.copy(_aq).multiply(pc.relQ); pc.body.setNextKinematicRotation({ x: _aq2.x, y: _aq2.y, z: _aq2.z, w: _aq2.w });
+  }
+  AR.snap = false;
+  w.timestep = clamp(dt, 1 / 144, 1 / 30); w.step();
+  // 3) sync meshes, shrink the dying, drop the lost
+  for (let i = AR.pieces.length - 1; i >= 0; i--) {
+    const pc = AR.pieces[i], t = pc.body.translation(), r = pc.body.rotation();
+    pc.mesh.position.set(t.x, t.y, t.z); pc.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    if (pc.pop < 1) { pc.pop = Math.min(1, pc.pop + dt * 5); const k = pc.pop, s = 1 + Math.sin(k * Math.PI) * .25 * (1 - k); pc.mesh.scale.setScalar(Math.max(.01, k * s)); }
+    if (pc.dying) { pc.dying -= dt; pc.mesh.scale.multiplyScalar(Math.exp(-dt * 14)); if (pc.dying <= 0) { removePiece(pc); continue; } }
+    if (t.y < -8) removePiece(pc);
+  }
+  if (sword.mode === 'free' && sword.body) {
+    const t = sword.body.translation(), r = sword.body.rotation(); sword.g.position.set(t.x, t.y, t.z); sword.g.quaternion.set(r.x, r.y, r.z, r.w);
+    if (t.y < -8) swordToStone();
+  }
+  if (AR.spawnQ.length && tAll >= AR.spawnQ[0]) { AR.spawnQ.shift(); spawnSet(true); }
+  // 4) the blade: slice whatever it swept through since last frame
+  sword.g.updateMatrixWorld();
+  AR.b1.copy(BLADE_A).applyMatrix4(sword.g.matrix); AR.t1.copy(BLADE_B).applyMatrix4(sword.g.matrix);
+  if (sword.mode === 'held') {
+    if (!AR.bladeOk) { AR.b0.copy(AR.b1); AR.t0.copy(AR.t1); AR.bladeOk = true; }
+    bladeSlice(dt);
+  } else AR.bladeOk = false;
+  AR.b0.copy(AR.b1); AR.t0.copy(AR.t1);
+  for (let i = 0; i < 2 && AR.cutQ.length; i++) { const [pc, ax, mv, e] = AR.cutQ.shift(); cutPiece(pc, ax, mv, e); }
+  stepTrail(dt);
+  checkButtons(dt);
+}
+function stepTrail(dt) {
+  const hs = trail.hist;
+  if (sword.mode === 'held') { _a1.lerpVectors(AR.b1, AR.t1, .35); hs.unshift([_a1.clone(), AR.t1.clone()]); } else hs.unshift(null);
+  if (hs.length > TRAIL_N) hs.length = TRAIL_N;
+  let speed = 0; if (hs[0] && hs[1]) speed = hs[0][1].distanceTo(hs[1][1]) / Math.max(dt, 1e-3);
+  trail.k += ((speed > 2.2 ? 1 : 0) - trail.k) * Math.min(1, dt * (speed > 2.2 ? 20 : 8));
+  let last = null;
+  for (let i = 0; i < TRAIL_N; i++) {
+    const e = hs[i] || last; if (hs[i]) last = hs[i];
+    const a = e ? e[0] : AR.b1, b = e ? e[1] : AR.t1;
+    trail.pos.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6);
+    const al = hs[i] ? trail.k * Math.pow(1 - i / (TRAIL_N - 1), 1.6) * .55 : 0; trail.al[i * 2] = al * .15; trail.al[i * 2 + 1] = al;
+  }
+  trail.geo.attributes.position.needsUpdate = true; trail.geo.attributes.a.needsUpdate = true;
+}
+try { renderer.compile(arena, camera, scene); } catch (e) {}
+window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, travel, takeSword, releaseSword, grabAny, dropAny, cutPiece, pressButton, startSwing, deskInteract, spawnSet };
 </script>
 </body>
 </html>
