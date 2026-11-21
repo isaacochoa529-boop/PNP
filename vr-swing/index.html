@@ -751,17 +751,32 @@ const pip = (() => {
 })();
 
 /* ======================= paws ======================= */
+// a paw with three fingers you control: thumb, pointer and a big middle finger (see setCurl)
+const FINGERS = [{ x: -.06, y: .004, z: -.018, yaw: -.75, l: [.026, .022], r: .02 }, { x: -.022, y: .006, z: -.05, yaw: -.06, l: [.032, .028], r: .0185 }, { x: .026, y: .004, z: -.048, yaw: .1, l: [.032, .028], r: .022 }];
 function makePaw(color) {
-  const g = new THREE.Group();
+  const g = new THREE.Group(), body = new THREE.Group(); body.scale.setScalar(1.15); g.add(body);
   const furM = new THREE.MeshStandardMaterial({ color, roughness: .85, flatShading: true }), padM = mat(0xff8fb1), cuffM = mat(0xffffff);
-  const palm = new THREE.Mesh(new THREE.IcosahedronGeometry(.06, 2), furM); palm.scale.set(1.05, .8, 1.15); g.add(palm);
-  for (let i = 0; i < 3; i++) { const f = new THREE.Mesh(new THREE.SphereGeometry(.025, 10, 8), furM); f.position.set((i - 1) * .032, -.005, -.065); f.scale.set(1, .9, 1.25); g.add(f);
-    const pd = new THREE.Mesh(new THREE.SphereGeometry(.012, 8, 6), padM); pd.position.set((i - 1) * .032, -.025, -.07); g.add(pd); }
-  const th = new THREE.Mesh(new THREE.SphereGeometry(.024, 10, 8), furM); th.position.set(-.058, .01, -.03); g.add(th);
-  const pad = new THREE.Mesh(new THREE.SphereGeometry(.03, 10, 8), padM); pad.position.set(0, -.045, -.005); pad.scale.set(1.2, .35, 1); g.add(pad);
-  const cuff = new THREE.Mesh(new THREE.TorusGeometry(.045, .018, 8, 16), cuffM); cuff.position.z = .06; g.add(cuff);
+  const palm = new THREE.Mesh(new THREE.IcosahedronGeometry(.06, 2), furM); palm.scale.set(1.08, .78, 1.05); body.add(palm);
+  const pad = new THREE.Mesh(new THREE.SphereGeometry(.03, 10, 8), padM); pad.position.set(0, -.044, -.005); pad.scale.set(1.25, .35, 1); body.add(pad);
+  const cuff = new THREE.Mesh(new THREE.TorusGeometry(.045, .018, 8, 16), cuffM); cuff.position.z = .06; body.add(cuff);
+  const fingers = FINGERS.map(f => {
+    const a = new THREE.Group(); a.position.set(f.x, f.y, f.z); a.rotation.y = f.yaw; body.add(a);
+    const s1 = new THREE.Mesh(new THREE.CapsuleGeometry(f.r, f.l[0], 3, 8).rotateX(Math.PI / 2), furM); s1.position.z = -f.l[0] / 2; a.add(s1);
+    const b = new THREE.Group(); b.position.z = -f.l[0]; a.add(b);
+    const s2 = new THREE.Mesh(new THREE.CapsuleGeometry(f.r * .94, f.l[1], 3, 8).rotateX(Math.PI / 2), furM); s2.position.z = -f.l[1] / 2; b.add(s2);
+    const bean = new THREE.Mesh(new THREE.SphereGeometry(f.r * .55, 8, 6), padM); bean.position.set(0, -f.r * .7, -f.l[1] + .002); bean.scale.y = .5; b.add(bean);
+    const end = new THREE.Object3D(); end.position.z = -f.l[1] - f.r * .8; b.add(end);
+    return { a, b, end, yaw: f.yaw };
+  });
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  g.userData.fur = furM; return g;
+  g.userData.fur = furM; g.userData.fingers = fingers; g.userData.curl = [.25, .25, .25]; setCurl(g, g.userData.curl);
+  return g;
+}
+// curl: 0 = straight out, 1 = tucked in. [thumb, pointer, middle]
+function setCurl(paw, c) {
+  const F = paw.userData.fingers; if (!F) return;
+  F[0].a.rotation.set(-c[0] * .5, F[0].yaw + c[0] * 1.1, 0); F[0].b.rotation.x = -c[0] * 1.1;
+  for (let i = 1; i < 3; i++) { F[i].a.rotation.x = -c[i] * 1.45; F[i].b.rotation.x = -c[i] * 1.7; }
 }
 const PAW_COLOR = 0x2fc6a3;
 const hands = [0, 1].map(i => {
@@ -811,9 +826,8 @@ const L_UP = .3, L_FORE = .3;
     arm.up.position.set(0, 0, 0); arm.fore.position.set(0, 0, 0); arm.elbow.position.set(0, 0, 0);
     arm.up.visible = arm.fore.visible = arm.elbow.visible = false;
     scene.add(arm.up, arm.fore, arm.elbow); AV.arms.push(arm);
-    const h = hands[i], paw = withArmFur(prep(get('Paw').clone())); paw.position.set(0, 0, 0); paw.scale.setScalar(1.15);
-    h.paw.children.forEach(c => { if (c !== wrist.mesh) c.visible = false; });
-    h.paw.add(paw); h.paw.userData.fur = AV.armFur;
+    const h = hands[i], oldFur = h.paw.userData.fur;   // the paw keeps its three fingers, it just wears the model's fur
+    h.paw.traverse(c => { if (c.isMesh && c.material === oldFur) { c.material = AV.armFur; c.castShadow = true; } }); h.paw.userData.fur = AV.armFur;
     if (state.golden) { AV.armFur.color.set(0xffc83a); AV.armFur.emissive.set(0x553300); AV.armFur.metalness = .5; }
   }
   AV.ready = true;
@@ -1135,7 +1149,7 @@ const _raw = V(), _rq = new THREE.Quaternion();
 function sampleHands(dt) {
   for (const h of hands) {
     let ok = false;
-    if (sim.on) { _raw.copy(sim.local[h.i]); _rq.identity(); ok = true; }
+    if (sim.on) { _raw.copy(sim.local[h.i]); if (sim.q && sim.q[h.i]) _rq.copy(sim.q[h.i]); else _rq.identity(); ok = true; }
     else if (state.xr && h.src) {
       if (h.src.hand) {
         const j = h.xhand && h.xhand.joints && h.xhand.joints['middle-finger-metacarpal'];
@@ -1172,9 +1186,23 @@ function readHands() {
 }
 const _q2 = new THREE.Quaternion();
 function clutch(h, dt) {   // a paw holding something squeezes into a fist
-  const on = (h.holding || h.sword || h.piece) ? 1 : 0; h.cl = (h.cl || 0) + (on - (h.cl || 0)) * Math.min(1, dt * 16);
-  h.paw.scale.set((h.side === 'left' ? -1 : 1) * (1 + .05 * h.cl), 1 - .12 * h.cl, 1 - .16 * h.cl);
+  const on = (h.holding || h.sword || h.piece || pip.heldBy === h) ? 1 : 0; h.cl = (h.cl || 0) + (on - (h.cl || 0)) * Math.min(1, dt * 16);
+  h.paw.scale.set((h.side === 'left' ? -1 : 1) * (1 + .03 * h.cl), 1 - .05 * h.cl, 1 - .06 * h.cl);
+  // fingers: trigger = pointer, grip = middle finger, thumb rests on the buttons/stick = thumb down
+  const want = h.cw || (h.cw = [.25, .25, .25]), gp = state.xr && h.src && h.src.gamepad;
+  if (gp && !h.src.hand) {
+    const B = gp.buttons, val = i => (B[i] ? (B[i].value || (B[i].pressed ? 1 : 0)) : 0), touch = i => B[i] && (B[i].touched || B[i].pressed);
+    want[1] = .08 + .92 * val(0); want[2] = .08 + .92 * val(1); want[0] = (touch(3) || touch(4) || touch(5)) ? .95 : .05;
+  } else if (!state.xr && !sim.on) {   // desktop: point at the computer, otherwise relaxed
+    const pt = h.i === 1 && state.area === 'grove' && comp && comp.g.position.distanceToSquared(rig.position) < 7;
+    want[0] = pt ? .9 : .3; want[1] = pt ? 0 : .3; want[2] = pt ? 1 : .35;
+  } else if (state.xr) { want[0] = want[1] = want[2] = .25; }
+  if (on) { want[0] = Math.max(want[0], .75); want[1] = Math.max(want[1], .8); want[2] = Math.max(want[2], .85); }
+  const c = h.paw.userData.curl, k = Math.min(1, dt * 22);
+  for (let j = 0; j < 3; j++) c[j] += (want[j] - c[j]) * k;
+  setCurl(h.paw, c);
 }
+function tipWorld(h, out) { const F = h.paw.userData.fingers; return F ? F[1].end.getWorldPosition(out) : out.copy(h.pos); }
 function buzz(h, v, ms) { const gp = h.src && h.src.gamepad; if (gp && gp.hapticActuators && gp.hapticActuators[0]) try { gp.hapticActuators[0].pulse(v, ms); } catch (e) {} }
 
 /* ---------- the arm-swing step ---------- */
@@ -3571,6 +3599,7 @@ function myState() {
   const fc = myFur(), pc = myPawCol();
   const s = { t: 's', n: MP.name, i: myId(), c: fc, c2: pc, b: r3(state.bodyH), h: [r3(_mpv.x), r3(_mpv.y), r3(_mpv.z), r3(_mq.x), r3(_mq.y), r3(_mq.z), r3(_mq.w)] };
   s.p = hands.map(h => h.paw.visible ? packPose(h.paw) : 0);
+  s.f = hands.map(h => (h.paw.userData.curl || [.25, .25, .25]).map(v => Math.round(v * 20) / 20));
   return s;
 }
 function mpSend(dt) {
@@ -3632,6 +3661,7 @@ function stepFriends(dt) {
     f.label.position.set(c.h[0], c.h[1] + .32, c.h[2]);
     for (let i = 0; i < 2; i++) {
       const p = f.paws[i];
+      if (t.f && t.f[i] && p.userData.curl) { const cc = p.userData.curl; for (let j = 0; j < 3; j++) cc[j] += ((+t.f[i][j] || 0) - cc[j]) * k; setCurl(p, cc); }
       if (t.p && t.p[i]) { c.p = c.p || [0, 0]; c.p[i] = lerpPose(c.p[i] || null, t.p[i], k); p.visible = true; p.position.set(c.p[i][0], c.p[i][1], c.p[i][2]); p.quaternion.set(c.p[i][3], c.p[i][4], c.p[i][5], c.p[i][6]); }
       else { p.visible = true; _mpv.set(i ? .2 : -.2, -.3, -.25).applyQuaternion(_fq.set(0, f.head.quaternion.y, 0, f.head.quaternion.w).normalize()); p.position.copy(f.head.position).add(_mpv); p.quaternion.copy(_fq); }
     }
@@ -3713,7 +3743,7 @@ const comp = (() => {
   mergeStatic(g, c => c === scr || c === kb || c === led || c === sgn);
   g.updateMatrixWorld(true);
   const yaw = g.rotation.y, wp = (x, z) => V(x, 0, z).applyAxisAngle(V(0, 1, 0), yaw).add(COMP_AT);
-  let p = wp(0, -.05); addCol({ t: 0, x: p.x, y: .18, z: p.z, hx: .53, hy: .18, hz: .33, yaw, tag: 'wood' });          // desk + keyboard (top at .36)
+  let p = wp(0, -.05); addCol({ t: 0, x: p.x, y: .16, z: p.z, hx: .53, hy: .16, hz: .33, yaw, tag: 'wood' });          // desk (a bit under the keys, so a paw or fingertip can press them in)
   p = wp(0, -.35); addCol({ t: 0, x: p.x, y: .74, z: p.z, hx: .5, hy: .3, hz: .1, yaw, tag: 'wood' });                 // monitor (front at -.25)
   return { g, scr, kb, sg, stex, kg, ktex, led };
 })();
@@ -3840,7 +3870,7 @@ function compTapKb(u, v) {
   return false;
 }
 /* ---------- poking: VR paws tap it; on desktop you look and click ---------- */
-const _cpv = V(), _ray = new THREE.Raycaster();
+const _cpv = V(), _cpw = V(), _ray = new THREE.Raycaster();
 function stepComputer(dt) {
   if (CP.flashT > 0 && (CP.flashT -= dt) <= 0) { CP.flash = null; drawKb(); }
   if (state.area !== 'grove') return;
@@ -3852,16 +3882,18 @@ function stepComputer(dt) {
   if (!(state.xr || sim.on)) return;
   for (const h of hands) {
     if (!h.tracked) { CP.inK[h.i] = CP.inS[h.i] = false; continue; }
+    // poke with your pointer finger when it's out (trigger let go), otherwise with the whole paw
+    const point = h.paw.userData.curl && h.paw.userData.curl[1] < .45, P = point ? tipWorld(h, _cpw) : _cpw.copy(h.pos), tk = point ? .012 : PAW_R + .015, ts = point ? .015 : PAW_R + .03;
     // keyboard (lying flat, facing up)
-    comp.kb.worldToLocal(_cpv.copy(h.pos));
-    const inK = Math.abs(_cpv.x) < .43 && Math.abs(_cpv.y) < .19 && _cpv.z < PAW_R + .015 && _cpv.z > -.08;
+    comp.kb.worldToLocal(_cpv.copy(P));
+    const inK = Math.abs(_cpv.x) < .43 && Math.abs(_cpv.y) < .19 && _cpv.z < tk && _cpv.z > -.08;
     if (inK && !CP.inK[h.i]) { if (compTapKb(_cpv.x / .86 + .5, _cpv.y / .383 + .5)) buzz(h, .5, 30); }
-    CP.inK[h.i] = inK ? true : (_cpv.z > PAW_R + .03 || Math.abs(_cpv.x) > .45 || Math.abs(_cpv.y) > .21) ? false : CP.inK[h.i];
+    CP.inK[h.i] = inK ? true : (_cpv.z > tk + .015 || Math.abs(_cpv.x) > .45 || Math.abs(_cpv.y) > .21) ? false : CP.inK[h.i];
     // screen (standing up, facing you)
-    comp.scr.worldToLocal(_cpv.copy(h.pos));
-    const inS = Math.abs(_cpv.x) < .45 && Math.abs(_cpv.y) < .253 && _cpv.z < PAW_R + .03 && _cpv.z > -.1;
+    comp.scr.worldToLocal(_cpv.copy(P));
+    const inS = Math.abs(_cpv.x) < .45 && Math.abs(_cpv.y) < .253 && _cpv.z < ts && _cpv.z > -.1;
     if (inS && !CP.inS[h.i]) { if (compTapScreen(_cpv.x / .9 + .5, _cpv.y / .506 + .5)) buzz(h, .5, 30); }
-    CP.inS[h.i] = inS ? true : (_cpv.z > PAW_R + .05 || Math.abs(_cpv.x) > .47 || Math.abs(_cpv.y) > .27) ? false : CP.inS[h.i];
+    CP.inS[h.i] = inS ? true : (_cpv.z > ts + .02 || Math.abs(_cpv.x) > .47 || Math.abs(_cpv.y) > .27) ? false : CP.inS[h.i];
   }
 }
 function compDesk() {
