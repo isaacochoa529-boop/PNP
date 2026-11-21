@@ -4224,8 +4224,9 @@ function stepHorror(dt) {
     if (peek.g.position.y < -2.2) { peek.g.visible = false; HZ.peekT = -1; }
   }
 
-  // the figure: 1 in 888 every second
-  if (HZ.phase === 'none') { HZ.rollT += dt; while (HZ.rollT >= 1) { HZ.rollT -= 1; if (rnd() < 1 / 888) { figRoll(); break; } } }
+  // the figure: 1 in 90 every second (about every 2 minutes), but never within 30 s of its last visit
+  if (HZ.phase !== 'none') HZ.figEnd = tAll;
+  if (HZ.phase === 'none') { HZ.rollT += dt; while (HZ.rollT >= 1) { HZ.rollT -= 1; if (tAll - (HZ.figEnd || -99) > 30 && rnd() < 1 / 90) { figRoll(); break; } } }
   else HZ.pt += dt;
   if (HZ.phase === 'tpose') { hitCheck(); if (HZ.phase === 'tpose' && HZ.pt > 5) { fig.g.visible = false; HZ.phase = 'none'; if (ac) tone('sawtooth', 60, 30, .15, .1); } }
   else if (HZ.phase === 'spazz' || HZ.phase === 'chase') {
