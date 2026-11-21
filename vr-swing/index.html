@@ -685,12 +685,13 @@ const logA = V(oakA.x + 2.6, houseY, oakA.z - 1.2), logB = V(isl.x - 2.8, isl.to
   scene.userData.logMid = mid;
 }
 
-/* ---------------- the Knuckle Wall (a climbing wall with holds) ---------------- */
+/* ---------------- the Knuckle Wall (a climbing wall with holds you can GRAB) ---------------- */
+const HOLDS = [];
 {
   const wx = 0, wz = 17.5, w = 9, h = 5;
   box(wx, h / 2, wz, w, h, 1, 0, { geo: paint(new THREE.BoxGeometry(w, h, 1, 9, 5, 1), (c, x, y) => c.setHSL(.6, .2, .5 + ((Math.floor(x + 10) + Math.floor(y)) % 2) * .06)), material: vcMat, tag: 'rock' });
   const hc = [0xff4f6d, 0xffd25a, 0x3fe0bd, 0x8b6bff, 0xff8a3d];
-  for (let i = 0; i < 40; i++) { const hm = new THREE.Mesh(new THREE.IcosahedronGeometry(.12 + rnd() * .08, 0), mat(hc[i % 5])); hm.position.set(wx - w / 2 + .4 + rnd() * (w - .8), .4 + rnd() * (h - .6), wz - .55); scene.add(hm); }
+  for (let i = 0; i < 40; i++) { const r = .12 + rnd() * .08, hm = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), mat(hc[i % 5])); hm.position.set(wx - w / 2 + .4 + rnd() * (w - .8), .4 + rnd() * (h - .6), wz - .55); scene.add(hm); HOLDS.push({ m: hm, p: hm.position, r, n: V(0, 0, -1) }); }
   deck(wx, h + .1, wz + 1.2, w, 3.4, ['s', 'e', 'w']);
 }
 
@@ -1226,7 +1227,6 @@ function readHands() {
     rig.localToWorld(h.target.copy(h.local));
     if (!h.off) h.off = V();
     if (h.holding) { _q2.copy(rig.quaternion).multiply(h.q); h.off.set(0, -.015, -(.085 + h.holding.r)).applyQuaternion(_q2); }
-    else if (h.sword && state.area === 'arena') { _q2.copy(rig.quaternion).multiply(h.q); h.off.copy(SW_REACH).applyQuaternion(_q2); }
     else h.off.set(0, 0, 0);
     h.target.add(h.off); h.cr = h.holding ? h.holding.r : PAW_R;
     if (!h.ready || h.reset) { h.prev.copy(h.target); h.pos.copy(h.target); h.ready = true; h.reset = false; }
@@ -1260,7 +1260,11 @@ function stepArms(dt) {
   // 1) paws that are stuck drag the body
   _mv.set(0, 0, 0); let ns = 0, pushing = false;
   for (const h of hands) {
-    if (!h.stuck) continue;
+    if (!h.stuck) { if (h.hold) letGoHold(h); continue; }
+    if (h.hold) {   // gripping a climbing hold: it's a real handle, pull any way you like
+      _d.subVectors(h.target, h.sp); if (_d.length() > .9) { letGoHold(h); h.stuck = false; continue; }
+      _mv.sub(_d); ns++; pushing = true; continue;
+    }
     _d.subVectors(h.target, h.sp); const sep = _d.dot(h.n);
     if (sep < .004) pushing = true;
     if (sep > RELEASE || _d.length() > .7) { h.stuck = false; h.cool = .12; continue; }
@@ -3258,7 +3262,10 @@ function glassBlade(dt) {
       } else glassHit(pane, bx, by, s, vW, { size: .02 });
       pane.bTouch = true; continue;
     }
-    if (cur) GL.drag = Math.max(GL.drag || 0, pane.galaxy ? .9 : clamp(.25 + .17 * Math.sqrt(tf), .25, .88));   // the glass grips the blade
+    if (cur) {   // the glass grips the blade: it pushes back, harder the thicker it is
+      GL.drag = Math.max(GL.drag || 0, pane.galaxy ? .93 : clamp(.5 + .2 * Math.sqrt(tf), .5, .93));
+      if (sword.held && tAll - (GL.rT || 0) > .07) { GL.rT = tAll; buzz(sword.held, clamp(.25 + .25 * Math.sqrt(tf), .25, 1), 60); if (Math.random() < .5) sfxScratch(); }
+    }
     if (pane.stab) { stabStep(pane, cur, tf); pane.bTouch = true; continue; }   // stabbed in: twist it to bore a hole
     if (pane.trace) {   // scoring: follow the blade
       if (!cur) { traceEnd(pane); pane.bTouch = touch; continue; }
@@ -3500,13 +3507,37 @@ function deskPose(pos, q) {
   else { pos.copy(DESK.idleH); q.copy(_dq[3]); }
   camera.updateMatrixWorld(); camera.localToWorld(pos); camera.getWorldQuaternion(_aq2); q.premultiply(_aq2);
 }
+function swordCollide(h, dt) {   // the held blade is solid against the world: it rests on the floor and walls instead of sinking in
+  let any = false; _swC.set(0, 0, 0);
+  for (let it = 0; it < 3; it++) {
+    let best = null, bd = 0;
+    for (let j = 0; j <= 6; j++) {
+      _swS.lerpVectors(BLADE_A, BLADE_B, j / 6).applyQuaternion(_swQ).add(_swP);
+      const R = j === 6 ? .012 : .022;
+      for (const c of colliders) {
+        if (c.pane) continue;   // glass is for cutting
+        if (_swS.x + R < c.minx || _swS.x - R > c.maxx || _swS.y + R < c.miny || _swS.y - R > c.maxy || _swS.z + R < c.minz || _swS.z - R > c.maxz) continue;
+        const d = sdf(c, _swS, _n) - R; if (d < bd) { bd = d; best = { n: _n.clone(), c }; }
+      }
+      triQuery(_swS, R, (t, d, n) => { if (d - R < bd) { bd = d - R; best = { n: n.clone(), c: t.owner }; } });
+    }
+    if (!best) break;
+    any = true; _swR.copy(best.n).multiplyScalar(-bd + .001); _swP.add(_swR); _swC.add(_swR); if (!sword.hitC) sword.hitC = best.c;
+  }
+  if (!any) { sword.hitC = null; sword.wasHit = false; return; }
+  // like pushing on the ground with a paw: shove the blade in and you get pushed the other way
+  const k = Math.min(1, _swC.length() / .2); if (_swC.length() > .12) _swC.setLength(.12);
+  rig.position.add(_swC); if (_swC.y > 0) state.vel.y = Math.max(0, state.vel.y); else state.vel.y = Math.min(state.vel.y, 0);
+  state.vel.x *= .9; state.vel.z *= .9;
+  if (!sword.wasHit) { sword.wasHit = true; const sp = sword.lv.length(); if (sp > .5) { sfxTap(sword.hitC && sword.hitC.tag || 'rock', clamp(sp / 4, .1, .8)); if (ac) tone('triangle', 1900, 1500, .08, clamp(sp / 20, .02, .1)); } buzz(h, clamp(.3 + sword.lv.length() / 5, .3, 1), 40); }
+  else if (k > .02) buzz(h, .2 + k * .5, 20);
+}
 function vrPose(h, pos, q) {
   _aq2.copy(rig.quaternion).multiply(h.q);
   if (h.src && h.src.hand) { rig.localToWorld(pos.copy(h.local)); q.copy(_aq2).multiply(HAND_ROT[h.side] || HAND_ROT.right); }
   else { pos.copy(PAW_OFF).applyQuaternion(h.q).negate().add(h.local); rig.localToWorld(pos); q.copy(_aq2).multiply(GRIP_ROT); }
-  if (h.sword) pos.add(_swR.copy(SW_REACH).applyQuaternion(_aq2));   // a longer arm, like when you hold a ball
 }
-const SW_REACH = V(0, -.02, -.3), _swR = V();
+const _swR = V(), _swC = V(), _swS = V();
 function takeSword(h) {
   if (sword.held && sword.held !== h) sword.held.sword = false;
   if (sword.body) { AR.world.removeRigidBody(sword.body); sword.body = null; }
@@ -3574,8 +3605,22 @@ function swordNear(h) {
   _a1.copy(sword.g.position).add(ARENA);
   return _a1.distanceTo(h.pos) < (sword.mode === 'stone' ? .22 : .2);
 }
+function holdGrab(h) {   // squeeze near a climbing hold: your paw clamps onto it
+  if (!h.tracked || state.area === 'arena' || h.holding) return false;
+  let best = null, bd = 1e9;
+  for (const o of HOLDS) { const d = o.p.distanceTo(h.target) - o.r; if (d < .16 && d < bd) { bd = d; best = o; } }
+  if (!best) return false;
+  h.hold = best; h.stuck = true; h.cool = 0; h.col = null;
+  h.sp.copy(best.p).addScaledVector(best.n, best.r * .55 + PAW_R * .5); h.n.copy(best.n); h.pos.copy(h.sp); h.prev.copy(h.sp);
+  if (!hands.some(o => o !== h && o.stuck)) state.velBuf.length = 0;
+  best.m.scale.setScalar(1.18); sfxTap('rock', .5); buzz(h, .6, 35);
+  if (!state.toldHold) { state.toldHold = true; toast('🧗 Got a hold! Pull down to climb, grab the next one, let go to drop.', 4.5); }
+  return true;
+}
+function letGoHold(h) { if (h.hold) { h.hold.m.scale.setScalar(1); h.hold = null; } }
 function grabAny(h) {
   if (toughGrab(h)) return;
+  if (holdGrab(h)) return;
   if (state.area === 'arena' && AR.ready && h.tracked) {
     if (swordNear(h)) { takeSword(h); return; }
     const pc = pieceNear(h); if (pc) { holdPiece(h, pc); return; }
@@ -3584,6 +3629,7 @@ function grabAny(h) {
   grabProp(h);
 }
 function dropAny(h) {
+  if (h.hold) { letGoHold(h); h.stuck = false; h.cool = .15; return; }
   if (PULL.h === h) { pullStop(false); return; }
   if (h.sword) { releaseSword(h); return; }
   if (h.piece) { releasePiece(h); return; }
@@ -3720,7 +3766,7 @@ function stepArena(dt) {
   if (sword.mode === 'held') {
     const h = sword.held;
     sword.ppos.copy(sword.g.position); sword.pq.copy(sword.g.quaternion);
-    if (state.xr || sim.on) { vrPose(h, _swP, _swQ); if (GL.drag > .01) { _a1.copy(sword.g.position).add(ARENA); if (_a1.distanceTo(_swP) < .35) _swP.lerp(_a1, GL.drag); } } else { deskPose(_swP, _swQ); const s = AR.swing; if (s.t < 1) { s.t += dt / (s.fast ? SWING_T * .55 : SWING_T); if (s.t >= 1 && s.queued) { s.queued = false; s.t = 1; s.r = 1; startSwing(false); } } else if (s.r < 1) s.r += dt / RETURN_T; }
+    if (state.xr || sim.on) { vrPose(h, _swP, _swQ); if (GL.drag > .01) { _a1.copy(sword.g.position).add(ARENA); if (_a1.distanceTo(_swP) < .35) _swP.lerp(_a1, GL.drag); } swordCollide(h, dt); } else { deskPose(_swP, _swQ); const s = AR.swing; if (s.t < 1) { s.t += dt / (s.fast ? SWING_T * .55 : SWING_T); if (s.t >= 1 && s.queued) { s.queued = false; s.t = 1; s.r = 1; startSwing(false); } } else if (s.r < 1) s.r += dt / RETURN_T; }
     sword.g.position.copy(_swP).sub(ARENA); sword.g.quaternion.copy(_swQ);
     sword.lv.subVectors(sword.g.position, sword.ppos).multiplyScalar(1 / Math.max(dt, 1e-3));
     _aq.copy(sword.pq).invert().premultiply(sword.g.quaternion); const ang = 2 * Math.acos(clamp(Math.abs(_aq.w), 0, 1)); const sgn = _aq.w < 0 ? -1 : 1;
@@ -5265,7 +5311,7 @@ function stepVoice(dt) {
 }
 { const b = $('btnMute'); if (b) b.onclick = () => { if (!VC.mic) { VC.asked = false; micOn(); } else setMute(!VC.muted); }; setMute(VC.muted); }
 window.__kg.voice = { VC, micOn, setMute, voiceMeet, micLevel };
-window.__kg.glass = { GL, glassHit, paneHole, paneCarve, paneCarvePath, blade: glassBlade, LAB, labSet, paneSdf, pieceShatter, glassReset, glassSeeds, paneShatter, GPILE, stepGlassPre, netSend };
+window.__kg.holds = HOLDS; window.__kg.glass = { GL, glassHit, paneHole, paneCarve, paneCarvePath, blade: glassBlade, LAB, labSet, paneSdf, pieceShatter, glassReset, glassSeeds, paneShatter, GPILE, stepGlassPre, netSend };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
 </body>
