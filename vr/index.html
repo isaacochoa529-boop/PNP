@@ -1,0 +1,821 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Piano Night VR</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Monoton&family=Fredoka:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: full-bleed 3D stage, one floating menu card on the left, tiny HUD top-left. Single night-club look on purpose. */
+:root {
+  --night: #0b0820;
+  --panel: rgba(20, 14, 48, 0.86);
+  --line: rgba(160, 140, 255, 0.28);
+  --ink: #f1edff;
+  --muted: #a99fd6;
+  --gold: #ffd250;
+  --cyan: #5fe1ff;
+  --pink: #ff5fb4;
+  --display: "Monoton", "Impact", system-ui, sans-serif;
+  --body: "Fredoka", "Trebuchet MS", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; overflow: hidden; }
+[hidden] { display: none !important; }
+body { background: var(--night); color: var(--ink); font-family: var(--body); }
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+.menu {
+  position: fixed; z-index: 5;
+  top: calc(env(safe-area-inset-top, 0px) + 16px);
+  left: max(16px, env(safe-area-inset-left, 0px));
+  width: min(380px, calc(100% - 32px));
+  max-height: calc(100% - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+  padding: 20px; display: grid; gap: 14px; box-sizing: border-box;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 20px 60px rgba(0,0,0,.5), 0 0 40px rgba(95,225,255,.08);
+}
+.logo { font-family: var(--display); font-weight: 400; font-size: 34px; line-height: 1.05; margin: 0;
+  color: var(--gold); text-shadow: 0 0 14px rgba(255,210,80,.55); text-wrap: balance; letter-spacing: .02em; }
+.tag { margin: 0; color: var(--muted); font-size: 15px; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin-bottom: 6px; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: 500 15px var(--body); color: var(--ink); background: rgba(255,255,255,.05);
+  border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; cursor: pointer; }
+.chip small { color: var(--muted); font-size: 12px; }
+.chip[aria-pressed="true"] { border-color: var(--cyan); background: rgba(95,225,255,.14); box-shadow: 0 0 12px rgba(95,225,255,.3); }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn { font: 600 17px var(--body); border: 0; border-radius: 12px; padding: 11px 18px; cursor: pointer; }
+.btn.play { background: var(--gold); color: #26160a; box-shadow: 0 0 20px rgba(255,210,80,.45); flex: 1; }
+.btn.vr { background: var(--pink); color: #2a0518; flex: 1; }
+.btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.btn:focus-visible, .chip:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.note { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.45; }
+.keys { font-size: 13.5px; color: var(--muted); line-height: 1.5; margin: 0; padding-left: 18px; }
+.keys b { color: var(--ink); font-weight: 600; }
+.results { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center; }
+.results div { background: rgba(255,255,255,.04); border-radius: 10px; padding: 8px 2px; }
+.results b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.results span { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.r-p b { color: var(--gold); } .r-g b { color: #50ff78; } .r-o b { color: #64c8ff; } .r-m b { color: #ff5050; }
+
+.hud { position: fixed; z-index: 4; top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: max(16px, env(safe-area-inset-right, 0px)); text-align: right; pointer-events: none;
+  font-variant-numeric: tabular-nums; text-shadow: 0 2px 8px #000; }
+.hud .sc { font-size: 30px; font-weight: 700; color: var(--gold); }
+.hud .cb { font-size: 17px; color: var(--cyan); }
+.hud .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.toast { position: fixed; z-index: 6; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  transform: translateX(-50%); background: var(--panel); border: 1px solid var(--gold); color: var(--gold);
+  padding: 10px 18px; border-radius: 999px; font-weight: 600; max-width: calc(100% - 32px); text-align: center;
+  transition: opacity .3s; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+</style>
+
+<div id="stage"></div>
+
+<section class="menu" id="menu" aria-label="Game menu">
+  <div>
+    <h1 class="logo">Piano Night Playin'</h1>
+    <p class="tag">VR edition. Notes slide down the highway, you hit the key right as they cross the glowing line.</p>
+  </div>
+  <div id="resultsBox" hidden>
+    <div class="label" id="resultsTitle">Last run</div>
+    <div class="results">
+      <div class="r-p"><b id="rP">0</b><span>Perfect</span></div>
+      <div class="r-g"><b id="rG">0</b><span>Great</span></div>
+      <div class="r-o"><b id="rO">0</b><span>OK</span></div>
+      <div class="r-m"><b id="rM">0</b><span>Miss</span></div>
+    </div>
+    <p class="note" id="rLine" style="margin-top:8px"></p>
+  </div>
+  <div>
+    <div class="label">Song</div>
+    <div class="choices" id="songChoices"></div>
+  </div>
+  <div>
+    <div class="label">Tempo</div>
+    <div class="choices" id="tempoChoices"></div>
+  </div>
+  <div class="actions">
+    <button class="btn play" id="playBtn">▶ Play</button>
+    <button class="btn vr" id="vrBtn" disabled>Checking VR…</button>
+  </div>
+  <p class="note" id="vrNote"></p>
+  <div>
+    <div class="label">Controls</div>
+    <ul class="keys">
+      <li><b>Desktop:</b> the letters printed on the keys, or click / tap the keys. <b>Esc</b> = back to menu.</li>
+      <li><b>VR controllers:</b> drum the keys with the mallets. Trigger = start, grip = next song.</li>
+      <li><b>VR hands:</b> tap keys with your index fingers. Pinch = start.</li>
+    </ul>
+  </div>
+</section>
+
+<div class="hud" id="hud" hidden>
+  <div class="sc" id="hudScore">0</div>
+  <div class="cb" id="hudCombo"></div>
+  <div class="hint">Esc for menu</div>
+</div>
+<div class="toast" id="toast" style="opacity:0" aria-live="polite"></div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* ================= PNP rules (ported from PNP/settings.py + game.py) ================= */
+const HEIGHT = 700, HIT_LINE_Y = 550, HIT_WINDOW = 90, PERFECT_WINDOW = 25, GREAT_WINDOW = 55;
+const NOTE_HEIGHT = 32, NOTE_SPEED = 5, BEAT_SPACING = 150, FPS = 60, EARLY_LATE = 8;
+const PX_PER_SEC = NOTE_SPEED * FPS;            // pygame moved notes 5px per frame at 60 FPS
+const SONGS = [{"title":"Fallen Down Track 0","bpm":120,"chart":[["A4",0.0,0.75],["A5",0.75,0.75],["E5",1.5,0.25],["D5",1.75,0.25],["E5",2.0,0.25],["F#5",2.25,0.25],["F#5",2.5,0.031],["E5",2.531,0.031],["D5",2.562,0.188],["E5",2.75,0.25],["D5",3.0,0.75],["A5",3.75,0.75],["A4",4.5,0.25],["D5",4.75,0.25],["E5",5.0,0.25],["F#5",5.25,0.25],["F#5",5.5,0.031],["E5",5.531,0.031],["E5",5.562,0.188],["A5",5.75,0.25],["F#5",6.0,0.75],["G5",6.75,0.5],["F#5",7.25,0.25],["E5",7.5,0.75],["D5",8.25,0.5],["E5",8.75,0.25],["F#5",9.0,0.75],["G5",9.75,0.5],["B5",10.25,0.25],["A5",10.5,1.5],["A4",12.0,0.75],["A5",12.75,0.75],["E5",13.5,0.25],["D5",13.75,0.25],["E5",14.0,0.25],["F#5",14.25,0.25],["F#5",14.5,0.031],["E5",14.531,0.031],["D5",14.562,0.188],["E5",14.75,0.25],["D5",15.0,0.75],["A5",15.75,0.75],["A4",16.5,0.25],["D5",16.75,0.25],["E5",17.0,0.25],["F#5",17.25,0.25],["F#5",17.5,0.031],["E5",17.531,0.031],["E5",17.562,0.188],["A5",17.75,0.25],["F#5",18.0,0.75],["G5",18.75,0.5],["F#5",19.25,0.25],["E5",19.5,0.75],["D5",20.25,0.5],["E5",20.75,0.25],["F#5",21.0,0.75],["G5",21.75,0.5],["B5",22.25,0.25],["A5",22.5,1.5]]},{"title":"Fallen Down Track 1","bpm":120,"chart":[["F#5",0.0,0.25],["C#5",0.25,0.25],["F#5",0.5,0.25],["C#5",0.75,0.25],["F#5",1.0,0.25],["C#5",1.25,0.25],["F#5",1.5,0.25],["C#5",1.75,0.25],["F#5",2.0,0.25],["C#5",2.25,0.25],["F#5",2.5,0.25],["C#5",2.75,0.25],["B4",3.0,0.25],["A4",3.25,0.25],["C#5",3.5,0.5],["A4",4.0,0.25],["B4",4.25,0.25],["E5",4.5,0.25],["D#5",4.75,0.25],["E5",5.0,0.25],["F#5",5.25,0.25],["D#5",5.5,0.25],["B4",5.75,0.25],["F#5",6.0,0.25],["B4",6.25,0.25],["F#5",6.5,0.25],["B4",6.75,0.25],["F#5",7.0,0.25],["B4",7.25,0.25],["F#5",7.5,0.25],["A#4",7.75,0.25],["F#5",8.0,0.25],["A#4",8.25,0.25],["G5",8.5,0.5],["F#5",9.0,0.25],["D5",9.25,0.25],["F#5",9.5,0.25],["D5",9.75,0.25],["E5",10.0,0.25],["F#5",10.25,0.25],["E5",10.5,0.5],["D5",11.0,0.5],["C#5",11.5,0.5],["F#5",12.0,0.25],["C#5",12.25,0.25],["F#5",12.5,0.25],["C#5",12.75,0.25],["F#5",13.0,0.25],["C#5",13.25,0.25],["F#5",13.5,0.25],["C#5",13.75,0.25],["F#5",14.0,0.25],["C#5",14.25,0.25],["F#5",14.5,0.25],["C#5",14.75,0.25],["B4",15.0,0.25],["A4",15.25,0.25],["C#5",15.5,0.5],["A4",16.0,0.25],["B4",16.25,0.25],["E5",16.5,0.25],["D#5",16.75,0.25],["E5",17.0,0.25],["F#5",17.25,0.25],["D#5",17.5,0.25],["B4",17.75,0.25],["F#5",18.0,0.25],["B4",18.25,0.25],["F#5",18.5,0.25],["B4",18.75,0.25],["F#5",19.0,0.25],["B4",19.25,0.25],["F#5",19.5,0.25],["A#4",19.75,0.25],["F#5",20.0,0.25],["A#4",20.25,0.25],["G5",20.5,0.5],["F#5",21.0,0.25],["D5",21.25,0.25],["F#5",21.5,0.25],["D5",21.75,0.25],["E5",22.0,0.25],["F#5",22.25,0.25],["E5",22.5,0.5],["D5",23.0,0.5],["C#5",23.5,0.5],["F#5",24.0,0.25],["C#5",24.25,0.25],["F#5",24.5,0.25],["C#5",24.75,0.25],["F#5",25.0,0.25],["C#5",25.25,0.25],["F#5",25.5,0.25],["C#5",25.75,0.25],["F#5",26.0,0.25],["C#5",26.25,0.25],["F#5",26.5,0.25],["C#5",26.75,0.25],["B4",27.0,0.25],["A4",27.25,0.25],["C#5",27.5,0.5],["A4",28.0,0.25],["B4",28.25,0.25],["E5",28.5,0.25],["D#5",28.75,0.25],["E5",29.0,0.25],["F#5",29.25,0.25],["D#5",29.5,0.25],["B4",29.75,0.25],["F#5",30.0,0.25],["B4",30.25,0.25],["F#5",30.5,0.25],["B4",30.75,0.25],["F#5",31.0,0.25],["B4",31.25,0.25],["F#5",31.5,0.25],["A#4",31.75,0.25],["F#5",32.0,0.25],["A#4",32.25,0.25],["G5",32.5,0.5],["F#5",33.0,0.25],["D5",33.25,0.25],["F#5",33.5,0.25],["D5",33.75,0.25],["E5",34.0,0.25],["F#5",34.25,0.25],["E5",34.5,0.5],["D5",35.0,0.5],["C#5",35.5,0.5],["F#5",36.0,0.25],["A#4",36.25,0.25],["F#5",36.5,0.25],["A#4",36.75,0.25],["G5",37.0,0.5],["F#5",37.5,0.25],["D5",37.75,0.25],["F#5",38.0,0.25],["D5",38.25,0.25],["E5",38.5,0.25],["F#5",38.75,0.25],["C#5",39.0,0.5],["F#5",39.5,0.5],["C#5",40.0,0.5],["D5",40.5,0.75],["A4",41.25,0.25],["B4",41.5,0.25],["C#5",41.75,0.25],["D5",42.0,0.5],["C#5",42.5,0.5],["D5",43.0,0.5],["A4",43.5,0.75],["B4",44.25,0.25],["A4",44.5,0.25],["G4",44.75,0.25],["F#4",45.0,0.5],["F#5",45.5,0.5],["E5",46.0,0.5],["D5",46.5,0.75],["A4",47.25,0.25],["B4",47.5,0.25],["C#5",47.75,0.25],["D5",48.0,0.5],["C#5",48.5,0.5],["D5",49.0,0.5],["F#5",49.5,0.75],["G5",50.25,0.25],["F#5",50.5,0.25],["E5",50.75,0.25],["D5",51.0,0.5],["E5",51.5,0.5],["C#5",52.0,0.5],["D5",52.5,0.75],["A4",53.25,0.25],["B4",53.5,0.25],["C#5",53.75,0.25],["D5",54.0,0.5],["C#5",54.5,0.5],["D5",55.0,0.5],["A4",55.5,0.75],["B4",56.25,0.25],["A4",56.5,0.25],["G4",56.75,0.25],["F#4",57.0,0.5],["F#5",57.5,0.5],["E5",58.0,0.5],["D5",58.5,0.75],["A4",59.25,0.25],["B4",59.5,0.25],["C#5",59.75,0.25],["D5",60.0,0.5],["C#5",60.5,0.5],["D5",61.0,0.5],["F#5",61.5,0.25],["D5",61.75,0.25],["F#5",62.0,0.25],["D5",62.25,0.25],["E5",62.5,0.25],["F#5",62.75,0.25],["E5",63.0,0.5],["D5",63.5,0.5],["C#5",64.0,0.5],["A4",64.5,0.25],["A5",65.25,0.75],["E5",66.0,1.5],["D5",67.5,0.75],["A5",68.25,0.75],["A4",69.0,1.5],["A4",70.5,0.75],["D5",71.25,0.75],["A5",72.0,1.25],["B5",73.25,0.25],["A5",73.5,0.75],["E5",74.25,0.75],["D5",75.0,1.5],["A4",76.5,0.25],["A5",77.25,0.75],["E5",78.0,1.5],["D5",79.5,0.75],["A5",80.25,0.75],["A4",81.0,1.5],["A4",82.5,0.75],["D5",83.25,0.75],["A5",84.0,1.25],["B5",85.25,0.25],["A5",85.5,0.75],["E5",86.25,0.75],["D5",87.0,1.5],["A4",89.5,0.75],["A5",90.25,0.5],["F#5",90.75,0.25],["E5",92.0,0.5],["D5",92.5,0.25],["C#5",92.75,0.5],["D5",93.25,0.25],["E5",94.5,0.75],["B5",95.25,0.062],["C6",95.312,0.031],["C#6",95.344,0.219],["C6",95.562,0.25],["B5",95.812,0.25],["A5",96.062,1.5],["B4",99.562,0.75],["A5",100.312,0.5],["F#5",100.812,0.25],["E5",102.062,0.75],["D5",102.844,0.219],["C#5",104.562,0.75],["E5",105.312,0.75],["E5",107.062,0.5],["D5",107.562,0.25],["C#5",107.812,0.5],["D5",108.312,0.25],["A4",109.562,0.75],["A5",110.312,0.5],["F#5",110.812,0.25],["E5",112.062,0.5],["D5",112.562,0.25],["C#5",112.812,0.5],["D5",113.312,0.25],["E5",114.562,0.75],["B5",115.312,0.062],["C6",115.375,0.031],["C#6",115.406,0.219],["C6",115.625,0.25],["B5",115.875,0.25],["A5",116.125,1.5],["B4",119.625,0.75],["A5",120.375,0.5],["F#5",120.875,0.25],["E5",122.125,0.75],["D5",122.906,0.219],["C#5",124.625,0.75],["E5",125.375,0.75],["E5",127.125,0.5],["D5",127.625,0.25],["C#5",127.875,0.5],["D5",128.375,0.25],["A4",128.625,0.5],["D4",129.125,0.25],["E4",129.375,0.5],["D4",129.875,0.25],["D4",130.625,0.25],["E4",130.875,0.5],["D4",131.375,0.25],["D4",132.125,0.25],["E4",132.375,0.5],["G4",132.875,0.25],["F#4",133.125,0.5],["E4",133.625,0.25],["D4",133.875,0.5],["A3",134.375,0.25],["A4",134.625,0.5],["D4",135.125,0.25],["E4",135.375,0.5],["D4",135.875,0.25],["D4",136.625,0.25],["E4",136.875,0.5],["D4",137.375,0.25],["D4",138.125,0.25],["E4",138.375,0.5],["G4",138.875,0.25],["F#4",139.125,0.5],["E4",139.625,0.25],["D4",139.875,0.5],["A4",140.625,0.5],["D4",141.125,0.25],["E4",141.375,0.5],["D4",141.875,0.25],["D4",142.625,0.25],["E4",142.875,0.5],["F#4",143.375,0.125],["E4",143.5,0.125],["D4",143.625,1.5]]}];
+const TEMPOS = [{ v: 0.4, name: 'Practice' }, { v: 0.7, name: 'Groove' }, { v: 1.0, name: 'Full speed' }];
+const COLORS = { PERFECT: '#ffdc50', GREAT: '#50ff78', OK: '#64c8ff', MISS: '#ff5050' };
+
+/* ================= 3D layout constants (metres) ================= */
+const WW = 0.05, WL = 0.22, WH = 0.025;        // white key width / length / height
+const BW = 0.03, BL = 0.14, BH = 0.022;         // black key
+const HWY_LEN = 4.5, HWY_TILT = 0.12;           // highway length and upward tilt
+const PX_TO_M = HWY_LEN / HIT_LINE_Y;           // 550 px of lookahead = whole highway
+const KEYS_Z = -0.42, KEYS_Y = 0.9;
+const isBlackPc = pc => [1, 3, 6, 8, 10].includes(pc);
+const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const toMidi = n => { const nm = n[1] === '#' ? n.slice(0, 2) : n[0]; return (parseInt(n.slice(nm.length)) + 1) * 12 + NAMES.indexOf(nm); };
+const KEY_CODES = ['KeyA','KeyS','KeyD','KeyF','KeyG','KeyH','KeyJ','KeyK','KeyL','Semicolon','KeyQ','KeyW','KeyE','KeyR','KeyT','KeyY','KeyU','KeyI','KeyO','KeyP'];
+const KEY_LABELS = ['A','S','D','F','G','H','J','K','L',';','Q','W','E','R','T','Y','U','I','O','P'];
+
+/* ================= renderer / scene ================= */
+const host = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor');
+host.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0b0820, 18, 70);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.02, 200);
+const player = new THREE.Group(); player.add(camera); scene.add(player);
+
+scene.add(new THREE.HemisphereLight(0x8a7cff, 0x140a2a, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 1.1); sun.position.set(1.5, 4, 2); scene.add(sun);
+const keyLight = new THREE.PointLight(0x5fe1ff, 2.5, 3); keyLight.position.set(0, 1.3, -0.6); scene.add(keyLight);
+
+function canvasTex(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); draw(g, w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return { c, g, t };
+}
+
+/* ---------- sky dome, stars, moon, city ---------- */
+const sky = new THREE.Mesh(new THREE.SphereGeometry(90, 32, 16), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  vertexShader: 'varying vec3 p; void main(){ p = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }',
+  fragmentShader: 'varying vec3 p; void main(){ float h = clamp(p.y*1.4+.1,0.,1.); vec3 c = mix(vec3(.30,.10,.38), vec3(.02,.02,.08), h); gl_FragColor = vec4(c,1.); }'
+}));
+scene.add(sky);
+{
+  const n = 1400, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const u = Math.random() * Math.PI * 2, v = Math.random() * 0.85 + 0.08;
+    const r = 80; pos.set([r * Math.cos(u) * Math.cos(v * 1.5), r * Math.sin(v * 1.5), r * Math.sin(u) * Math.cos(v * 1.5)], i * 3);
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  var stars = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 0.35, fog: false, transparent: true }));
+  scene.add(stars);
+}
+function drawMoon(g, w, h, wink) {
+  g.clearRect(0, 0, w, h);
+  const grd = g.createRadialGradient(w*.42, h*.4, 10, w/2, h/2, w/2);
+  grd.addColorStop(0, '#fffbe8'); grd.addColorStop(1, '#d8cfa8');
+  g.fillStyle = grd; g.beginPath(); g.arc(w/2, h/2, w/2 - 2, 0, 7); g.fill();
+  g.fillStyle = 'rgba(150,140,110,.35)';
+  [[.3,.62,.09],[.66,.7,.06],[.62,.32,.08],[.4,.3,.05],[.75,.5,.04]].forEach(([x,y,r]) => { g.beginPath(); g.arc(x*w, y*h, r*w, 0, 7); g.fill(); });
+  if (wink) { // ssshh
+    g.strokeStyle = '#5a4a30'; g.lineWidth = 7; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(w*.33, h*.42); g.lineTo(w*.43, h*.42); g.stroke();
+    g.fillStyle = '#5a4a30'; g.beginPath(); g.arc(w*.62, h*.42, 9, 0, 7); g.fill();
+    g.beginPath(); g.arc(w*.5, h*.56, w*.14, 0.15*Math.PI, 0.85*Math.PI); g.stroke();
+  }
+}
+const moonTex = canvasTex(256, 256, (g, w, h) => drawMoon(g, w, h, false));
+const moon = new THREE.Mesh(new THREE.CircleGeometry(5, 48), new THREE.MeshBasicMaterial({ map: moonTex.t, transparent: true, fog: false }));
+moon.position.set(-22, 26, -55); moon.lookAt(0, 1.5, 0); scene.add(moon);
+const moonGlow = new THREE.Mesh(new THREE.CircleGeometry(9, 48), new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.12, fog: false, depthWrite: false }));
+moonGlow.position.copy(moon.position).multiplyScalar(1.01); moonGlow.lookAt(0, 1.5, 0); scene.add(moonGlow);
+
+const floorTex = canvasTex(256, 256, (g, w, h) => {
+  g.fillStyle = '#0d0a22'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = 'rgba(190,90,255,.55)'; g.lineWidth = 3; g.strokeRect(0, 0, w, h);
+});
+floorTex.t.wrapS = floorTex.t.wrapT = THREE.RepeatWrapping; floorTex.t.repeat.set(60, 60);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), new THREE.MeshBasicMaterial({ map: floorTex.t }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+
+const winTex = canvasTex(64, 128, (g, w, h) => {
+  g.fillStyle = '#100c26'; g.fillRect(0, 0, w, h);
+  for (let y = 6; y < h; y += 12) for (let x = 6; x < w; x += 12)
+    if (Math.random() < 0.35) { g.fillStyle = Math.random() < .5 ? '#ffd27a' : '#7ad9ff'; g.fillRect(x, y, 6, 7); }
+});
+for (let i = 0; i < 46; i++) {
+  const a = (i / 46) * Math.PI * 2 + Math.random() * 0.05, r = 42 + Math.random() * 10;
+  const hgt = 6 + Math.random() * 18, wd = 3 + Math.random() * 4;
+  const b = new THREE.Mesh(new THREE.BoxGeometry(wd, hgt, wd), new THREE.MeshBasicMaterial({ map: winTex.t, fog: true }));
+  b.position.set(Math.cos(a) * r, hgt / 2, Math.sin(a) * r); b.lookAt(0, hgt / 2, 0); scene.add(b);
+}
+
+/* ---------- stage: everything the player plays on (recentred in VR) ---------- */
+const stageRoot = new THREE.Group(); scene.add(stageRoot);
+let pianoRoot = null;      // rebuilt per song, like PNP's build_keyboard_layout
+let keys = [];             // {midi, black, x, pivot, mat, base, press, glowCol, label}
+let laneOfMidi = new Map();
+let highway = null, notesGroup = null, beatLines = [], laneStrips = [];
+let cabinetMat = null;
+
+const matWhite = new THREE.MeshStandardMaterial({ color: 0xf4f1ff, roughness: 0.35 });
+const matBlack = new THREE.MeshStandardMaterial({ color: 0x15121f, roughness: 0.25, metalness: 0.2 });
+
+function disposeTree(o) { o.traverse(n => { if (n.geometry) n.geometry.dispose(); }); }
+
+function buildPiano(song) {
+  if (pianoRoot) { stageRoot.remove(pianoRoot); disposeTree(pianoRoot); }
+  pianoRoot = new THREE.Group(); pianoRoot.position.set(0, KEYS_Y, KEYS_Z); stageRoot.add(pianoRoot);
+  keys = []; laneOfMidi = new Map(); laneStrips = []; beatLines = [];
+
+  const mids = song.chart.map(c => toMidi(c[0]));
+  const lo = Math.min(...mids), hi = Math.max(...mids);
+  let wi = 0;
+  for (let m = lo; m <= hi; m++) {
+    const black = isBlackPc(m % 12);
+    const x = black ? wi * WW - WW / 2 : wi * WW;
+    if (!black) wi++;
+    keys.push({ midi: m, black, x });
+  }
+  const minX = Math.min(...keys.map(k => k.x)), maxX = Math.max(...keys.map(k => k.x));
+  const mid = (minX + maxX) / 2; keys.forEach(k => k.x -= mid);
+  const width = maxX - minX + WW;
+
+  // which keys the song uses → desktop letters (PNP's calibration list, sorted by pitch)
+  const used = [...new Set(mids)].sort((a, b) => a - b);
+  used.forEach((m, i) => { const k = keys[m - lo]; k.code = KEY_CODES[i]; k.letter = KEY_LABELS[i]; });
+
+  keys.forEach((k, i) => {
+    laneOfMidi.set(k.midi, i);
+    const pivot = new THREE.Group(); pivot.position.set(k.x, k.black ? BH * 0.55 : 0, 0);
+    const mat = (k.black ? matBlack : matWhite).clone();
+    const len = k.black ? BL : WL, w = k.black ? BW : WW - 0.003, h = k.black ? BH : WH;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, len), mat);
+    mesh.position.set(0, -h / 2, len / 2); mesh.userData.keyIndex = i;
+    pivot.add(mesh);
+    if (!k.black) { // rounded-looking front lip
+      const lip = new THREE.Mesh(new THREE.BoxGeometry(w, h * 0.8, 0.006), mat);
+      lip.position.set(0, -h * 0.55, len + 0.002); lip.userData.keyIndex = i; pivot.add(lip);
+    }
+    if (k.letter) {
+      const lt = canvasTex(64, 64, (g) => { g.fillStyle = k.black ? '#5fe1ff' : '#2a1a6a'; g.font = '700 48px Fredoka, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(k.letter, 32, 34); });
+      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.032, 0.032), new THREE.MeshBasicMaterial({ map: lt.t, transparent: true }));
+      lbl.rotation.x = -Math.PI / 2; lbl.position.set(0, 0.0008, len - 0.03); pivot.add(lbl); k.label = lbl;
+    }
+    pianoRoot.add(pivot);
+    Object.assign(k, { pivot, mat, mesh, base: mat.color.clone(), press: 0, glowCol: new THREE.Color() });
+  });
+
+  // cabinet: body, cheeks, key slip, back rail with felt, hover pads
+  cabinetMat = new THREE.MeshStandardMaterial({ color: 0x1b1430, roughness: 0.25, metalness: 0.35 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(width + 0.06, 0.08, WL + 0.12), cabinetMat);
+  body.position.set(0, -WH - 0.04, WL / 2 - 0.03); pianoRoot.add(body);
+  [-1, 1].forEach(s => {
+    const cheek = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.07, WL + 0.12), cabinetMat);
+    cheek.position.set(s * (width / 2 + 0.017), -0.0, WL / 2 - 0.03); pianoRoot.add(cheek);
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.02, 24), new THREE.MeshBasicMaterial({ color: 0x5fe1ff, transparent: true, opacity: .7 }));
+    pad.position.set(s * width * 0.32, -WH - 0.09, WL / 2 - 0.02); pad.userData.hover = true; pianoRoot.add(pad);
+  });
+  const slip = new THREE.Mesh(new THREE.BoxGeometry(width + 0.06, 0.03, 0.015), cabinetMat);
+  slip.position.set(0, -WH - 0.004, WL + 0.015); pianoRoot.add(slip);
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(width + 0.06, 0.035, 0.04), cabinetMat);
+  rail.position.set(0, 0.005, -0.03); pianoRoot.add(rail);
+  // the hit line (PNP's HIT_LINE_Y) glows along the back rail
+  const hitLine = new THREE.Mesh(new THREE.BoxGeometry(width + 0.02, 0.006, 0.012), new THREE.MeshBasicMaterial({ color: 0xff5fb4 }));
+  hitLine.position.set(0, 0.024, -0.012); pianoRoot.add(hitLine); pianoRoot.userData.hitLine = hitLine;
+
+  // highway: tilted runway that the notes slide down
+  highway = new THREE.Group(); highway.position.set(0, 0.024, -0.02); highway.rotation.x = HWY_TILT; pianoRoot.add(highway);
+  const deck = new THREE.Mesh(new THREE.PlaneGeometry(width + 0.04, HWY_LEN), new THREE.MeshBasicMaterial({ color: 0x120c2e, transparent: true, opacity: 0.82 }));
+  deck.rotation.x = -Math.PI / 2; deck.position.z = -HWY_LEN / 2; highway.add(deck);
+  [-1, 1].forEach(s => {
+    const r = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.012, HWY_LEN), new THREE.MeshBasicMaterial({ color: 0xb45cff }));
+    r.position.set(s * (width / 2 + 0.02), 0.006, -HWY_LEN / 2); highway.add(r);
+  });
+  used.forEach(m => {
+    const k = keys[m - lo];
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(k.black ? BW : WW - 0.006, HWY_LEN),
+      new THREE.MeshBasicMaterial({ color: k.black ? 0xff5fb4 : 0x5fe1ff, transparent: true, opacity: 0.07, depthWrite: false }));
+    strip.rotation.x = -Math.PI / 2; strip.position.set(k.x, 0.001, -HWY_LEN / 2); highway.add(strip);
+    k.strip = strip; laneStrips.push(strip);
+  });
+  for (let i = 0; i < 8; i++) {
+    const bl = new THREE.Mesh(new THREE.PlaneGeometry(width, 0.006), new THREE.MeshBasicMaterial({ color: 0x8a7cff, transparent: true, opacity: 0.35, depthWrite: false }));
+    bl.rotation.x = -Math.PI / 2; bl.position.y = 0.0015; highway.add(bl); beatLines.push(bl);
+  }
+  notesGroup = new THREE.Group(); highway.add(notesGroup);
+  if (huds) placeHuds(width);
+}
+
+/* ---------- notes ---------- */
+const noteGeoW = new THREE.BoxGeometry(WW - 0.012, 0.018, NOTE_HEIGHT * PX_TO_M);
+const noteGeoB = new THREE.BoxGeometry(BW - 0.006, 0.018, NOTE_HEIGHT * PX_TO_M);
+const tailGeo = new THREE.BoxGeometry(1, 1, 1);
+let notes = [];
+
+function laneColor(i, n) { return new THREE.Color().setHSL(0.5 + 0.45 * (i / Math.max(1, n - 1)), 0.9, 0.6); }
+
+function buildNotes(song) {
+  notesGroup.clear(); notes = [];
+  song.chart.forEach(([name, time, dur]) => {
+    const lane = laneOfMidi.get(toMidi(name)); const k = keys[lane];
+    const col = laneColor(lane, keys.length);
+    const mat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.8, roughness: 0.3, transparent: true });
+    const head = new THREE.Mesh(k.black ? noteGeoB : noteGeoW, mat);
+    const tailLen = Math.max(0, dur * BEAT_SPACING * PX_TO_M - NOTE_HEIGHT * PX_TO_M);
+    if (tailLen > 0.01) {
+      const tail = new THREE.Mesh(tailGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.35, depthWrite: false }));
+      tail.scale.set(0.008, 0.006, tailLen); tail.position.z = -(NOTE_HEIGHT * PX_TO_M) / 2 - tailLen / 2; head.add(tail);
+    }
+    head.visible = false; head.position.x = k.x; head.position.y = 0.012;
+    notesGroup.add(head);
+    // PNP spawns every note at y = -100 - time * BEAT_SPACING
+    notes.push({ lane, midi: k.midi, spawnY: -100 - time * BEAT_SPACING, hit: false, mesh: head });
+  });
+}
+
+/* ---------- canvas panels (score HUD + VR menu) ---------- */
+function makePanel(w, h, px) {
+  const ct = canvasTex(px, Math.round(px * h / w), () => {});
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: ct.t, transparent: true, depthWrite: false }));
+  return { mesh, g: ct.g, c: ct.c, t: ct.t };
+}
+let huds = null;
+function roundRect(g, x, y, w, h, r) { g.beginPath(); g.roundRect(x, y, w, h, r); }
+function placeHuds(width) {
+  huds.score.mesh.position.set(-(width / 2 + 0.42), KEYS_Y + 0.45, KEYS_Z - 0.75);
+  huds.score.mesh.rotation.y = 0.55;
+}
+huds = { score: makePanel(0.6, 0.42, 512), judge: makePanel(0.5, 0.16, 512), menu: makePanel(1.0, 0.62, 800) };
+stageRoot.add(huds.score.mesh, huds.judge.mesh, huds.menu.mesh);
+huds.judge.mesh.position.set(0, KEYS_Y + 0.2, KEYS_Z - 0.35);
+huds.menu.mesh.position.set(0, KEYS_Y + 0.62, KEYS_Z - 0.9);
+huds.menu.mesh.visible = false;
+
+function drawScorePanel() {
+  const { g, c, t } = huds.score; const W = c.width, H = c.height;
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = 'rgba(20,14,48,.82)'; roundRect(g, 4, 4, W - 8, H - 8, 28); g.fill();
+  g.strokeStyle = 'rgba(160,140,255,.5)'; g.lineWidth = 3; g.stroke();
+  g.textAlign = 'left'; g.fillStyle = '#a99fd6'; g.font = '500 26px Fredoka, sans-serif';
+  g.fillText(state.ghost ? 'SCORE  (ghost hands)' : 'SCORE', 30, 52);
+  g.fillStyle = '#ffd250'; g.font = '700 76px Fredoka, sans-serif'; g.fillText(stats.score.toLocaleString(), 28, 128);
+  g.fillStyle = '#5fe1ff'; g.font = '600 38px Fredoka, sans-serif'; g.fillText(`${stats.combo} combo`, 30, 182);
+  g.fillStyle = '#a99fd6'; g.font = '500 24px Fredoka, sans-serif'; g.fillText(`best ${stats.maxCombo}`, 300, 182);
+  const items = [['PERFECT', stats.perfects, COLORS.PERFECT], ['GREAT', stats.greats, COLORS.GREAT], ['OK', stats.oks, COLORS.OK], ['MISS', stats.misses, COLORS.MISS]];
+  items.forEach(([n, v, col], i) => {
+    const x = 30 + i * 118; g.fillStyle = col; g.font = '700 40px Fredoka, sans-serif'; g.fillText(v, x, 262);
+    g.fillStyle = '#a99fd6'; g.font = '500 18px Fredoka, sans-serif'; g.fillText(n, x, 290);
+  });
+  g.fillStyle = '#a99fd6'; g.font = '500 22px Fredoka, sans-serif';
+  g.fillText(`early ${stats.early} · late ${stats.late} · acc ${accuracy()}%`, 30, 340);
+  t.needsUpdate = true;
+  document.getElementById('hudScore').textContent = stats.score.toLocaleString();
+  document.getElementById('hudCombo').textContent = stats.combo > 1 ? `${stats.combo} combo` : '';
+}
+let judgeAnim = 0;
+function drawJudge(text, color, sub) {
+  const { g, c, t } = huds.judge; g.clearRect(0, 0, c.width, c.height);
+  g.textAlign = 'center'; g.shadowColor = color; g.shadowBlur = 24; g.fillStyle = color;
+  g.font = '700 92px Fredoka, sans-serif'; g.fillText(text, c.width / 2, 100);
+  if (sub) { g.shadowBlur = 0; g.fillStyle = '#ffffff'; g.font = '500 34px Fredoka, sans-serif'; g.fillText(sub, c.width / 2, 148); }
+  t.needsUpdate = true; judgeAnim = 1;
+}
+function drawMenuPanel() {
+  const { g, c, t } = huds.menu; const W = c.width, H = c.height; g.clearRect(0, 0, W, H);
+  g.fillStyle = 'rgba(20,14,48,.9)'; roundRect(g, 4, 4, W - 8, H - 8, 34); g.fill();
+  g.strokeStyle = '#ff5fb4'; g.lineWidth = 4; g.stroke();
+  g.textAlign = 'center'; g.fillStyle = '#ffd250'; g.font = '700 58px Fredoka, sans-serif';
+  g.fillText(state.mode === 'results' ? 'Song complete!' : "Piano Night Playin'", W / 2, 84);
+  g.fillStyle = '#f1edff'; g.font = '600 40px Fredoka, sans-serif';
+  g.fillText(`${SONGS[state.song].title}`, W / 2, 150);
+  g.fillStyle = '#5fe1ff'; g.font = '500 32px Fredoka, sans-serif';
+  g.fillText(`Tempo: ${TEMPOS[state.tempo].name} (${TEMPOS[state.tempo].v}x)`, W / 2, 200);
+  if (state.mode === 'results') {
+    g.fillStyle = '#ffd250'; g.font = '700 52px Fredoka, sans-serif'; g.fillText(`${stats.score.toLocaleString()} pts · ${accuracy()}%`, W / 2, 280);
+    g.fillStyle = '#a99fd6'; g.font = '500 30px Fredoka, sans-serif';
+    g.fillText(`P ${stats.perfects}  G ${stats.greats}  OK ${stats.oks}  Miss ${stats.misses}  ·  max combo ${stats.maxCombo}`, W / 2, 330);
+  }
+  g.fillStyle = '#f1edff'; g.font = '500 30px Fredoka, sans-serif';
+  g.fillText('Trigger or pinch: play', W / 2, H - 150);
+  g.fillText('Left grip: next song  ·  Right grip: tempo', W / 2, H - 105);
+  g.fillStyle = '#a99fd6'; g.font = '500 24px Fredoka, sans-serif';
+  g.fillText('Tap keys any time to jam freely', W / 2, H - 55);
+  t.needsUpdate = true;
+}
+
+/* ---------- particles (hit sparks + combo fireworks) ---------- */
+const PMAX = 900;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(PMAX * 3), pCol = new Float32Array(PMAX * 3);
+const pVel = new Float32Array(PMAX * 3), pLife = new Float32Array(PMAX);
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
+const sparks = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.02, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+sparks.frustumCulled = false; scene.add(sparks);
+let pNext = 0;
+function burst(pos, color, n, speed, gravity = 1) {
+  for (let i = 0; i < n; i++) {
+    const j = pNext; pNext = (pNext + 1) % PMAX;
+    pPos.set([pos.x, pos.y, pos.z], j * 3);
+    const a = Math.random() * Math.PI * 2, e = Math.random() * Math.PI - Math.PI / 2, s = speed * (0.4 + Math.random() * 0.6);
+    pVel.set([Math.cos(a) * Math.cos(e) * s, Math.abs(Math.sin(e)) * s * 1.2 + speed * .3, Math.sin(a) * Math.cos(e) * s], j * 3);
+    const c = color instanceof THREE.Color ? color : new THREE.Color().setHSL(Math.random(), 1, 0.6);
+    pCol.set([c.r, c.g, c.b], j * 3); pLife[j] = 0.6 + Math.random() * 0.6 * gravity;
+  }
+}
+function updateParticles(dt) {
+  for (let j = 0; j < PMAX; j++) {
+    if (pLife[j] <= 0) { pPos[j * 3 + 1] = -99; continue; }
+    pLife[j] -= dt; pVel[j * 3 + 1] -= 2.5 * dt;
+    pPos[j * 3] += pVel[j * 3] * dt; pPos[j * 3 + 1] += pVel[j * 3 + 1] * dt; pPos[j * 3 + 2] += pVel[j * 3 + 2] * dt;
+  }
+  pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
+}
+
+/* ---------- shooting stars ---------- */
+const shooters = [];
+function shootingStars(n) {
+  for (let i = 0; i < n; i++) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 6), new THREE.MeshBasicMaterial({ color: 0xfff6c8, fog: false, transparent: true }));
+    m.position.set(-40 + Math.random() * 80, 30 + Math.random() * 15, -60 + Math.random() * 20);
+    const v = new THREE.Vector3(18 + Math.random() * 10, -10 - Math.random() * 6, 4);
+    m.lookAt(m.position.clone().add(v)); scene.add(m);
+    shooters.push({ m, v, life: 2.2 + i * 0.35, delay: i * 0.35 });
+  }
+}
+
+/* ================= audio: tiny piano-ish synth ================= */
+let ac = null, master = null;
+function audioOn() {
+  if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  const comp = ac.createDynamicsCompressor(); comp.connect(ac.destination);
+  master = ac.createGain(); master.gain.value = 0.8; master.connect(comp);
+}
+function playTone(midi, vel = 0.8) {
+  if (!ac) return;
+  const f = 440 * Math.pow(2, (midi - 69) / 12), t = ac.currentTime;
+  const g = ac.createGain(); g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.32 * vel, t + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(Math.min(16000, f * 10), t); lp.frequency.exponentialRampToValueAtTime(f * 2.2, t + 0.9);
+  const o1 = ac.createOscillator(); o1.type = 'triangle'; o1.frequency.value = f;
+  const o2 = ac.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * 2.003;
+  const g2 = ac.createGain(); g2.gain.value = 0.35;
+  o1.connect(lp); o2.connect(g2).connect(lp); lp.connect(g).connect(master);
+  o1.start(t); o2.start(t); o1.stop(t + 1.9); o2.stop(t + 1.9);
+}
+
+/* ================= game state + PNP scoring ================= */
+const state = { mode: 'menu', song: 0, tempo: 0, elapsed: 0, endTimer: 0, ghost: false, golden: false, xr: false };
+let stats;
+function resetStats() {
+  stats = { score: 0, hits: 0, misses: 0, combo: 0, maxCombo: 0, perfects: 0, greats: 0, oks: 0, early: 0, late: 0 };
+}
+resetStats();
+const accuracy = () => {
+  const n = stats.perfects + stats.greats + stats.oks + stats.misses;
+  return n ? Math.round((stats.perfects * 300 + stats.greats * 200 + stats.oks * 100) / (n * 300) * 100) : 100;
+};
+const centerY = n => n.spawnY + PX_PER_SEC * TEMPOS[state.tempo].v * state.elapsed + NOTE_HEIGHT / 2;
+
+function handleKeyPress(lane) {             // game.py handle_key_press
+  let hitAny = false;
+  for (const note of notes) {
+    if (note.hit || note.lane !== lane) continue;
+    const signed = centerY(note) - HIT_LINE_Y, err = Math.abs(signed);
+    if (err <= HIT_WINDOW) { registerHit(note, err, signed); hitAny = true; break; }
+  }
+  if (!hitAny) registerMiss();
+}
+function registerHit(note, err, signed) {     // game.py register_hit
+  stats.hits++; stats.combo++; stats.maxCombo = Math.max(stats.maxCombo, stats.combo);
+  note.hit = true; note.mesh.visible = false;
+  let timing = 'ON TIME';
+  if (signed < -EARLY_LATE) { timing = 'EARLY'; stats.early++; } else if (signed > EARLY_LATE) { timing = 'LATE'; stats.late++; }
+  let j;
+  if (err <= PERFECT_WINDOW) { stats.score += 300; stats.perfects++; j = 'PERFECT'; }
+  else if (err <= GREAT_WINDOW) { stats.score += 200; stats.greats++; j = 'GREAT'; }
+  else { stats.score += 100; stats.oks++; j = 'OK'; }
+  drawJudge(j + '!', COLORS[j], `${timing}${stats.combo > 1 ? ' · ' + stats.combo + ' combo' : ''}`);
+  const k = keys[note.lane]; const wp = k.pivot.localToWorld(new THREE.Vector3(0, 0.01, 0.02));
+  burst(wp, new THREE.Color(COLORS[j]), j === 'PERFECT' ? 26 : 14, 0.9);
+  if (stats.combo > 0 && stats.combo % 25 === 0) comboFireworks();
+  if (stats.combo === 100 && !state.golden) goldenPiano();
+  drawScorePanel();
+}
+function registerMiss() {                      // game.py register_miss
+  stats.misses++; stats.combo = 0;
+  drawJudge('MISS!', COLORS.MISS, '');
+  drawScorePanel();
+}
+
+function comboFireworks() {
+  const base = pianoRoot.localToWorld(new THREE.Vector3(0, 0.9, -2.2));
+  for (let i = 0; i < 4; i++) burst(base.clone().add(new THREE.Vector3((i - 1.5) * 0.7, Math.random() * 0.4, 0)), null, 60, 1.6, 1.5);
+  toast(`🎆 ${stats.combo} combo!`);
+}
+function goldenPiano() {
+  state.golden = true;
+  cabinetMat.color.set(0xd4a017); cabinetMat.metalness = 0.9; cabinetMat.roughness = 0.2;
+  toast('✨ A golden piano appears');
+}
+
+/* ---------- key presses from any source ---------- */
+function pressKey(i, vel = 0.8) {
+  const k = keys[i]; if (!k) return;
+  audioOn(); playTone(k.midi, vel);
+  k.press = 1;
+  if (state.mode === 'playing') handleKeyPress(i);
+  if (k.strip) k.strip.material.opacity = 0.35;
+}
+
+/* ================= flow: menu → playing → results ================= */
+function loadSong(i) {
+  state.song = i; buildPiano(SONGS[i]); buildNotes(SONGS[i]); resetStats(); drawScorePanel(); drawMenuPanel(); renderChoices();
+}
+function startSong() {
+  audioOn();
+  if (state.xr) recenter();
+  buildNotes(SONGS[state.song]); resetStats();
+  state.elapsed = 0; state.endTimer = 0; state.mode = 'playing';
+  drawScorePanel(); drawJudge('READY', '#ff5fb4', SONGS[state.song].title);
+  ui.menu.hidden = true; ui.hud.hidden = false; huds.menu.mesh.visible = false;
+}
+function endSong() {
+  ui.results.hidden = false; ui.resultsTitle.textContent = `${SONGS[state.song].title} · ${TEMPOS[state.tempo].name}${state.ghost ? ' · ghost hands' : ''}`;
+  ui.rP.textContent = stats.perfects; ui.rG.textContent = stats.greats; ui.rO.textContent = stats.oks; ui.rM.textContent = stats.misses;
+  ui.rLine.textContent = `${stats.score.toLocaleString()} points · ${accuracy()}% accuracy · max combo ${stats.maxCombo} · early ${stats.early} / late ${stats.late}`;
+  toMenu(true);
+}
+function toMenu(fromResults) {
+  notes.forEach(n => n.mesh.visible = false);
+  state.mode = fromResults ? 'results' : 'menu';
+  ui.menu.hidden = false; ui.hud.hidden = true; huds.menu.mesh.visible = state.xr;
+  drawMenuPanel(); ui.play.focus({ preventScroll: true });
+}
+
+/* ================= HTML menu ================= */
+const $ = id => document.getElementById(id);
+const ui = { menu: $('menu'), hud: $('hud'), play: $('playBtn'), vr: $('vrBtn'), vrNote: $('vrNote'), results: $('resultsBox'),
+  resultsTitle: $('resultsTitle'), rP: $('rP'), rG: $('rG'), rO: $('rO'), rM: $('rM'), rLine: $('rLine') };
+function renderChoices() {
+  const sc = $('songChoices'); sc.innerHTML = '';
+  SONGS.forEach((s, i) => {
+    const b = document.createElement('button'); b.className = 'chip'; b.id = 'song' + i;
+    b.setAttribute('aria-pressed', i === state.song);
+    b.innerHTML = `${s.title.replace('Fallen Down ', '')} <small>${s.chart.length} notes</small>`;
+    b.onclick = () => { if (state.mode !== 'playing') loadSong(i); };
+    sc.appendChild(b);
+  });
+  const tc = $('tempoChoices'); tc.innerHTML = '';
+  TEMPOS.forEach((t, i) => {
+    const b = document.createElement('button'); b.className = 'chip'; b.id = 'tempo' + i;
+    b.setAttribute('aria-pressed', i === state.tempo);
+    b.innerHTML = `${t.name} <small>${t.v}x</small>`;
+    b.onclick = () => { state.tempo = i; renderChoices(); drawMenuPanel(); };
+    tc.appendChild(b);
+  });
+}
+ui.play.onclick = startSong;
+
+let toastTimer = 0;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.opacity = 1; toastTimer = Math.max(2.5, msg.split(' ').length / 2.3 + 1.2); }
+
+/* ================= desktop input ================= */
+let secretBuf = '';
+addEventListener('keydown', e => {
+  secretBuf = (secretBuf + (e.key || '').toLowerCase()).slice(-12);
+  if (secretBuf.endsWith('pnp') && !state.ghost) { state.ghost = true; toast('👻 Ghost hands are playing for you. Type pnp again to stop'); secretBuf = ''; drawScorePanel(); return; }
+  if (secretBuf.endsWith('pnp') && state.ghost) { state.ghost = false; toast('👻 Ghost hands left the building'); secretBuf = ''; drawScorePanel(); return; }
+  if (e.code === 'Escape') { if (state.mode === 'playing') toMenu(false); return; }
+  if (e.code === 'Enter' && state.mode !== 'playing' && document.activeElement?.tagName !== 'BUTTON') { startSong(); return; }
+  if (e.repeat) return;
+  const i = keys.findIndex(k => k.code === e.code);
+  if (i >= 0) { e.preventDefault(); pressKey(i); }
+});
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+let moonClicks = 0;
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (state.xr) return;
+  ndc.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(keys.flatMap(k => [k.pivot]), true).filter(h => h.object.userData.keyIndex !== undefined);
+  if (hits.length) { pressKey(hits[0].object.userData.keyIndex); return; }
+  if (ray.intersectObject(moon).length) {
+    moonClicks++;
+    if (moonClicks % 3 === 0) { drawMoon(moonTex.g, 256, 256, true); moonTex.t.needsUpdate = true; shootingStars(7); moonWink = 3; audioOn(); [81, 85, 88, 93].forEach((m, i) => setTimeout(() => playTone(m, .5), i * 120)); }
+  }
+});
+let moonWink = 0;
+
+/* ================= VR: mallets + fingertips ================= */
+const tips = [];   // {obj (Object3D whose world pos is the striking point), prevLocal, armed, haptic}
+const tmpV = new THREE.Vector3();
+function makeMallet() {
+  const g = new THREE.Group();
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.008, 0.2, 10), new THREE.MeshStandardMaterial({ color: 0x8a5a2b, roughness: .6 }));
+  stick.rotation.x = -Math.PI / 2 - 0.5; stick.position.set(0, -0.045, -0.09); g.add(stick);
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.06, 12), new THREE.MeshStandardMaterial({ color: 0x2a1f4a }));
+  grip.rotation.copy(stick.rotation); g.add(grip);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.018, 18, 12), new THREE.MeshStandardMaterial({ color: 0xff5fb4, emissive: 0xff5fb4, emissiveIntensity: .6 }));
+  head.position.set(0, -0.092, -0.17); g.add(head);
+  return { g, head };
+}
+for (let i = 0; i < 2; i++) {
+  const grip = renderer.xr.getControllerGrip(i); player.add(grip);
+  const ctl = renderer.xr.getController(i); player.add(ctl);
+  const { g, head } = makeMallet(); grip.add(g); g.visible = false;
+  const tip = { obj: head, prev: null, armed: true, source: null, holder: g };
+  tips.push(tip);
+  ctl.addEventListener('connected', e => { tip.source = e.data; g.visible = !e.data.hand; ctl.userData.hand = !!e.data.hand; ctl.userData.handed = e.data.handedness; });
+  ctl.addEventListener('disconnected', () => { tip.source = null; g.visible = false; });
+  ctl.addEventListener('selectstart', () => { if (state.xr && state.mode !== 'playing') startSong(); });
+  ctl.addEventListener('squeezestart', () => {
+    if (!state.xr || state.mode === 'playing') return;
+    if (ctl.userData.handed === 'right') { state.tempo = (state.tempo + 1) % TEMPOS.length; renderChoices(); drawMenuPanel(); }
+    else loadSong((state.song + 1) % SONGS.length);
+  });
+
+  const hand = renderer.xr.getHand(i); player.add(hand);
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.009, 14, 10), new THREE.MeshBasicMaterial({ color: 0x5fe1ff }));
+  dot.visible = false; scene.add(dot);
+  const ht = { obj: dot, prev: null, armed: true, source: null, hand, finger: true };
+  tips.push(ht);
+  hand.addEventListener('connected', e => { ht.source = e.data; });
+  hand.addEventListener('disconnected', () => { ht.source = null; dot.visible = false; });
+}
+function keyUnder(lx, lz) {
+  // black keys sit on top, so test them first
+  for (const k of keys) if (k.black && Math.abs(lx - k.x) <= BW / 2 && lz >= 0 && lz <= BL) return k;
+  for (const k of keys) if (!k.black && Math.abs(lx - k.x) <= WW / 2 && lz >= 0 && lz <= WL + 0.01) return k;
+  return null;
+}
+function updateTips() {
+  pianoRoot.updateMatrixWorld(true);
+  for (const tp of tips) {
+    if (!tp.source || (!tp.finger && tp.source.hand) || (tp.finger && !tp.source.hand)) { tp.prev = null; continue; }
+    if (tp.finger) {
+      const j = tp.hand.joints && tp.hand.joints['index-finger-tip'];
+      if (!j || !j.visible) { tp.obj.visible = false; tp.prev = null; continue; }
+      tp.obj.visible = true; j.getWorldPosition(tp.obj.position);
+    }
+    tp.obj.getWorldPosition(tmpV); pianoRoot.worldToLocal(tmpV);
+    const r = tp.finger ? 0.006 : 0.016;
+    const y = tmpV.y - r;
+    const k = keyUnder(tmpV.x, tmpV.z);
+    const top = k && k.black ? BH * 0.55 : 0;
+    if (tp.prev && k && tp.armed && tp.prev.y >= top && y < top && y > top - 0.07) {
+      const speed = (tp.prev.y - y) * 60;
+      pressKey(keys.indexOf(k), Math.min(1, 0.45 + speed * 0.4));
+      tp.armed = false;
+      const gp = tp.source && tp.source.gamepad;
+      if (gp && gp.hapticActuators && gp.hapticActuators[0]) gp.hapticActuators[0].pulse(0.7, 35);
+    }
+    if (y > top + 0.015 || !k) tp.armed = true;
+    tp.prev = { y };
+  }
+}
+
+/* re-centre the stage in front of the player when a VR song starts */
+function recenter() {
+  const xrCam = renderer.xr.getCamera();
+  const p = new THREE.Vector3(), q = new THREE.Quaternion(); xrCam.matrixWorld.decompose(p, q, new THREE.Vector3());
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q); const yaw = Math.atan2(-fwd.x, -fwd.z);
+  stageRoot.rotation.y = yaw;
+  stageRoot.position.set(p.x, THREE.MathUtils.clamp(p.y * 0.62, 0.65, 1.15) - KEYS_Y, p.z);
+}
+
+/* ---------- VR session button ---------- */
+async function setupVR() {
+  let ok = false;
+  try { ok = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-vr'); } catch (e) { ok = false; }
+  if (!ok) {
+    ui.vr.textContent = 'VR not available here';
+    ui.vrNote.textContent = window.isSecureContext && navigator.xr
+      ? 'No headset found. Open this page in your headset browser (Quest Browser works) to play in VR.'
+      : 'VR needs a headset browser on an https page. Desktop mode works right now.';
+    return;
+  }
+  ui.vr.disabled = false; ui.vr.textContent = '🥽 Enter VR';
+  ui.vr.onclick = async () => {
+    audioOn();
+    try {
+      const s = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] });
+      await renderer.xr.setSession(s);
+      state.xr = true; huds.menu.mesh.visible = state.mode !== 'playing'; drawMenuPanel();
+      keys.forEach(k => k.label && (k.label.visible = false));
+      setTimeout(recenter, 300);
+      s.addEventListener('end', () => {
+        state.xr = false; huds.menu.mesh.visible = false; stageRoot.position.set(0, 0, 0); stageRoot.rotation.set(0, 0, 0);
+        keys.forEach(k => k.label && (k.label.visible = true)); placeCamera();
+      });
+    } catch (e) { ui.vrNote.textContent = 'The headset refused to start VR: ' + e.message; }
+  };
+}
+
+/* ================= desktop camera ================= */
+function placeCamera() {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  const tanH = Math.tan(THREE.MathUtils.degToRad(30)) * camera.aspect;
+  const d = Math.max(0.95, 0.52 / tanH);
+  camera.position.set(0, 1.5 + (d - 0.95) * 0.35, KEYS_Z + d);
+  camera.lookAt(0, 0.8, -1.5);
+}
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); if (!state.xr) placeCamera(); });
+
+/* ================= main loop ================= */
+const clock = new THREE.Clock();
+let t = 0;
+function update(dt) {
+  t += dt;
+  if (state.xr) updateTips();
+
+  for (const k of keys) {
+    if (k.press > 0) k.press = Math.max(0, k.press - dt * 6);
+    k.pivot.rotation.x = k.press * 0.07;
+    k.mat.color.copy(k.base).lerp(k.black ? new THREE.Color(0xff5fb4) : new THREE.Color(0x5fe1ff), k.press * 0.7);
+    if (k.strip) k.strip.material.opacity = Math.max(0.07, k.strip.material.opacity - dt * 1.2);
+  }
+
+  if (state.mode === 'playing') {
+    state.elapsed += dt;
+    const tempo = TEMPOS[state.tempo].v;
+    let done = true;
+    for (const n of notes) {
+      if (n.hit) continue;
+      done = false;
+      const cy = centerY(n);
+      if (state.ghost && cy >= HIT_LINE_Y) { pressKey(n.lane); continue; }
+      if (cy - NOTE_HEIGHT / 2 > HEIGHT) { n.hit = true; n.mesh.visible = false; registerMiss(); continue; }   // fell off the bottom
+      const dist = (HIT_LINE_Y - cy) * PX_TO_M;
+      if (dist > HWY_LEN || dist < -0.12) { n.mesh.visible = false; continue; }
+      n.mesh.visible = true; n.mesh.position.z = -dist;
+      n.mesh.material.opacity = dist < 0 ? Math.max(0.15, 1 + dist * 7) : Math.min(1, (HWY_LEN - dist) * 2);
+    }
+    // beat lines scroll with the notes (one per chart beat)
+    const scroll = PX_PER_SEC * tempo * state.elapsed;
+    const firstBeat = Math.floor((scroll - 100 + NOTE_HEIGHT / 2 - HIT_LINE_Y) / BEAT_SPACING);
+    beatLines.forEach((bl, i) => {
+      const b = firstBeat + i; const cy = -100 - b * BEAT_SPACING + scroll + NOTE_HEIGHT / 2;
+      const dist = (HIT_LINE_Y - cy) * PX_TO_M; bl.visible = dist >= 0 && dist <= HWY_LEN; bl.position.z = -dist;
+    });
+    if (done) { state.endTimer += dt; if (state.endTimer > 1.5) endSong(); }   // PNP waits 90 frames
+  } else beatLines.forEach(bl => bl.visible = false);
+
+  // ambience
+  if (pianoRoot) {
+    const hl = pianoRoot.userData.hitLine; hl.material.color.setHSL(0.9 + Math.sin(t * 3) * 0.03, 1, 0.6 + Math.sin(t * 6) * 0.05);
+    pianoRoot.children.forEach(c => { if (c.userData.hover) { c.material.opacity = 0.45 + Math.sin(t * 4 + c.position.x * 9) * 0.25; c.scale.setScalar(1 + Math.sin(t * 4) * 0.06); } });
+  }
+  stars.material.opacity = 0.75 + Math.sin(t * 1.7) * 0.2;
+  if (judgeAnim > 0) {
+    judgeAnim = Math.max(0, judgeAnim - dt * 1.2);
+    const s = 1 + Math.max(0, judgeAnim - 0.75) * 1.6; huds.judge.mesh.scale.setScalar(s);
+    huds.judge.mesh.material.opacity = Math.min(1, judgeAnim * 2.5);
+  }
+  for (let i = shooters.length - 1; i >= 0; i--) {
+    const s = shooters[i];
+    if (s.delay > 0) { s.delay -= dt; s.m.visible = false; continue; }
+    s.m.visible = true; s.m.position.addScaledVector(s.v, dt); s.life -= dt; s.m.material.opacity = Math.min(1, s.life);
+    if (s.life <= 0) { scene.remove(s.m); s.m.geometry.dispose(); shooters.splice(i, 1); }
+  }
+  if (moonWink > 0) { moonWink -= dt; if (moonWink <= 0) { drawMoon(moonTex.g, 256, 256, false); moonTex.t.needsUpdate = true; } }
+  if (toastTimer > 0) { toastTimer -= dt; if (toastTimer <= 0) $('toast').style.opacity = 0; }
+  updateParticles(dt);
+}
+renderer.setAnimationLoop(() => { update(Math.min(0.05, clock.getDelta())); renderer.render(scene, camera); });
+
+/* ================= boot ================= */
+placeCamera();
+loadSong(0);
+drawJudge('PNP', '#ff5fb4', 'tap a key to warm up');
+setupVR();
+document.fonts && document.fonts.ready.then(() => { drawScorePanel(); drawMenuPanel(); });
+window.__pnp = { state, get stats() { return stats; }, startSong, loadSong, get notes() { return notes; } };
+</script>
+
+</html>
