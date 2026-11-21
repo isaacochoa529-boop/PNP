@@ -59,6 +59,14 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
 .row { display: flex; gap: 8px; align-items: center; font-size: 15px; color: var(--muted); }
 .row button { padding: 6px 12px; font-size: 15px; }
 .best { font-size: 14px; color: var(--sun); }
+.mp { border: 2px solid var(--line); border-radius: 16px; padding: 10px 12px; display: grid; gap: 8px; }
+.mp h2 { margin: 0; font: 400 22px var(--display); color: var(--teal); }
+.mp .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mp input { font: 600 18px var(--body); border-radius: 12px; border: 2px solid var(--line); padding: 9px 12px; background: rgba(255,255,255,.92); color: #133; width: 100%; box-sizing: border-box; }
+.mp .code { font: 400 40px var(--display); letter-spacing: 6px; text-align: center; color: var(--sun); }
+.mp .keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.mp .keys button { font-size: 28px; padding: 14px 0; }
+.mp .info { font-size: 18px; color: var(--sun); text-align: center; }
 
 .hud { position: fixed; z-index: 4; top: calc(env(safe-area-inset-top, 0px) + 14px); right: 16px;
   background: var(--panel); border: 2px solid var(--line); border-radius: 16px; padding: 10px 14px; text-align: right; }
@@ -84,6 +92,14 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
     <button id="btnDesk" class="alt">🖱️ Play on desktop</button>
   </div>
   <div class="note" id="vrNote"></div>
+  <div class="mp" id="mp">
+    <h2>🎮 Play with friends</h2>
+    <label class="row">Your name: <input id="mpName" maxlength="12" autocomplete="off"></label>
+    <div class="two" id="mpStart"><button id="btnHost">🏠 Make a room</button><button class="alt" id="btnJoin">🔢 Join a room</button></div>
+    <div id="mpPad" hidden><div class="code" id="mpCode">_ _ _ _</div><div class="keys" id="mpKeys"></div></div>
+    <div id="mpIn" hidden><div class="info" id="mpInfo"></div><button class="alt" id="btnLeave" style="width:100%;margin-top:8px">👋 Leave room</button></div>
+    <div class="note" id="mpNote">Make a room, then tell friends the 4 numbers. Then press Enter VR!</div>
+  </div>
   <ul class="how">
     <li><b>Run:</b> put your paws on the ground and push it behind you.</li>
     <li><b>Jump:</b> shove down hard, then let go.</li>
@@ -92,6 +108,7 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
     <li><b>Grab stuff:</b> squeeze the grip button near a ball, pinecone or star, then throw it!</li>
     <li><b>Turn:</b> right stick. <b>Respawn:</b> B or Y button.</li>
     <li><b>Desktop:</b> WASD, mouse, Space jump, Shift run, E grab/throw, V see yourself, R respawn.</li>
+    <li><b>Play with friends:</b> make a room or type a code up there, or poke the computer next to the spawn stump 💻 (name, colors, player ID too).</li>
     <li>Grab all 12 glow berries 🫐 as fast as you can!</li>
     <li><b>Slicing Yard:</b> walk through the glowing portal by the spawn stump. Pull the red-hot sword from the stone and slice cubes like butter ⚔️🔥 Slow swings carve curvy cuts, SUPER fast ones are anime slices. Hold a cube in your other paw and slice it: you keep your half. There's a MEGA cube too! Green button = more cubes, red = reset. Desktop: E grabs, click swings, right-click = anime slash.</li>
   </ul>
@@ -1489,7 +1506,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt); stepExtras(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt);
 
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
@@ -2615,6 +2632,7 @@ function aimAt(maxD, test) {
 }
 function aimButton() { return aimAt(2.6, f => buttons.forEach(b => f(b, b.top, .09))); }
 function deskInteract() {
+  if (compDesk()) return;
   const h = hands[1], hl = hands[0];
   if (state.area === 'arena' && AR.ready) {
     const holder = h.piece ? h : hl.piece ? hl : null;
@@ -3469,6 +3487,394 @@ function itsCake(pLocal) {
   toast('🎂 Wait... IT WAS CAKE THE WHOLE TIME?!', 4);
 }
 window.__kg.extras = { PULL, pullStart, sfxChoir, pip, pipGrab, pipDrop, pipSay, takeBite, toyToYard, toyTpl, stepSizzleLoop };
+/* ======================================================================
+   MULTIPLAYER (see each other): one player makes a room and gets a 4-digit code, up to 3 friends type it in.
+   Peer to peer through PeerJS (WebRTC); the host passes everyone's head + paws along to everyone else.
+   Nothing loads until you press a button, so playing alone needs no internet at all.
+   ====================================================================== */
+const MP = { peer: null, host: false, code: '', conns: new Map(), hostConn: null, others: new Map(), sendT: 0, myColor: 0, name: '', status: 'off', typed: '' };
+const MP_MAX = 4, MP_PREFIX = 'knucklegrove-room-', MP_COLORS = [0x2fc6a3, 0xff8a3d, 0x8b6bff, 0xff4fa8, 0xffd25a, 0x3fb2ff];
+const MP_NAMES = ['Fuzzy', 'Bonk', 'Pebble', 'Noodle', 'Sprout', 'Biscuit', 'Wobble', 'Tater', 'Mochi', 'Zippy'];
+const CP = { ready: false };
+function mpNote(s) { const el = $('mpNote'); if (el) el.textContent = s; MP.note = s; compDraw(); }
+function loadPeerJS() {
+  if (window.Peer) return Promise.resolve(window.Peer);
+  return new Promise((ok, bad) => {
+    const tryUrl = (urls) => {
+      if (!urls.length) return bad(new Error('could not load'));
+      const sc = document.createElement('script'); sc.src = urls[0]; sc.onload = () => window.Peer ? ok(window.Peer) : tryUrl(urls.slice(1)); sc.onerror = () => tryUrl(urls.slice(1)); document.head.appendChild(sc);
+    };
+    tryUrl(['https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js', 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js']);
+  });
+}
+function mpName() { const el = $('mpName'); let n = (el && el.value || '').trim().slice(0, 12); if (!n) n = MP_NAMES[Math.floor(Math.random() * MP_NAMES.length)] + Math.floor(Math.random() * 90 + 10); store.set('kg-name', n); return n; }
+function mpLeave(quiet) {
+  try { if (MP.peer) MP.peer.destroy(); } catch (e) {}
+  MP.peer = null; MP.hostConn = null; MP.conns.clear(); MP.host = false; MP.code = ''; MP.status = 'off';
+  for (const id of [...MP.others.keys()]) dropOther(id);
+  if (!quiet) mpNote('');
+  mpUi();
+}
+async function mpHost() {
+  mpLeave(true); MP.name = mpName(); mpNote('⏳ Making a room…');
+  let Peer; try { Peer = await loadPeerJS(); } catch (e) { mpNote('😕 Could not reach the internet. You can still play alone!'); return; }
+  const tryCode = (left) => {
+    const code = String(Math.floor(1000 + Math.random() * 9000)), peer = new Peer(MP_PREFIX + code);
+    peer.on('open', () => {
+      MP.peer = peer; MP.host = true; MP.code = code; MP.status = 'host'; MP.myColor = MP_COLORS[0];
+      mpNote(`🏠 Your room code is ${code}. Tell your friends!`); mpUi(); toast(`🏠 Room ${code} is open! Friends type ${code} to join.`, 6);
+    });
+    peer.on('connection', conn => {
+      conn.on('open', () => {
+        if (MP.conns.size >= MP_MAX - 1) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
+        const used = new Set([MP.myColor, ...[...MP.conns.values()].map(c => c.color)]), color = MP_COLORS.find(c => !used.has(c));
+        conn.color = color; MP.conns.set(conn.peer, conn); conn.send({ t: 'hi', c: color, code });
+        mpUi();
+      });
+      conn.on('data', d => { if (d && d.t === 's') { d.id = conn.peer; gotState(d); for (const [id, c] of MP.conns) if (id !== conn.peer && c.open) c.send(d); } });
+      conn.on('close', () => { MP.conns.delete(conn.peer); byeOther(conn.peer); for (const c of MP.conns.values()) if (c.open) c.send({ t: 'bye', id: conn.peer }); mpUi(); });
+    });
+    peer.on('error', err => {
+      if (err && err.type === 'unavailable-id' && left > 0) { try { peer.destroy(); } catch (e) {} tryCode(left - 1); return; }
+      if (MP.status !== 'host') mpNote('😕 Could not make a room (' + (err && err.type || 'error') + '). Try again?');
+    });
+  };
+  tryCode(4);
+}
+async function mpJoin(code) {
+  mpLeave(true); MP.name = mpName(); mpNote(`⏳ Joining room ${code}…`);
+  let Peer; try { Peer = await loadPeerJS(); } catch (e) { mpNote('😕 Could not reach the internet. You can still play alone!'); return; }
+  const peer = new Peer(); MP.peer = peer;
+  const fail = (why) => { if (MP.status === 'joined') return; mpNote(why); mpLeave(true); mpNote(why); };
+  const timer = setTimeout(() => fail(`😕 No room ${code} found. Check the number with your friend!`), 12000);
+  peer.on('open', () => {
+    const conn = peer.connect(MP_PREFIX + code, { reliable: false });
+    conn.on('open', () => { MP.hostConn = conn; });
+    conn.on('data', d => {
+      if (!d) return;
+      if (d.t === 'hi') { clearTimeout(timer); MP.status = 'joined'; MP.code = code; MP.myColor = d.c; mpNote(`🎉 You're in room ${code}!`); mpUi(); toast(`🎉 Joined room ${code}!`, 4); }
+      else if (d.t === 'full') { clearTimeout(timer); fail('😕 That room is full (4 players max).'); }
+      else if (d.t === 's') gotState(d);
+      else if (d.t === 'bye') byeOther(d.id);
+    });
+    conn.on('close', () => { if (MP.status === 'joined') { toast('👋 The room closed.', 3); mpLeave(); } });
+  });
+  peer.on('error', err => { clearTimeout(timer); fail(err && err.type === 'peer-unavailable' ? `😕 No room ${code} found. Check the number with your friend!` : '😕 Could not connect (' + (err && err.type || 'error') + ').'); });
+}
+
+/* ---------- what we send: where your head and paws are, 20 times a second ---------- */
+const _mq = new THREE.Quaternion(), _mpv = V();
+const r3 = x => Math.round(x * 1000) / 1000;
+function packPose(o) { o.updateMatrixWorld(); o.getWorldPosition(_mpv); o.getWorldQuaternion(_mq); return [r3(_mpv.x), r3(_mpv.y), r3(_mpv.z), r3(_mq.x), r3(_mq.y), r3(_mq.z), r3(_mq.w)]; }
+function myState() {
+  headWorld(_mpv); camera.getWorldQuaternion(_mq);
+  const fc = myFur(), pc = myPawCol();
+  const s = { t: 's', n: MP.name, i: myId(), c: fc, c2: pc, b: r3(state.bodyH), h: [r3(_mpv.x), r3(_mpv.y), r3(_mpv.z), r3(_mq.x), r3(_mq.y), r3(_mq.z), r3(_mq.w)] };
+  s.p = hands.map(h => h.paw.visible ? packPose(h.paw) : 0);
+  return s;
+}
+function mpSend(dt) {
+  if (MP.status !== 'host' && MP.status !== 'joined') return;
+  if ((MP.sendT -= dt) > 0) return; MP.sendT = .05;
+  const s = myState();
+  if (MP.host) { s.id = 'host'; for (const c of MP.conns.values()) if (c.open) c.send(s); }
+  else if (MP.hostConn && MP.hostConn.open) MP.hostConn.send(s);
+}
+
+/* ---------- friends: a fuzzy head, a bean body, two paws and a name tag ---------- */
+function makeFriend(color, pawC, name) {
+  const g = new THREE.Group(), fur = new THREE.MeshStandardMaterial({ color: color < 0 ? 0xffffff : color, roughness: .85, flatShading: true });
+  const head = new THREE.Group(); g.add(head);
+  const skull = new THREE.Mesh(new THREE.IcosahedronGeometry(.17, 2), fur); skull.scale.set(1, .92, .95); head.add(skull);
+  const white = new THREE.MeshBasicMaterial({ color: 0xffffff }), dark = new THREE.MeshBasicMaterial({ color: 0x1a1a22 });
+  [-1, 1].forEach(s => {
+    const e = new THREE.Mesh(new THREE.SphereGeometry(.045, 10, 8), white); e.position.set(s * .065, .03, -.14); head.add(e);
+    const pu = new THREE.Mesh(new THREE.SphereGeometry(.024, 8, 6), dark); pu.position.z = -.03; e.add(pu);
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(.05, .12, 7), fur); ear.position.set(s * .1, .15, 0); ear.rotation.z = -s * .35; head.add(ear);
+  });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.17, .2, 4, 10), fur); g.add(body);
+  const paws = [makePaw(pawC < 0 ? 0xffffff : pawC), makePaw(pawC < 0 ? 0xffffff : pawC)]; paws[0].scale.x = -1; paws.forEach(p => g.add(p));
+  const tag = textPanel(512, 128, () => {});
+  const tg = tag.g; tg.fillStyle = 'rgba(16,40,34,.85)'; tg.beginPath(); tg.roundRect(6, 14, 500, 100, 50); tg.fill();
+  tg.fillStyle = color < 0 ? '#ffd25a' : '#' + new THREE.Color(color).getHexString(); tg.font = '600 58px Fredoka, sans-serif'; tg.textAlign = 'center'; tg.textBaseline = 'middle'; tg.fillText(name, 256, 66); tag.t.needsUpdate = true;
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tag.t, depthTest: false, transparent: true })); label.scale.set(.6, .15, 1); label.renderOrder = 8; g.add(label);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; }); scene.add(g);
+  return { g, head, body, paws, label, name, color, pawC, fur, cur: null, tgt: null, seen: 0 };
+}
+const _fq = new THREE.Quaternion();
+function gotState(d) {
+  if (!d || !d.id || !Array.isArray(d.h)) return;
+  let f = MP.others.get(d.id);
+  const name = String(d.n || 'Friend').slice(0, 12), okc = x => x === -1 || (Number.isInteger(x) && x >= 0 && x <= 0xffffff);
+  const c = okc(d.c) ? d.c : 0xffffff, c2 = okc(d.c2) ? d.c2 : c;
+  if (!f || f.name !== name || f.color !== c || f.pawC !== c2) {
+    const isNew = !f; if (f) dropOther(d.id, true);
+    f = makeFriend(c, c2, name); MP.others.set(d.id, f);
+    if (isNew) { toast(`👋 ${name} is here!`, 3); if (ac) [660, 880].forEach((q, i) => tone('triangle', q, q, .2, .15, i * .1)); }
+    mpUi();
+  }
+  f.pid = /^KG-[A-Z0-9]{4}$/.test(d.i) ? d.i : '?';
+  f.tgt = d; f.seen = tAll; if (!f.cur) f.cur = JSON.parse(JSON.stringify(d));
+}
+function byeOther(id) { const f = MP.others.get(id); if (f) toast(`👋 ${f.name} left.`, 2.5); dropOther(id); }
+function dropOther(id, quiet) { const f = MP.others.get(id); if (!f) return; scene.remove(f.g); f.g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); MP.others.delete(id); if (!quiet) mpUi(); }
+function lerpPose(a, b, k) { if (!b) return a; if (!a) return b.slice(); for (let i = 0; i < 3; i++) a[i] += (b[i] - a[i]) * k; _fq.set(a[3], a[4], a[5], a[6]).slerp(_mq.set(b[3], b[4], b[5], b[6]), k); a[3] = _fq.x; a[4] = _fq.y; a[5] = _fq.z; a[6] = _fq.w; return a; }
+function stepFriends(dt) {
+  const k = 1 - Math.exp(-dt * 14);   // smooth between the 20-a-second updates
+  for (const [id, f] of MP.others) {
+    if (tAll - f.seen > 6) { byeOther(id); continue; }   // gone quiet: they probably lost connection
+    const c = f.cur, t = f.tgt;
+    if (f.color < 0) f.fur.color.setHSL((tAll * .25) % 1, .8, .6);   // rainbow fur!
+    if (f.pawC < 0) f.paws.forEach(p => p.userData.fur.color.setHSL((tAll * .25 + .33) % 1, .8, .6));
+    lerpPose(c.h, t.h, k); c.b = t.b;
+    f.head.position.set(c.h[0], c.h[1], c.h[2]); f.head.quaternion.set(c.h[3], c.h[4], c.h[5], c.h[6]);
+    const bh = clamp(c.b || .6, .35, 1.1); f.body.position.set(c.h[0], c.h[1] - bh * .55, c.h[2]); f.body.scale.setScalar(clamp(bh / .7, .6, 1.3));
+    f.label.position.set(c.h[0], c.h[1] + .32, c.h[2]);
+    for (let i = 0; i < 2; i++) {
+      const p = f.paws[i];
+      if (t.p && t.p[i]) { c.p = c.p || [0, 0]; c.p[i] = lerpPose(c.p[i] || null, t.p[i], k); p.visible = true; p.position.set(c.p[i][0], c.p[i][1], c.p[i][2]); p.quaternion.set(c.p[i][3], c.p[i][4], c.p[i][5], c.p[i][6]); }
+      else { p.visible = true; _mpv.set(i ? .2 : -.2, -.3, -.25).applyQuaternion(_fq.set(0, f.head.quaternion.y, 0, f.head.quaternion.w).normalize()); p.position.copy(f.head.position).add(_mpv); p.quaternion.copy(_fq); }
+    }
+  }
+}
+
+/* ---------- the menu: a name box and a big number pad (no keyboard needed) ---------- */
+function mpUi() {
+  const st = MP.status, n = MP.others.size;
+  $('mpStart').hidden = st !== 'off'; $('mpPad').hidden = !(st === 'off' && MP.padOpen); $('mpIn').hidden = st === 'off';
+  if (st !== 'off') $('mpInfo').textContent = st === 'host' ? `🏠 Room ${MP.code} · ${MP.conns.size + 1}/4 players` : `🎉 In room ${MP.code} · ${n + 1} players`;
+  $('mpCode').textContent = (MP.typed + '____').slice(0, 4).split('').join(' ');
+  compDraw();
+}
+{
+  const nm = $('mpName'); nm.value = store.get('kg-name') || ''; nm.placeholder = MP_NAMES[Math.floor(Math.random() * MP_NAMES.length)];
+  nm.addEventListener('keydown', e => e.stopPropagation());
+  nm.addEventListener('change', () => { setMyName(nm.value); compDraw(); });
+  $('btnHost').onclick = () => mpHost();
+  $('btnJoin').onclick = () => { MP.padOpen = !MP.padOpen; MP.typed = ''; mpUi(); };
+  $('btnLeave').onclick = () => { mpLeave(); toast('👋 Left the room.', 2); };
+  const pad = $('mpKeys');
+  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✅'].forEach(k => {
+    const b = document.createElement('button'); b.textContent = k; b.className = k === '✅' ? '' : 'alt';
+    b.onclick = () => {
+      if (k === '⌫') MP.typed = MP.typed.slice(0, -1);
+      else if (k === '✅') { if (MP.typed.length === 4) { MP.padOpen = false; mpJoin(MP.typed); } else mpNote('Type all 4 numbers 🙂'); }
+      else if (MP.typed.length < 4) { MP.typed += k; if (MP.typed.length === 4) { MP.padOpen = false; mpJoin(MP.typed); } }
+      mpUi();
+    };
+    pad.appendChild(b);
+  });
+  mpUi();
+}
+/* ======================================================================
+   THE GROVE COMPUTER: a little desk by the spawn stump with a big screen and a poke-able keyboard.
+   Tap the tabs on the screen: join a room, pick your fur + paw colors, change your name, see your player ID.
+   Desktop: look at a key or button and click (or press E).
+   ====================================================================== */
+const COMP_AT = V(-2.1, 0, 1.9);
+const COMP_COLORS = [0x2fc6a3, 0xff8a3d, 0x8b6bff, 0xff4fa8, 0xffd25a, 0x3fb2ff, 0xff4057, 0x5dd35d, 0xf2efe6, 0x34343f];
+const KB_ROWS = ['1234567890', 'QWERTYUIOP', 'ASDFGHJKL⌫', 'ZXCVBNM-!✅', ' '];
+Object.assign(CP, { page: 'join', code: '', nameT: '', flash: null, flashT: 0, hits: [], inK: [false, false], inS: [false, false], hackT: 0 });
+function myId() {
+  let id = store.get('kg-id');
+  if (!id || !/^KG-[A-Z0-9]{4}$/.test(id)) { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; id = 'KG-' + Array.from({ length: 4 }, () => A[Math.floor(Math.random() * A.length)]).join(''); store.set('kg-id', id); }
+  return id;
+}
+const readCol = k => { const s = store.get(k); if (s === 'rainbow') return -1; const n = parseInt(s, 10); return Number.isInteger(n) && n >= 0 && n <= 0xffffff ? n : null; };
+function myFur() { const c = readCol('kg-fur'); return c != null ? c : (MP.myColor || COMP_COLORS[0]); }
+function myPawCol() { const c = readCol('kg-paw'); return c != null ? c : myFur(); }
+function setMyName(n) { n = n.trim().slice(0, 12); if (!n) return false; store.set('kg-name', n); MP.name = n; const el = $('mpName'); if (el) el.value = n; return true; }
+const css = c => c === -1 ? '#fff' : '#' + new THREE.Color(c).getHexString();
+
+/* ---------- the desk, screen and keyboard ---------- */
+const comp = (() => {
+  const g = new THREE.Group(); g.position.copy(COMP_AT); g.rotation.y = Math.atan2(-COMP_AT.x, -COMP_AT.z); scene.add(g);
+  const wood = smat(0xa8713f, { roughness: .8 }), woodD = smat(0x7a4f2a, { roughness: .85 }), plastic = smat(0xf1ede2, { roughness: .5 }), dark = smat(0x22262e, { roughness: .45 });
+  part(new THREE.BoxGeometry(1.06, .05, .66), wood, 0, .315, -.05, g);   // desk top
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([x, z]) => part(new THREE.CylinderGeometry(.03, .035, .3, 8), woodD, x * .47, .15, z * .27 - .05, g));
+  part(new THREE.BoxGeometry(.9, .03, .04), woodD, 0, .08, -.3, g);   // foot rail
+  part(new THREE.BoxGeometry(.9, .02, .4), plastic, 0, .35, .07, g);    // keyboard base
+  // monitor: chunky retro frame on a little stand
+  part(new THREE.CylinderGeometry(.11, .13, .02, 20), plastic, 0, .35, -.3, g);
+  part(new THREE.BoxGeometry(.06, .12, .04), plastic, 0, .42, -.31, g);
+  part(new THREE.BoxGeometry(1.0, .6, .07), plastic, 0, .74, -.31, g);
+  part(new THREE.BoxGeometry(.7, .4, .12), plastic, 0, .74, -.4, g);    // the boxy back
+  const led = part(new THREE.SphereGeometry(.012, 10, 8), new THREE.MeshBasicMaterial({ color: 0x5dff8f }), .44, .465, -.27, g);
+  // canvases: screen 1024x576, keyboard 1024x456 (they match the meshes' shapes)
+  const scv = document.createElement('canvas'); scv.width = 1024; scv.height = 576; const sg = scv.getContext('2d');
+  const stex = new THREE.CanvasTexture(scv); stex.colorSpace = THREE.SRGBColorSpace; stex.anisotropy = 4;
+  const scr = new THREE.Mesh(new THREE.PlaneGeometry(.9, .506), new THREE.MeshBasicMaterial({ map: stex, toneMapped: false })); scr.position.set(0, .74, -.272); g.add(scr);
+  const kcv = document.createElement('canvas'); kcv.width = 1024; kcv.height = 456; const kg = kcv.getContext('2d');
+  const ktex = new THREE.CanvasTexture(kcv); ktex.colorSpace = THREE.SRGBColorSpace; ktex.anisotropy = 4;
+  const kb = new THREE.Mesh(new THREE.PlaneGeometry(.86, .383), new THREE.MeshStandardMaterial({ map: ktex, roughness: .6 })); kb.rotation.x = -Math.PI / 2; kb.position.set(0, .361, .07); g.add(kb);
+  // a little sign so you know it's for multiplayer
+  const sgnT = labelTex(512, 128, (cg, w, h) => signText(cg, w, h, [['🎮 PLAY WITH FRIENDS', 46, '#ffd25a', 66]], 'rgba(40,26,14,.92)', '#ffd25a'));
+  const sgn = new THREE.Mesh(new THREE.PlaneGeometry(.6, .15), new THREE.MeshBasicMaterial({ map: sgnT, transparent: true })); sgn.position.set(0, 1.11, -.3); g.add(sgn);
+  mergeStatic(g, c => c === scr || c === kb || c === led || c === sgn);
+  g.updateMatrixWorld(true);
+  const yaw = g.rotation.y, wp = (x, z) => V(x, 0, z).applyAxisAngle(V(0, 1, 0), yaw).add(COMP_AT);
+  let p = wp(0, -.05); addCol({ t: 0, x: p.x, y: .18, z: p.z, hx: .53, hy: .18, hz: .33, yaw, tag: 'wood' });          // desk + keyboard (top at .36)
+  p = wp(0, -.35); addCol({ t: 0, x: p.x, y: .74, z: p.z, hx: .5, hy: .3, hz: .1, yaw, tag: 'wood' });                 // monitor (front at -.25)
+  return { g, scr, kb, sg, stex, kg, ktex, led };
+})();
+
+/* ---------- drawing ---------- */
+const KB = { x0: 16, y0: 14, kw: 99.2, kh: 80, gap: 7 };
+function keyRect(r, c) { if (r === 4) return [KB.x0 + 2 * KB.kw, KB.y0 + 4 * KB.kh, 6 * KB.kw, KB.kh]; return [KB.x0 + c * KB.kw, KB.y0 + r * KB.kh, KB.kw, KB.kh]; }
+function drawKb() {
+  const g = comp.kg; g.fillStyle = '#e9e4d6'; g.fillRect(0, 0, 1024, 456);
+  KB_ROWS.forEach((row, r) => [...row].forEach((k, c) => {
+    const [x, y, w, h] = keyRect(r, c), hot = CP.flash === k, ok = k === '✅', back = k === '⌫';
+    g.fillStyle = 'rgba(0,0,0,.25)'; g.beginPath(); g.roundRect(x + KB.gap / 2, y + KB.gap / 2 + 6, w - KB.gap, h - KB.gap, 14); g.fill();
+    g.fillStyle = hot ? '#ffd25a' : ok ? '#36e06a' : back ? '#ff8a8a' : '#fffdf6'; g.beginPath(); g.roundRect(x + KB.gap / 2, y + KB.gap / 2 + (hot ? 5 : 0), w - KB.gap, h - KB.gap, 14); g.fill();
+    g.fillStyle = '#23303a'; g.font = (k.length > 1 || /[⌫✅]/.test(k) ? '40px' : '46px') + ' "Lilita One", Impact, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(k === ' ' ? 'SPACE' : k, x + w / 2, y + h / 2 + (hot ? 7 : 2));
+  }));
+  comp.ktex.needsUpdate = true;
+}
+function btn(g, x, y, w, h, label, col, fn, size = 40) {
+  g.fillStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.roundRect(x, y + 6, w, h, 18); g.fill();
+  g.fillStyle = col; g.beginPath(); g.roundRect(x, y, w, h, 18); g.fill();
+  g.fillStyle = '#16232b'; g.font = `${size}px "Lilita One", Impact, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, x + w / 2, y + h / 2 + 2);
+  CP.hits.push({ x, y, w, h, fn });
+}
+function txt(g, s, x, y, size, col = '#fff6e0', align = 'center') { g.font = `${size}px "Lilita One", Impact, sans-serif`; g.textAlign = align; g.textBaseline = 'middle'; g.fillStyle = col; g.fillText(s, x, y); }
+function playersList() {
+  const me = { n: MP.name || store.get('kg-name') || 'You', i: myId(), c: myFur(), me: true };
+  return [me, ...[...MP.others.values()].map(f => ({ n: f.name, i: f.pid || '?', c: f.color }))];
+}
+function compDraw() {
+  if (!CP.ready) return;
+  const g = comp.sg; CP.hits = [];
+  if (CP.hackT > 0) {   // shh
+    g.fillStyle = '#021a06'; g.fillRect(0, 0, 1024, 576);
+    for (let i = 0; i < 60; i++) txt(g, String.fromCharCode(0x30a0 + Math.floor(Math.random() * 90)), Math.random() * 1024, Math.random() * 576, 30, 'rgba(60,255,120,.5)');
+    txt(g, 'ACCESS GRANTED', 512, 230, 84, '#5dff8f'); txt(g, '🌈 Secret rainbow fur unlocked!', 512, 340, 44, '#b8ffd0');
+    btn(g, 362, 430, 300, 90, 'COOL!', '#5dff8f', () => { CP.hackT = 0; CP.page = 'color'; compDraw(); });
+    comp.stex.needsUpdate = true; return;
+  }
+  const grad = g.createLinearGradient(0, 0, 0, 576); grad.addColorStop(0, '#163a4a'); grad.addColorStop(1, '#0e2230'); g.fillStyle = grad; g.fillRect(0, 0, 1024, 576);
+  // tabs
+  [['join', '🌐 Rooms'], ['name', '✏️ Name'], ['color', '🎨 Colors'], ['id', '🆔 My ID']].forEach(([k, l], i) =>
+    btn(g, 14 + i * 252, 12, 240, 84, l, CP.page === k ? '#ffd25a' : '#2fc6a3', () => { CP.page = k; if (k === 'name') CP.nameT = MP.name || store.get('kg-name') || ''; compDraw(); }, 38));
+  const st = MP.status;
+  if (CP.page === 'join') {
+    if (st === 'off') {
+      txt(g, 'Type a room code on the keyboard:', 512, 145, 40);
+      g.fillStyle = 'rgba(255,255,255,.1)'; g.beginPath(); g.roundRect(312, 180, 400, 110, 20); g.fill();
+      txt(g, (CP.code + '____').slice(0, 4).split('').join(' '), 512, 238, 84, '#ffd25a');
+      btn(g, 120, 330, 360, 100, '✅ Join room', CP.code.length === 4 ? '#36e06a' : '#6a8f7c', () => compJoin());
+      btn(g, 544, 330, 360, 100, '🏠 Make a room', '#ffd25a', () => { mpHost(); });
+      txt(g, MP.note || 'Make a room, then tell friends the 4 numbers!', 512, 500, 32, '#bfe9dc');
+    } else {
+      txt(g, st === 'host' ? `🏠 Your room: ${MP.code}` : `🎉 In room ${MP.code}`, 512, 150, 62, '#ffd25a');
+      playersList().forEach((p, i) => { txt(g, `${p.me ? '⭐ ' : '🐾 '}${p.n}  ·  ${p.i}`, 512, 225 + i * 52, 38, css(p.c)); });
+      btn(g, 362, 450, 300, 90, '👋 Leave', '#ff8a8a', () => { mpLeave(); toast('👋 Left the room.', 2); compDraw(); });
+    }
+  } else if (CP.page === 'name') {
+    txt(g, 'Your name:', 512, 145, 42);
+    g.fillStyle = 'rgba(255,255,255,.12)'; g.beginPath(); g.roundRect(162, 180, 700, 110, 20); g.fill();
+    txt(g, CP.nameT + ((tAll * 2 | 0) % 2 ? '' : '|'), 512, 238, 72, '#ffd25a');
+    btn(g, 120, 330, 360, 100, '🎲 Random', '#2fc6a3', () => { CP.nameT = MP_NAMES[Math.floor(Math.random() * MP_NAMES.length)] + Math.floor(Math.random() * 90 + 10); compDraw(); });
+    btn(g, 544, 330, 360, 100, '✅ Save', '#36e06a', () => compSaveName());
+    txt(g, 'Type on the keyboard, then press ✅', 512, 500, 32, '#bfe9dc');
+  } else if (CP.page === 'color') {
+    const rows = [['Fur', 'kg-fur', myFur()], ['Paws', 'kg-paw', myPawCol()]];
+    const cols = readCol('kg-rainbow-ok') === 1 || store.get('kg-rainbow-ok') ? [...COMP_COLORS, -1] : COMP_COLORS;
+    rows.forEach(([lab, key, cur], r) => {
+      const y = 150 + r * 150; txt(g, lab, 30, y + 34, 44, '#fff6e0', 'left');
+      cols.forEach((c, i) => {
+        const x = 150 + i * 62, on = c === cur;
+        g.fillStyle = on ? '#fff' : 'rgba(0,0,0,.4)'; g.beginPath(); g.roundRect(x - 4, y - 4, 60, 76, 14); g.fill();
+        if (c === -1) { const rg = g.createLinearGradient(x, y, x + 52, y + 68); ['#ff4057', '#ffd25a', '#5dd35d', '#3fb2ff', '#8b6bff'].forEach((s, j) => rg.addColorStop(j / 4, s)); g.fillStyle = rg; } else g.fillStyle = css(c);
+        g.beginPath(); g.roundRect(x, y, 52, 68, 10); g.fill();
+        CP.hits.push({ x: x - 4, y: y - 4, w: 60, h: 76, fn: () => { store.set(key, c === -1 ? 'rainbow' : String(c)); if (ac) tone('sine', 500 + i * 40, 700 + i * 40, .08, .1); compDraw(); } });
+      });
+    });
+    // a little preview critter
+    const fc = myFur(), pc = myPawCol(), fx = fc === -1 ? `hsl(${(tAll * 90) % 360},80%,60%)` : css(fc), pcx = pc === -1 ? `hsl(${(tAll * 90 + 120) % 360},80%,60%)` : css(pc);
+    g.fillStyle = fx; [[-1], [1]].forEach(([s]) => { g.beginPath(); g.moveTo(870 + s * 40, 440); g.lineTo(870 + s * 70, 380); g.lineTo(870 + s * 15, 420); g.fill(); });
+    g.beginPath(); g.arc(870, 470, 70, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#fff'; [-28, 28].forEach(dx => { g.beginPath(); g.arc(870 + dx, 460, 18, 0, 7); g.fill(); }); g.fillStyle = '#1a1a22'; [-28, 28].forEach(dx => { g.beginPath(); g.arc(870 + dx, 465, 9, 0, 7); g.fill(); });
+    g.fillStyle = pcx; [-95, 95].forEach(dx => { g.beginPath(); g.arc(870 + dx, 520, 30, 0, 7); g.fill(); });
+    txt(g, 'Friends see you in these colors!', 380, 490, 32, '#bfe9dc');
+  } else {
+    txt(g, 'Your player ID', 512, 150, 44);
+    txt(g, myId(), 512, 250, 120, '#ffd25a');
+    txt(g, 'This is YOU! It stays the same on this headset.', 512, 350, 34, '#bfe9dc');
+    txt(g, `Name: ${MP.name || store.get('kg-name') || '(none yet)'}`, 512, 420, 40, css(myFur()));
+    if (st !== 'off') txt(g, `Room ${MP.code} · ${MP.others.size + 1} players`, 512, 490, 36, '#fff6e0');
+  }
+  comp.stex.needsUpdate = true;
+}
+function compJoin() {
+  if (CP.code.length < 4) { MP.note = 'Type all 4 numbers first 🙂'; compDraw(); return; }
+  if (CP.code === '1337') { CP.code = ''; store.set('kg-rainbow-ok', '1'); CP.hackT = 1; confetti(V(0, .9, .1).applyMatrix4(comp.g.matrixWorld), 40, [0x5dff8f, 0xb8ffd0, 0xffffff]); if (ac) [392, 523, 659, 784].forEach((f, i) => tone('square', f, f, .12, .08, i * .08)); compDraw(); return; }
+  const c = CP.code; CP.code = ''; mpJoin(c);
+}
+function compSaveName() {
+  if (setMyName(CP.nameT)) { toast(`✏️ Hi ${MP.name}!`, 2.5); if (ac) [660, 990].forEach((f, i) => tone('triangle', f, f, .15, .12, i * .08)); CP.page = 'id'; }
+  else { CP.nameT = ''; }
+  compDraw();
+}
+function compKey(k) {
+  CP.flash = k; CP.flashT = .14; drawKb();
+  if (ac) tone('square', 1500 + Math.random() * 500, 900, .03, .05);   // clicky!
+  if (CP.hackT > 0) return;
+  if (CP.page === 'join' && MP.status === 'off') {
+    if (k === '⌫') CP.code = CP.code.slice(0, -1);
+    else if (k === '✅') { compJoin(); return; }
+    else if (/[0-9]/.test(k)) { if (CP.code.length < 4) CP.code += k; }
+    else MP.note = 'Room codes are just numbers 🔢';
+  } else if (CP.page === 'name') {
+    if (k === '⌫') CP.nameT = CP.nameT.slice(0, -1);
+    else if (k === '✅') { compSaveName(); return; }
+    else if (CP.nameT.length < 12) CP.nameT += CP.nameT.length ? k.toLowerCase() : k;
+  } else if (/[A-Z]/.test(k)) { CP.page = 'name'; CP.nameT = k; }
+  compDraw();
+}
+function compTapScreen(u, v) { const x = u * 1024, y = (1 - v) * 576; const h = CP.hits.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h); if (h) { if (ac) tone('sine', 800, 1100, .06, .1); h.fn(); return true; } return false; }
+function compTapKb(u, v) {
+  const x = u * 1024, y = (1 - v) * 456;
+  for (let r = 0; r < KB_ROWS.length; r++) for (let c = 0; c < KB_ROWS[r].length; c++) { const [kx, ky, kw, kh] = keyRect(r, c); if (x >= kx && x <= kx + kw && y >= ky && y <= ky + kh) { compKey([...KB_ROWS[r]][c]); return true; } }
+  return false;
+}
+/* ---------- poking: VR paws tap it; on desktop you look and click ---------- */
+const _cpv = V(), _ray = new THREE.Raycaster();
+function stepComputer(dt) {
+  if (CP.flashT > 0 && (CP.flashT -= dt) <= 0) { CP.flash = null; drawKb(); }
+  if (state.area !== 'grove') return;
+  const near = _cpv.copy(COMP_AT).sub(rig.position).setY(0).lengthSq() < 9;
+  comp.led.material.color.setHex((tAll * 2 | 0) % 2 ? 0x5dff8f : 0x2a8f4f);
+  if (!near) return;
+  if (CP.page === 'name' && ((tAll * 2 | 0) !== (CP.blinkS | 0))) { CP.blinkS = tAll * 2 | 0; compDraw(); }   // blinking cursor
+  if (CP.page === 'color' && (myFur() === -1 || myPawCol() === -1) && (CP.rbT = (CP.rbT || 0) - dt) <= 0) { CP.rbT = .1; compDraw(); }
+  if (!(state.xr || sim.on)) return;
+  for (const h of hands) {
+    if (!h.tracked) { CP.inK[h.i] = CP.inS[h.i] = false; continue; }
+    // keyboard (lying flat, facing up)
+    comp.kb.worldToLocal(_cpv.copy(h.pos));
+    const inK = Math.abs(_cpv.x) < .43 && Math.abs(_cpv.y) < .19 && _cpv.z < PAW_R + .015 && _cpv.z > -.08;
+    if (inK && !CP.inK[h.i]) { if (compTapKb(_cpv.x / .86 + .5, _cpv.y / .383 + .5)) buzz(h, .5, 30); }
+    CP.inK[h.i] = inK ? true : (_cpv.z > PAW_R + .03 || Math.abs(_cpv.x) > .45 || Math.abs(_cpv.y) > .21) ? false : CP.inK[h.i];
+    // screen (standing up, facing you)
+    comp.scr.worldToLocal(_cpv.copy(h.pos));
+    const inS = Math.abs(_cpv.x) < .45 && Math.abs(_cpv.y) < .253 && _cpv.z < PAW_R + .03 && _cpv.z > -.1;
+    if (inS && !CP.inS[h.i]) { if (compTapScreen(_cpv.x / .9 + .5, _cpv.y / .506 + .5)) buzz(h, .5, 30); }
+    CP.inS[h.i] = inS ? true : (_cpv.z > PAW_R + .05 || Math.abs(_cpv.x) > .47 || Math.abs(_cpv.y) > .27) ? false : CP.inS[h.i];
+  }
+}
+function compDesk() {
+  if (state.area !== 'grove' || state.xr) return false;
+  headWorld(_cpv); _ray.set(_cpv, camera.getWorldDirection(V())); _ray.far = 2.6;
+  const hit = _ray.intersectObjects([comp.scr, comp.kb], false)[0]; if (!hit || !hit.uv) return false;
+  return hit.object === comp.scr ? (compTapScreen(hit.uv.x, hit.uv.y), true) : (compTapKb(hit.uv.x, hit.uv.y), true);
+}
+canvas.addEventListener('pointerdown', e => { if (state.mode === 'play' && !state.xr && e.button === 0 && document.pointerLockElement === canvas) compDesk(); });
+CP.ready = true; drawKb(); compDraw();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { drawKb(); compDraw(); });
+window.__kg.comp = { CP, comp, compKey, compTapScreen, compTapKb, compDraw, myId, COMP_AT };
+window.__kg.mp = { MP, mpHost, mpJoin, mpLeave, gotState, myState };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
 </body>
