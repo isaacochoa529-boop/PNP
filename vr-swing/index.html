@@ -88,11 +88,12 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
     <li><b>Run:</b> put your paws on the ground and push it behind you.</li>
     <li><b>Jump:</b> shove down hard, then let go.</li>
     <li><b>Climb:</b> slap a wall or tree and pull down.</li>
+    <li><b>Fit the ground to you:</b> stand up, let your arms hang, press A or X.</li>
     <li><b>Turn:</b> right stick. <b>Respawn:</b> B or Y button.</li>
     <li><b>Desktop:</b> WASD, mouse, Space jump, Shift run, V see yourself, R respawn.</li>
     <li>Grab all 12 glow berries 🫐 as fast as you can!</li>
   </ul>
-  <div class="row">Critter size (pick one where your paws reach the ground without crouching):
+  <div class="row">Ground height (A or X in VR fits it to you exactly):
     <button class="alt" id="btnSize">Small</button>
   </div>
   <div class="best" id="best"></div>
@@ -280,12 +281,13 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { ret
 
 /* ---------------- tuning ---------------- */
 const G = 9.8;              // gravity m/s^2
-const PAW_R = 0.06;         // paw contact radius
+const PAW_R = 0.075;        // paw contact radius (a bit generous so the ground is easy to catch)
 const MAX_LAUNCH = 8.5;     // cap on fling speed
 const LAUNCH_MUL = 1.15;    // a little extra oomph when you let go
 const RELEASE = 0.003;      // moving a stuck paw this far away from the surface in one frame lets go
 const SPAWN = V(0, 0.55, 0);
-const SIZES = [{ name: 'Small', h: .72 }, { name: 'Medium', h: .85 }, { name: 'Big', h: 1.0 }];   // eye height above the ground while resting
+const SIZES = [{ name: 'Tiny', h: .5 }, { name: 'Small', h: .6 }, { name: 'Medium', h: .7 }, { name: 'Big', h: .82 }];   // eye height above the ground while resting
+const AVATAR_EYE = .85;   // the Thumpling model's own eye height; it keeps this size no matter where the ground is
 const BERRIES_TOTAL = 12;
 
 /* ---------------- renderer / scene ---------------- */
@@ -770,7 +772,7 @@ camera.layers.enable(FP_LAYER);
 const AV = { ready: false, root: new THREE.Group(), fpRoot: new THREE.Group(), torso: null, head: null, arms: [], armFur: null };
 scene.add(AV.fpRoot); AV.fpRoot.visible = false;
 scene.add(AV.root); AV.root.visible = false;
-const avSc = () => state.bodyH / .85;                         // the model is built with its eyes 0.85 m up
+const avSc = () => clamp(state.bodyH / AVATAR_EYE, .75, 1.1);   // the model is built with its eyes 0.85 m up
 const SHOULDER = [V(-.235, .585, .02), V(.235, .585, .02)];   // torso space (model faces -Z)
 const L_UP = .3, L_FORE = .3;
 // the preview page ships the model as base64 (window.THUMPLING_B64); the real site loads the .glb file
@@ -809,12 +811,12 @@ function poseAvatar(dt) {
   if (state.xr || sim.on) camera.getWorldQuaternion(_hq); else _hq.copy(rig.quaternion).multiply(_q.setFromEuler(_eul.set(state.pitch, 0, 0)));
   _fw.set(0, 0, -1).applyQuaternion(_hq); const yaw = Math.atan2(-_fw.x, -_fw.z);
   AV.root.visible = true; AV.head.visible = true;
-  AV.root.position.set(_h.x - _fw.x * .03, _h.y - .85 * sc, _h.z - _fw.z * .03);
+  AV.root.position.set(_h.x - _fw.x * .03, _h.y - state.bodyH, _h.z - _fw.z * .03);   // sits on the ground
   AV.root.rotation.set(0, yaw, 0); AV.root.scale.setScalar(sc);
   // first-person body: same spot, a little behind your paws, squashed so its top is at your waist
   AV.fpRoot.visible = !(state.third && !state.xr);
   AV.fpRoot.position.set(_h.x - _fw.x * .12, _h.y - state.bodyH, _h.z - _fw.z * .12); AV.fpRoot.rotation.set(0, yaw, 0);
-  AV.fpRoot.scale.set(sc, Math.max(.2, state.bodyH - .45) / .6, sc);
+  AV.fpRoot.scale.set(sc, Math.max(.15, state.bodyH * .45) / .6, sc);
   // lean forward a little while you're in the air
   const air = state.grounded ? 0 : 1; AV.torso.rotation.x += ((air ? -.15 : 0) - AV.torso.rotation.x) * Math.min(1, dt * 6);
   AV.head.position.copy(_h); AV.head.quaternion.copy(_hq); AV.head.scale.setScalar(sc);
@@ -896,7 +898,7 @@ const sfxWin = () => { if (!ac) return; [523, 659, 784, 1046, 1318].forEach((f, 
 const sfxSqueak = () => { if (!ac) return; tone('sine', 900, 1500, .12, .25); tone('sine', 1300, 1900, .1, .2, .12); };
 
 /* ======================= game state ======================= */
-const state = { mode: 'menu', xr: false, got: 0, time: 0, running: false, done: false, size: 1, bodyH: .85, third: false, vel: V(), grounded: false, wasStuck: false, velBuf: [], golden: false, claps: [], yaw: 0, pitch: 0, keys: {}, typed: '' };
+const state = { mode: 'menu', xr: false, got: 0, time: 0, running: false, done: false, size: 1, bodyH: .6, third: false, vel: V(), grounded: false, wasStuck: false, velBuf: [], golden: false, claps: [], yaw: 0, pitch: 0, keys: {}, typed: '' };
 window.__kg = { state, hands, rig, camera, colliders, berries, sim: { on: false, local: [V(-.25, 1, -.3), V(.25, 1, -.3)] }, step: null };
 const sim = window.__kg.sim;
 
@@ -1203,9 +1205,9 @@ function startDesktop() {
   toast('🐾 WASD to run, Space to jump, V to see yourself. Find the glow berries!', 4);
 }
 $('btnDesk').onclick = startDesktop;
-function setSize(i) { state.size = (i + SIZES.length) % SIZES.length; state.bodyH = SIZES[state.size].h; $('btnSize').textContent = SIZES[state.size].name; store.set('kg-size', state.size); if (!state.xr && state.mode === 'play') camera.position.y = state.bodyH; }
+function setSize(i) { state.size = (i + SIZES.length) % SIZES.length; state.bodyH = SIZES[state.size].h; $('btnSize').textContent = SIZES[state.size].name; store.set('kg-size2', state.size); if (!state.xr && state.mode === 'play') camera.position.y = state.bodyH; }
 $('btnSize').onclick = () => setSize(state.size + 1);
-setSize(store.get('kg-size') !== null ? parseInt(store.get('kg-size')) || 0 : 1);
+setSize(store.get('kg-size2') !== null ? parseInt(store.get('kg-size2')) || 0 : 1);
 showBest();
 
 /* ---------- XR controllers ---------- */
@@ -1223,7 +1225,9 @@ function pollGamepads() {
   for (const src of s.inputSources) {
     const gp = src.gamepad; if (!gp) continue; const key = src.handedness;
     const ax = gp.axes.length >= 4 ? gp.axes[2] : (gp.axes[0] || 0);
-    const pressedB = gp.buttons[5] && gp.buttons[5].pressed, prev = btnPrev[key] || {};
+    const pressedB = gp.buttons[5] && gp.buttons[5].pressed, pressedA = gp.buttons[4] && gp.buttons[4].pressed, prev = btnPrev[key] || {};
+    if (pressedA && !prev.a) calibrate();
+    prev.a = pressedA;
     if (key === 'right') {
       if (Math.abs(ax) > .7 && !prev.turned) { snapTurn(ax > 0 ? -Math.PI / 4 : Math.PI / 4); prev.turned = true; }
       if (Math.abs(ax) < .3) prev.turned = false;
@@ -1231,6 +1235,14 @@ function pollGamepads() {
     if (pressedB && !prev.b) { respawn(); toast('🌀 Back to the stump!', 1.5); }
     prev.b = pressedB; btnPrev[key] = prev;
   }
+}
+// Stand up straight with your arms hanging and press A or X: the ground moves to just under your relaxed paws.
+function calibrate() {
+  const ys = hands.filter(h => h.tracked).map(h => h.local.y);
+  if (!ys.length) return;
+  const drop = camera.position.y - Math.min(...ys);              // eyes to relaxed paws
+  state.bodyH = clamp(drop - .06, .35, 1.1);
+  respawn(); toast(`📏 Got it! Your paws now reach the ground (${Math.round(state.bodyH * 100)} cm below your eyes)`, 3.5);
 }
 function snapTurn(a) {
   rig.updateMatrixWorld(); const before = headWorld(V());
@@ -1257,7 +1269,7 @@ async function setupVR() {
       state.xr = true; state.mode = 'play'; $('menu').hidden = true;
       rig.rotation.y = 0; camera.rotation.set(0, 0, 0);
       resetRun(); respawn();
-      setTimeout(() => toast('🐾 Slap the ground and push!', 3), 600);
+      setTimeout(() => toast('🐾 Arms down + press A to fit the ground to you!', 4.5), 600);
       s.addEventListener('end', () => {
         state.xr = false; hands.forEach(h => { h.paw.visible = false; h.stuck = false; }); vrToastMesh.visible = false;
         camera.position.set(0, state.bodyH, 0); camera.quaternion.identity(); openMenu(); respawn();
