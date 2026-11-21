@@ -119,7 +119,7 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
     <li><b>Turn:</b> right stick. <b>Respawn:</b> B or Y button.</li>
     <li><b>Desktop:</b> WASD, mouse, Space jump, Shift run, E grab/throw, V see yourself, R respawn.</li>
     <li><b>Play with friends:</b> make a room or type a code up there, or poke the computer next to the spawn stump 💻 (name, colors, player ID too).</li>
-    <li>Grab all 12 glow berries 🫐 as fast as you can!</li>
+    <li>Grab all 15 glow berries 🫐 as fast as you can!</li>
     <li><b>Slicing Yard:</b> walk through the glowing portal by the spawn stump. Pull the red-hot sword from the stone and slice cubes like butter ⚔️🔥 Slow swings carve curvy cuts, SUPER fast ones are anime slices. Hold a cube in your other paw and slice it: you keep your half. There's a MEGA cube too! Green button = more cubes, red = reset. Desktop: E grabs, click swings, right-click = anime slash.</li>
   </ul>
   <div class="row">Ground height (A or X in VR fits it to you exactly):
@@ -129,7 +129,7 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
 </div>
 
 <div class="hud" id="hud" hidden>
-  <div class="b" id="hudB">🫐 0 / 12</div>
+  <div class="b" id="hudB">🫐 0 / 15</div>
   <div class="t" id="hudT">0.0 s</div>
   <div class="hint">Esc = menu · R = respawn</div>
 </div>
@@ -328,7 +328,7 @@ const RELEASE = 0.02;       // pull a stuck paw this far off the surface (in tot
 const SPAWN = V(0, 0.55, 0);
 const SIZES = [{ name: 'Tiny', h: .5 }, { name: 'Small', h: .6 }, { name: 'Medium', h: .7 }, { name: 'Big', h: .82 }];   // eye height above the ground while resting
 const AVATAR_EYE = .85;   // the Thumpling model's own eye height; it keeps this size no matter where the ground is
-const BERRIES_TOTAL = 12;
+const BERRIES_TOTAL = 15;
 
 /* ---------------- renderer / scene ---------------- */
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -596,7 +596,7 @@ function textPanel(w, h, draw) {
     g.fillStyle = '#8a5a32'; g.fillRect(0, 0, w, h); g.fillStyle = '#a8713f'; for (let y = 0; y < h; y += 80) g.fillRect(0, y + 4, w, 72);
     g.textAlign = 'center'; g.fillStyle = '#ffd25a'; g.font = '96px "Lilita One", Impact, sans-serif'; g.fillText('KNUCKLE GROVE', w / 2, 120);
     g.fillStyle = '#fff6e0'; g.font = '44px Fredoka, sans-serif';
-    ['Slap the ground + push it back = RUN', 'Shove down hard + let go = JUMP', 'Grab a wall, pull down = CLIMB', 'Find all 12 glow berries!', 'Right stick turns · B / Y respawns']
+    ['Slap the ground + push it back = RUN', 'Shove down hard + let go = JUMP', 'Grab a wall, pull down = CLIMB', 'Find all 15 glow berries!', 'Right stick turns · B / Y respawns']
       .forEach((s, i) => g.fillText(s, w / 2, 220 + i * 82));
   });
   const sg = new THREE.Group(); sg.position.set(3.6, 0, -3.2); sg.rotation.y = -0.75; scene.add(sg);
@@ -742,6 +742,9 @@ const lowCliff = cliffTops.find(c => c.i === 13), tallCliff = cliffTops.find(c =
   [oakD.x + 1.9, 3.95, oakD.z],                         // oak D branch
   [-7, .7, -.6],                                         // easy one near spawn
   [lowCliff.x, lowCliff.h + .8, lowCliff.z],            // on the lowest cliff rim
+  [17, 1.4 * 1.35 + .45, 9],                             // on top of three more boulders
+  [-15, 1.6 * 1.35 + .45, -18],
+  [-25, 1.5 * 1.35 + .45, 15],
 ].forEach(p => berry(...p));
 
 // secret #1: a golden acorn on top of the tallest cliff
@@ -1295,12 +1298,12 @@ function stepArms(dt) {
     if (pushing) pushVel(_tmp.copy(_mv).multiplyScalar(1 / dt));   // frames where you're just peeling the paw off don't water down your jump
   } else {
     if (state.wasStuck) launch();
-    state.vel.y -= G * dt;
+    state.vel.y -= G * bmGrav() * dt; if (BM.nograv || BM.ghost) state.vel.multiplyScalar(Math.exp(-dt * .8));
     if (state.grounded) { const f = Math.exp(-7 * dt); state.vel.x *= f; state.vel.z *= f; }
     rig.position.addScaledVector(state.vel, dt);
   }
   state.wasStuck = ns > 0;
-  resolveBody(ns > 0);
+  if (BM.ghost) bmGhostFly(dt); else resolveBody(ns > 0);
   // 2) free paws look for something to grab
   rig.updateMatrixWorld(); readHands();
   for (const h of hands) {
@@ -1344,8 +1347,9 @@ function stepDesktop(dt) {
   let wx = fx * f + rx * s, wz = fz * f + rz * s; const L = Math.hypot(wx, wz); if (L > 0) { wx /= L; wz /= L; }
   const acc = state.grounded ? 14 : 3.5, v = state.vel;
   v.x += (wx * sp - v.x) * Math.min(1, acc * dt); v.z += (wz * sp - v.z) * Math.min(1, acc * dt);
+  if (k.Space && (BM.nograv || BM.ghost) && !state.grounded) v.y = 3;
   if (k.Space && state.grounded) { v.y = 5.3; state.grounded = false; sfxTap('grass', .3); }
-  v.y -= G * dt;
+  v.y -= G * bmGrav() * dt;
   rig.position.addScaledVector(v, dt);
   resolveBody(false);
   if (L > 0 && !state.running && !state.done) state.running = true;
@@ -1428,7 +1432,7 @@ function collectCheck() {
     b.taken = true; state.got++; sfxBerry(state.got); confetti(b.g.position, 24, [0xc23cff, 0xff4fa8, 0xffffff]); b.pop = .25;
     if (!state.running && !state.done) state.running = true;
     updateHud();
-    if (state.got === BERRIES_TOTAL) win(); else toast(`🫐 ${state.got} / ${BERRIES_TOTAL}${state.got === BERRIES_TOTAL - 1 ? ' · one more!' : ''}`, 1.6);
+    if (state.got === BERRIES_TOTAL) { win(); bmUnlock(); } else toast(`🫐 ${state.got} / ${BERRIES_TOTAL}${state.got === BERRIES_TOTAL - 1 ? ' · one more!' : ''}`, 1.6);
   });
   if (acorn.visible && (_h.distanceTo(acorn.position) < .7 || hands.some(h => h.tracked && h.pos.distanceTo(acorn.position) < .4))) {
     acorn.visible = false; state.golden = true; state.secrets.add('acorn');
@@ -1519,7 +1523,7 @@ for (let i = 0; i < 2; i++) {
   const xh = renderer.xr.getHand(i); rig.add(xh);
   const h = hands[i]; h.grip = grip; h.xhand = xh; h.ctl = ctl;
   ctl.addEventListener('squeezestart', () => grabAny(h)); ctl.addEventListener('squeezeend', () => dropAny(h));
-  ctl.addEventListener('selectstart', () => { if (h.src && h.src.hand) grabAny(h); }); ctl.addEventListener('selectend', () => { if (h.src && h.src.hand) dropAny(h); });
+  ctl.addEventListener('selectstart', () => { BM.trig[h.i] = true; if (h.src && h.src.hand) grabAny(h); }); ctl.addEventListener('selectend', () => { BM.trig[h.i] = false; if (h.src && h.src.hand) dropAny(h); });
   ctl.addEventListener('connected', e => { h.src = e.data; h.side = e.data.handedness === 'left' ? 'left' : 'right'; setSide(h); if (h.side === 'left') hands[i].paw.add(wrist.mesh); });
   ctl.addEventListener('disconnected', () => { h.src = null; h.stuck = false; h.paw.visible = false; });
 }
@@ -1530,7 +1534,8 @@ function pollGamepads() {
     const gp = src.gamepad; if (!gp) continue; const key = src.handedness;
     const ax = gp.axes.length >= 4 ? gp.axes[2] : (gp.axes[0] || 0);
     const pressedB = gp.buttons[5] && gp.buttons[5].pressed, pressedA = gp.buttons[4] && gp.buttons[4].pressed, prev = btnPrev[key] || {};
-    if (pressedA && !prev.a) calibrate();
+    if (pressedA && !prev.a) { if (key === 'left' && BM.unlocked) bmToggle(); else calibrate(); }
+    if (key === 'left') { BM.stick[0] = gp.axes.length >= 4 ? gp.axes[2] : 0; BM.stick[1] = gp.axes.length >= 4 ? gp.axes[3] : 0; }
     prev.a = pressedA;
     if (key === 'right') {
       if (Math.abs(ax) > .7 && !prev.turned) { snapTurn(ax > 0 ? -Math.PI / 4 : Math.PI / 4); prev.turned = true; }
@@ -1608,7 +1613,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt);
 
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
@@ -3634,8 +3639,10 @@ function holdGrab(h) {   // squeeze near a climbing hold: your paw clamps onto i
   if (!state.toldHold) { state.toldHold = true; toast('🧗 Got a hold! Pull down to climb, grab the next one, let go to drop.', 4.5); }
   return true;
 }
-function letGoHold(h) { if (h.hold) { h.hold.m.scale.setScalar(1); h.hold = null; } }
+function letGoHold(h) { if (h.hold) { if (h.hold.plat) h.hold.m.userData.fade = .25; else h.hold.m.scale.setScalar(1); h.hold = null; } }
 function grabAny(h) {
+  if (BM.stop && h.side === 'right') { bmStatue(true); return; }   // stop-motion: R grip freezes another you
+  if (BM.grab && bmGrabFriend(h)) return;
   if (toughGrab(h)) return;
   if (holdGrab(h)) return;
   if (state.area === 'arena' && AR.ready && h.tracked) {
@@ -3644,8 +3651,10 @@ function grabAny(h) {
   }
   if (pipGrab(h)) return;
   grabProp(h);
+  if (BM.plat && !h.holding && !h.piece && !h.sword && !h.stuck && h.tracked) bmPlatform(h);
 }
 function dropAny(h) {
+  if (h.grabF) { bmDropFriend(h); return; }
   if (h.hold) { letGoHold(h); h.stuck = false; h.cool = .15; return; }
   if (PULL.h === h) { pullStop(false); return; }
   if (h.sword) { releaseSword(h); return; }
@@ -4616,7 +4625,7 @@ function myState() {
   const fc = myFur(), pc = myPawCol();
   const s = { t: 's', n: MP.name, i: myId(), c: fc, c2: pc, b: r3(state.bodyH), h: [r3(_mpv.x), r3(_mpv.y), r3(_mpv.z), r3(_mq.x), r3(_mq.y), r3(_mq.z), r3(_mq.w)] };
   s.p = hands.map(h => h.paw.visible ? packPose(h.paw) : 0);
-  s.v = Math.round(VC.level * 20) / 20;
+  s.v = Math.round(VC.level * 20) / 20; if (BM.sc !== 1) { s.sz = BM.sc; s.b = r3(state.bodyH / BM.sc); }
   s.f = hands.map(h => (h.paw.userData.curl || [.25, .25, .25]).map(v => Math.round(v * 20) / 20));
   return s;
 }
@@ -4713,9 +4722,9 @@ function stepFriends(dt) {
     lerpPose(c.h, t.h, k); c.b = t.b;
     f.head.position.set(c.h[0], c.h[1], c.h[2]); f.head.quaternion.set(c.h[3], c.h[4], c.h[5], c.h[6]);
     f.talk = (f.talk || 0) + ((+t.v || 0) - (f.talk || 0)) * Math.min(1, dt * 18); setMouth(f.head, f.talk);   // their mouth moves when they talk
-    const bh = clamp(c.b || .6, .35, 1.1);
+    const sz = clamp(+t.sz || 1, .5, 3), bh = clamp(c.b || .6, .35, 1.1) * sz;
     if (f.thump) {
-      _fF.set(0, 0, -1).applyQuaternion(f.head.quaternion); const yaw = Math.atan2(-_fF.x, -_fF.z), sc = clamp(bh / AVATAR_EYE, .75, 1.1);
+      _fF.set(0, 0, -1).applyQuaternion(f.head.quaternion); const yaw = Math.atan2(-_fF.x, -_fF.z), sc = clamp(bh / sz / AVATAR_EYE, .75, 1.1) * sz;
       f.root.position.set(c.h[0] - _fF.x * .03, c.h[1] - bh, c.h[2] - _fF.z * .03); f.root.rotation.set(0, yaw, 0); f.root.scale.setScalar(sc); f.head.scale.setScalar(sc);
       f.label.position.set(c.h[0], c.h[1] + .38 * sc, c.h[2]);
     } else { f.body.position.set(c.h[0], c.h[1] - bh * .55, c.h[2]); f.body.scale.setScalar(clamp(bh / .7, .6, 1.3)); f.label.position.set(c.h[0], c.h[1] + .32, c.h[2]); }
@@ -5088,6 +5097,7 @@ function netGot(d) {
   else if (d.t === 'snap') gotSnap(d);
   else if (d.t === 'pcs' || d.t === 'gls') { if (!AR.ready || MP.clearOnReady) { (MP.snapQ = MP.snapQ || []).push(d); return; } if (d.t === 'gls') glassFromSnap(d); else d.list.forEach(addSnapPiece); }
   else if (d.t === 'gl') glassNet(d);
+  else if (d.t === 'bm') bmNet(d);
 }
 function quietIfAway(f) { const keep = ac; if (state.area !== 'arena') ac = null; try { return f(); } finally { ac = keep; } }
 function packCut(c) {
@@ -5329,6 +5339,201 @@ function stepVoice(dt) {
   }
 }
 { const b = $('btnMute'); if (b) b.onclick = () => { if (!VC.mic) { VC.asked = false; micOn(); } else setMute(!VC.muted); }; setMute(VC.muted); }
+/* ======================================================================
+   THE BERRY MENU: collect every berry and it unlocks for good. X (left controller) opens it, M on a keyboard,
+   the 🫐 button on a phone. Six mods: Grab, Platforms, No gravity, Cube attack, Stop-motion, Dramatic.
+   ====================================================================== */
+const BM = { unlocked: store.get('kg-bm') === '1', open: false, grab: false, plat: false, nograv: false, cube: false, stop: false, drama: false,
+  ghost: false, sc: 1, stick: [0, 0], trig: [false, false], held: null, statues: [], cubes: [], booms: [], plats: [], air: 0, wasG: true, fallV: 0, cubeT: 0, drawT: 0, pokeT: 0 };
+const BM_BTN = [['grab', '🤏 GRAB'], ['plat', '🟫 PLATFORMS'], ['nograv', '🪐 NO GRAVITY'], ['cube', '🧊 CUBE ATTACK'], ['stop', '👻 STOP-MOTION'], ['drama', '💥 DRAMATIC']];
+function bmGrav() { return BM.nograv || BM.ghost ? 0 : BM.grab ? .45 : 1; }
+function bmUnlock() {
+  if (BM.unlocked) return; BM.unlocked = true; store.set('kg-bm', '1'); bmHudBtn();
+  setTimeout(() => toast(state.xr ? '🫐 BERRY MENU unlocked! Press X to open it.' : '🫐 BERRY MENU unlocked! Press M (or tap 🫐) to open it.', 6), 2500);
+}
+// ---- the panel: a rainbow card that floats over your left paw in VR, an HTML card on a screen
+const bmCv = document.createElement('canvas'); bmCv.width = 512; bmCv.height = 704;
+const bmTex = new THREE.CanvasTexture(bmCv); bmTex.colorSpace = THREE.SRGBColorSpace;
+const bmPanel = new THREE.Mesh(new THREE.PlaneGeometry(.3, .4125), new THREE.MeshBasicMaterial({ map: bmTex, transparent: true, depthTest: true }));
+bmPanel.visible = false; scene.add(bmPanel);
+const BM_ROW = i => 150 + i * 88;
+function bmDraw() {
+  const g = bmCv.getContext('2d'), hue = (tAll * 60) % 360;   // the background slides through every color of the rainbow
+  g.clearRect(0, 0, 512, 704);
+  const gr = g.createLinearGradient(0, 0, 512, 704); gr.addColorStop(0, `hsl(${hue},90%,60%)`); gr.addColorStop(.5, `hsl(${(hue + 60) % 360},90%,60%)`); gr.addColorStop(1, `hsl(${(hue + 120) % 360},90%,60%)`);
+  g.fillStyle = gr; g.beginPath(); g.roundRect(0, 0, 512, 704, 40); g.fill();
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffffff'; g.font = '64px "Lilita One", Impact, sans-serif';
+  g.lineWidth = 10; g.strokeStyle = 'rgba(0,0,0,.35)'; g.strokeText('Berry Menu', 256, 72); g.fillText('Berry Menu', 256, 72);
+  BM_BTN.forEach(([k, label], i) => {
+    const y = BM_ROW(i); g.fillStyle = '#ffffff'; g.beginPath(); g.roundRect(40, y - 36, 432, 72, 18); g.fill();
+    g.fillStyle = '#000000'; g.font = '34px "Lilita One", Impact, sans-serif'; g.textAlign = 'left'; g.fillText(`${i + 1}  ${label}`, 62, y + 2);
+    g.textAlign = 'right'; g.fillStyle = BM[k] ? '#0a9a3a' : '#9a9a9a'; g.fillText(BM[k] ? 'ON' : 'OFF', 452, y + 2); g.textAlign = 'center';
+  });
+  bmTex.needsUpdate = true;
+  const el = $('bmHtml'); if (el) el.querySelectorAll('button[data-k]').forEach(b => { const on = BM[b.dataset.k]; b.querySelector('i').textContent = on ? 'ON' : 'OFF'; b.querySelector('i').style.color = on ? '#0a9a3a' : '#999'; });
+}
+function bmToggle(force) {
+  if (!BM.unlocked) return;
+  BM.open = force === undefined ? !BM.open : force; bmDraw();
+  if (!state.xr) { const el = $('bmHtml'); if (el) el.style.display = BM.open ? 'block' : 'none'; if (BM.open && document.pointerLockElement) document.exitPointerLock(); }
+  if (ac) tone('triangle', BM.open ? 700 : 500, BM.open ? 1100 : 350, .1, .08);
+}
+(() => {   // the screen version
+  const st = document.createElement('style');
+  st.textContent = `#bmHtml{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(340px,86vw);padding:18px;border-radius:22px;z-index:60;display:none;animation:bmRain 6s linear infinite;background:linear-gradient(135deg,#ff5a5a,#ffd25a,#5aff8a,#5ad7ff,#9a5aff,#ff5ad2);font-family:"Lilita One",Impact,sans-serif;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+  @keyframes bmRain{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}
+  #bmHtml h2{margin:0 0 12px;text-align:center;color:#fff;font-size:34px;text-shadow:0 3px 0 rgba(0,0,0,.3)}
+  #bmHtml button{display:flex;justify-content:space-between;width:100%;margin:8px 0;padding:12px 16px;border:0;border-radius:12px;background:#fff;color:#000;font:inherit;font-size:20px;cursor:pointer}
+  #bmHtml button i{font-style:normal}
+  #bmBtn{position:fixed;right:14px;top:70px;z-index:55;width:52px;height:52px;border-radius:50%;border:0;font-size:28px;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,.3);display:none;cursor:pointer}`;
+  document.head.appendChild(st);
+  const d = document.createElement('div'); d.id = 'bmHtml';
+  d.innerHTML = '<h2>Berry Menu</h2>' + BM_BTN.map(([k, l], i) => `<button data-k="${k}">${i + 1}&nbsp; ${l}<i>OFF</i></button>`).join('') + '<button data-close="1" style="justify-content:center">✖ close (M)</button>';
+  d.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.close) bmToggle(false); else bmSet(b.dataset.k); });
+  document.body.appendChild(d);
+  const b = document.createElement('button'); b.id = 'bmBtn'; b.textContent = '🫐'; b.onclick = () => bmToggle(); document.body.appendChild(b);
+  addEventListener('keydown', e => { if (e.code === 'KeyM' && state.mode === 'play' && !state.xr && document.activeElement.tagName !== 'INPUT') bmToggle(); if (e.code === 'KeyC') BM.trig[1] = true; });
+  addEventListener('keyup', e => { if (e.code === 'KeyC') BM.trig[1] = false; });
+})();
+function bmHudBtn() { const b = $('bmBtn'); if (b) b.style.display = BM.unlocked && state.mode === 'play' && !state.xr ? 'block' : 'none'; }
+function bmSet(k) {
+  const on = !BM[k];
+  if (k === 'grab') bmSize(on ? 2 : 1);
+  if (k === 'stop') { if (on) { bmStatue(true); BM.ghost = true; toast('👻 Stop-motion! You left a frozen you. Fly with the left stick (or WASD + Space). R grip = freeze again.', 5); } else { BM.ghost = false; bmClearStatues(true); } }
+  BM[k] = on; bmDraw(); if (ac) tone('square', on ? 660 : 330, on ? 990 : 220, .08, .06);
+  if (k === 'nograv' && on) toast('🪐 No gravity! Push off things to float around.', 3);
+}
+function bmSize(sc) {
+  if (BM.sc === sc) return; const k = sc / BM.sc; BM.sc = sc; state.bodyH *= k;
+  if (state.xr || sim.on) { rig.scale.setScalar(sc); rig.updateMatrixWorld(true); }
+  hands.forEach(h => { h.stuck = false; h.ready = false; }); letGoAll();
+}
+function letGoAll() { hands.forEach(h => { if (h.hold) letGoHold(h); }); }
+// ---- VR poking: tap a button with your right paw
+function stepBerryMenu(dt) {
+  bmHudBtn();
+  if (BM.open && state.xr) {
+    const hl = hands[0], hr = hands[1];
+    if (hl.tracked) {
+      headWorld(_bm1); bmPanel.position.copy(hl.pos).add(_bm2.set(0, .26 * BM.sc, 0)); bmPanel.lookAt(_bm1); bmPanel.scale.setScalar(BM.sc); bmPanel.visible = true;
+      if ((BM.drawT -= dt) < 0) { BM.drawT = .1; bmDraw(); }
+      if (hr.tracked && tAll > BM.pokeT) {
+        bmPanel.worldToLocal(_bm3.copy(hr.pos));
+        if (Math.abs(_bm3.z) < .04 && Math.abs(_bm3.x) < .15) {
+          const py = (.20625 - _bm3.y) / .4125 * 704;
+          BM_BTN.forEach(([k], i) => { if (Math.abs(py - BM_ROW(i)) < 36) { BM.pokeT = tAll + .45; bmSet(k); buzz(hr, .6, 30); } });
+        }
+      }
+    } else bmPanel.visible = false;
+  } else bmPanel.visible = false;
+  // dramatic landings
+  if (!state.grounded) { BM.air += dt; BM.fallV = Math.min(BM.fallV, state.vel.y); }
+  else { if (!BM.wasG && BM.drama && BM.air > .25 && !BM.ghost) { headWorld(_bm1); _bm1.y -= state.bodyH; bmBoom(_bm1.clone(), clamp(-BM.fallV / 6, .5, 2)); netSend({ t: 'bm', e: 'boom', p: [r3(_bm1.x), r3(_bm1.y), r3(_bm1.z)], k: clamp(-BM.fallV / 6, .5, 2) }); } BM.air = 0; BM.fallV = 0; }
+  BM.wasG = state.grounded;
+  // cube attack: hold the trigger (C on a keyboard)
+  if (BM.cube && BM.trig[1] && (BM.cubeT -= dt) < 0) {
+    BM.cubeT = .07; const h = hands[1];
+    if ((state.xr || sim.on) && h.tracked) { _bm1.copy(h.pos); _bm2.set(0, -.3, -1).normalize().applyQuaternion(h.paw.getWorldQuaternion(_bmQ)); }
+    else { headWorld(_bm1); camera.getWorldDirection(_bm2); _bm1.addScaledVector(_bm2, .5); }
+    const v = _bm2.clone().multiplyScalar(9).add(V((rnd() - .5) * 1.2, rnd() * .8, (rnd() - .5) * 1.2)), hue = (tAll * .5) % 1;
+    bmCube(_bm1.clone(), v, hue, true); netSend({ t: 'bm', e: 'cube', p: [r3(_bm1.x), r3(_bm1.y), r3(_bm1.z)], v: [r3(v.x), r3(v.y), r3(v.z)], c: r3(hue) });
+  }
+  stepCubes(dt); stepBooms(dt); stepPlats(dt);
+  // grabbing friends: send where they are, 20x a second; being grabbed: go where they say
+  hands.forEach(h => { if (h.grabF && (h.gfT = (h.gfT || 0) - dt) < 0) { h.gfT = .05; netSend({ t: 'bm', e: 'pg', to: h.grabF, p: [r3(h.pos.x), r3(h.pos.y - .1), r3(h.pos.z)] }); } });
+  if (BM.held && tAll - BM.held.t < .4) { headWorld(_bm1); rig.position.add(_bm2.set(...BM.held.p).sub(_bm1).multiplyScalar(Math.min(1, dt * 20))); state.vel.set(0, 0, 0); hands.forEach(h => { h.stuck = false; }); }
+  else BM.held = null;
+}
+const _bm1 = V(), _bm2 = V(), _bm3 = V(), _bmQ = new THREE.Quaternion();
+// ---- 1: grab friends like they're toys
+function bmGrabFriend(h) {
+  if (!online() || !(state.xr || sim.on)) return false;
+  let best = null, bd = .45 * BM.sc;
+  for (const [id, f] of MP.others) { const d = f.head.position.distanceTo(h.pos); if (d < bd) { bd = d; best = id; } }
+  if (!best) return false;
+  h.grabF = best; h.gfT = 0; buzz(h, .9, 50); if (ac) tone('sine', 300, 700, .15, .12); return true;
+}
+function bmDropFriend(h) { const v = (h.vel || V()).clone().multiplyScalar(1.4); if (v.length() > 15) v.setLength(15); netSend({ t: 'bm', e: 'pr', to: h.grabF, v: [r3(v.x), r3(v.y), r3(v.z)] }); h.grabF = null; }
+// ---- 2: platforms: squeeze in thin air and a little platform appears under your paw
+const PLAT_G = new THREE.BoxGeometry(.32, .025, .32), PLAT_M = new THREE.MeshStandardMaterial({ color: 0x7a4dff, emissive: 0x3a1aa0, emissiveIntensity: .5, transparent: true, opacity: .85, roughness: .4 });
+function bmPlatform(h) {
+  const m = new THREE.Mesh(PLAT_G, PLAT_M); m.position.copy(h.pos).add(V(0, -PAW_R - .013, 0)); m.scale.setScalar(BM.sc); scene.add(m); BM.plats.push(m);
+  h.hold = { m, p: m.position, r: 0, n: V(0, 1, 0), plat: true }; h.stuck = true; h.cool = 0; h.col = null; h.sp.copy(h.pos); h.n.set(0, 1, 0);
+  if (!hands.some(o => o !== h && o.stuck)) state.velBuf.length = 0;
+  sfxTap('wood', .4); buzz(h, .5, 25); netSend({ t: 'bm', e: 'plat', p: [r3(m.position.x), r3(m.position.y), r3(m.position.z)], s: BM.sc });
+}
+function stepPlats(dt) {
+  for (let i = BM.plats.length - 1; i >= 0; i--) { const m = BM.plats[i]; if (m.userData.fade === undefined) continue; m.userData.fade -= dt; m.scale.multiplyScalar(Math.exp(-dt * 10)); if (m.userData.fade <= 0) { scene.remove(m); BM.plats.splice(i, 1); } }
+}
+// ---- 3: no gravity (see bmGrav). 4: cube attack
+const CUBE_G = new THREE.BoxGeometry(.09, .09, .09);
+function bmCube(p, v, hue, mineC) {
+  if (BM.cubes.length > 90) { const o = BM.cubes.shift(); scene.remove(o.m); o.m.material.dispose(); }
+  const m = new THREE.Mesh(CUBE_G, new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(hue, .85, .58), roughness: .4 })); m.position.copy(p); m.castShadow = true; scene.add(m);
+  BM.cubes.push({ m, v, w: V(rnd() * 12 - 6, rnd() * 12 - 6, rnd() * 12 - 6), life: 3 });
+  if (mineC && ac && rnd() < .5) tone('square', 900 + rnd() * 300, 500, .05, .03);
+}
+function stepCubes(dt) {
+  for (let i = BM.cubes.length - 1; i >= 0; i--) {
+    const o = BM.cubes[i], m = o.m; o.life -= dt;
+    if (o.life <= 0) { scene.remove(m); m.material.dispose(); BM.cubes.splice(i, 1); continue; }   // gone after 3 seconds
+    o.v.y -= G * dt; m.position.addScaledVector(o.v, dt); m.rotation.x += o.w.x * dt; m.rotation.y += o.w.y * dt; m.rotation.z += o.w.z * dt;
+    const hit = pawHit(m.position, .045); if (hit) { m.position.addScaledVector(hit.n, .045 - hit.d); const vn = o.v.dot(hit.n); if (vn < 0) o.v.addScaledVector(hit.n, -1.5 * vn).multiplyScalar(.75); o.w.multiplyScalar(.7); }
+    if (o.life < .3) m.scale.setScalar(Math.max(.01, o.life / .3));
+  }
+}
+// ---- 5: stop-motion statues: an icy copy of you, frozen mid-pose
+const STATUE_M = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, emissive: 0x2a6a9a, emissiveIntensity: .35, roughness: .15, metalness: .1, transparent: true, opacity: .8 });
+function bmStatue(send) {
+  if (!AV.ready && !AV.head) return;
+  const parts = [AV.head, AV.torso, ...hands.filter(h => h.paw.visible).map(h => h.paw), ...AV.arms.flatMap(a => [a.up, a.fore, a.elbow]).filter(o => o && o.visible)].filter(Boolean);
+  const g = new THREE.Group(); scene.add(g); const pose = [];
+  for (const o of parts) {
+    o.updateMatrixWorld(true); const ud = o.userData; o.userData = {}; const c = o.clone(true); o.userData = ud; c.visible = true; o.matrixWorld.decompose(c.position, c.quaternion, c.scale);
+    c.traverse(q => { q.layers.set(0); q.visible = true; if (q.isMesh) { q.material = STATUE_M; q.castShadow = true; } }); g.add(c);
+  }
+  BM.statues.push(g); if (BM.statues.length > 12) { const o = BM.statues.shift(); scene.remove(o); }
+  if (ac) { tone('sine', 1800, 900, .25, .08); noiseHit(ac.currentTime, .3, .12, 'highpass', 4000, .5); }
+  confetti(headWorld(V()), 20, [0xbfe8ff, 0xffffff, 0x7ad0ff]);
+  if (send) { headWorld(_bm1); camera.getWorldQuaternion(_bmQ); netSend({ t: 'bm', e: 'stat', h: [r3(_bm1.x), r3(_bm1.y), r3(_bm1.z), r3(_bmQ.x), r3(_bmQ.y), r3(_bmQ.z), r3(_bmQ.w)], b: r3(state.bodyH), p: hands.map(h => h.paw.visible ? packPose(h.paw) : 0) }); }
+}
+function bmClearStatues(send) { BM.statues.forEach(g => scene.remove(g)); BM.statues.length = 0; if (send) netSend({ t: 'bm', e: 'unstat' }); }
+function bmRemoteStatue(d) {   // a friend's frozen copy: their head and paws, iced
+  if (!AV.tpl) return; const g = new THREE.Group(); scene.add(g);
+  const hd = AV.tpl.head.clone(true); hd.position.set(d.h[0], d.h[1], d.h[2]); hd.quaternion.set(d.h[3], d.h[4], d.h[5], d.h[6]); g.add(hd);
+  const fw = V(0, 0, -1).applyQuaternion(hd.quaternion), to = AV.tpl.torso.clone(true); to.position.set(d.h[0] - fw.x * .03, d.h[1] - clamp(d.b || .6, .35, 3) - .12, d.h[2] - fw.z * .03); to.rotation.y = Math.atan2(-fw.x, -fw.z); g.add(to);
+  (d.p || []).forEach((q, i) => { if (!q) return; const pw = makePaw(0xffffff); if (!i) pw.scale.x = -1; pw.position.set(q[0], q[1], q[2]); pw.quaternion.set(q[3], q[4], q[5], q[6]); g.add(pw); });
+  g.traverse(q => { q.layers.set(0); if (q.isMesh) q.material = STATUE_M; });
+  (BM.remote = BM.remote || []).push({ g, from: d.from }); if (BM.remote.length > 24) scene.remove(BM.remote.shift().g);
+}
+function bmGhostFly(dt) {   // ghost: no walls, no gravity, fly where you look with the left stick
+  const sx = BM.stick[0], sy = BM.stick[1];
+  if (Math.abs(sx) > .15 || Math.abs(sy) > .15) { camera.getWorldDirection(_bm1); _bm2.crossVectors(_bm1, V(0, 1, 0)).normalize(); rig.position.addScaledVector(_bm1, -sy * 3 * BM.sc * dt).addScaledVector(_bm2, sx * 3 * BM.sc * dt); }
+  state.grounded = false;
+}
+// ---- 6: dramatic landings
+function bmBoom(p, k = 1) {
+  const fl = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: .9, depthWrite: false }));
+  fl.position.copy(p); fl.scale.setScalar(.2); scene.add(fl); BM.booms.push({ m: fl, t: 0, k });
+  confetti(p.clone().add(V(0, .2, 0)), Math.round(40 * k), [0xff4a1a, 0xffb020, 0xffe060, 0x4a4a4a]);
+  if (ac) { const t = ac.currentTime; noiseHit(t, .9 * k, .5, 'lowpass', 500, .7); tone('sawtooth', 90, 30, .7, .25 * Math.min(1, k)); noiseHit(t, .25, .25, 'bandpass', 2400, .8); }
+  hands.forEach(h => buzz(h, 1, 120));
+  for (const q of props) if (!q.held) { const dd = q.g.position.distanceTo(p); if (dd < 3 * k) { q.vel.add(_bm1.subVectors(q.g.position, p).setLength((3 * k - dd) * 2.5).add(V(0, 3 * k, 0))); q.rest = false; } }   // blasts toys away
+}
+function stepBooms(dt) {
+  for (let i = BM.booms.length - 1; i >= 0; i--) { const b = BM.booms[i]; b.t += dt; const s = (.2 + b.t * 7) * b.k; b.m.scale.setScalar(Math.min(s, 2.4 * b.k)); b.m.material.opacity = Math.max(0, .9 - b.t * 2.2); b.m.material.color.setHSL(.08 - b.t * .1, 1, .55 - b.t * .3); if (b.t > .45) { scene.remove(b.m); b.m.geometry.dispose(); b.m.material.dispose(); BM.booms.splice(i, 1); } }
+}
+// ---- the net: what friends see
+function bmNet(d) {
+  if (d.e === 'boom') bmBoom(V(...d.p), +d.k || 1);
+  else if (d.e === 'cube') bmCube(V(...d.p), V(...d.v), +d.c || 0, false);
+  else if (d.e === 'plat') { const m = new THREE.Mesh(PLAT_G, PLAT_M); m.position.set(...d.p); m.scale.setScalar(+d.s || 1); m.userData.fade = 1.2; scene.add(m); BM.plats.push(m); }
+  else if (d.e === 'stat') bmRemoteStatue(d);
+  else if (d.e === 'unstat') { BM.remote = (BM.remote || []).filter(r => { if (r.from === d.from) { scene.remove(r.g); return false; } return true; }); }
+  else if (d.e === 'pg' && d.to === MP.me) { if (!BM.held) { toast('🤏 You got grabbed!', 2); if (ac) tone('sine', 700, 300, .15, .12); } BM.held = { p: d.p, t: tAll }; }
+  else if (d.e === 'pr' && d.to === MP.me) { BM.held = null; state.vel.set(...d.v); }
+}
+window.__kg.bm = { BM, bmSet, bmToggle, bmUnlock, bmStatue, bmBoom, bmNet, stepBerryMenu };
 window.__kg.voice = { VC, micOn, setMute, voiceMeet, micLevel, setMouth, AV };
 window.__kg.holds = HOLDS; window.__kg.glass = { GL, glassHit, paneHole, paneCarve, paneCarvePath, blade: glassBlade, LAB, labSet, paneSdf, pieceShatter, glassReset, glassSeeds, paneShatter, GPILE, stepGlassPre, netSend };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
