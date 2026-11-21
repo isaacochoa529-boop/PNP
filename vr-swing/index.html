@@ -916,6 +916,7 @@ function dropProp(h) {
   else p.w.set(rnd() * 6 - 3, rnd() * 6 - 3, rnd() * 6 - 3);                     // pinecones and stars tumble
 }
 function deskGrab() {
+  if (deskSwitch()) return;
   if (pipDeskGrab()) return;
   const h = hands[1];
   if (h.holding) { const p = h.holding; dropProp(h); const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_hq)); p.vel.copy(f).multiplyScalar(9).add(V(0, 2, 0)); if (p.kind === 'ball') throwSpin(p); return; }
@@ -1814,7 +1815,8 @@ const KINDS = [
   { out: 0x3fb2ff, ins: 0xdaf2ff }, { out: 0x9a6bff, ins: 0xf0e6ff }, { out: 0xffd84f, ins: 0xfff6c9, butter: true },
   { out: 0xff4fc3, ins: 0xffe2f5, size: MEGA }];
 // toys that come through the portal become sliceable too: 7 beach ball (bouncy rubber, even in pieces), 8 pinecone, 9 star
-KINDS.push({ out: 0xff4f6d, ins: 0xffb3c0, size: .28, rub: true }, { out: 0x7a4d2b, ins: 0xe2c08f, size: .2 }, { out: 0xffc93a, ins: 0xfff1b8, size: .22 });
+KINDS.push({ out: 0xff4f6d, ins: 0xffb3c0, size: .28, rub: true }, { out: 0x7a4d2b, ins: 0xe2c08f, size: .2 }, { out: 0xffc93a, ins: 0xfff1b8, size: .22 },
+  { out: 0xffc4e1, ins: 0xf6d59a, size: .22 });   // 10: cake (pink frosting, sprinkles, sponge + cream + jam inside)
 KINDS.forEach(k => { k.size = k.size || CUBE; });
 const VS = 11;   // vis soup stride: [px py pz nx ny nz ox oy oz cap hot] per vertex; phys soups are a sharp box, [px py pz]
 let CUT_T = -1e4;   // cap faces made by the cut happening right now remember this time, so they glow hot and cool down
@@ -1856,6 +1858,7 @@ pileMat.onBeforeCompile = sh => {
     .replace('#include <common>', `#include <common>\nuniform vec3 uOut[${NK}]; uniform vec3 uIns[${NK}]; uniform float uHalf[${NK}]; uniform float uTime; varying vec4 vOrig; varying float vHot; varying float vKind;\n${NOISE}`)
     .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `int kk = int(vKind + .5); vec3 kOut = uOut[kk]; float kHalf = uHalf[kk];
       vec4 diffuseColor = vec4( kOut, opacity ); vec3 kgHot = vec3(0.);
+      if (kk == 10 && vOrig.w < .5) { float sp = kgHs(floor(vOrig.xyz * 70.) + 3.); if (sp > .92) diffuseColor.rgb = sp > .973 ? vec3(.3, .7, 1.) : (sp > .946 ? vec3(1., .9, .2) : vec3(.4, .9, .5)); }
       if (kk == 7 && vOrig.w < .5) diffuseColor.rgb = mod(floor(atan(vOrig.z, vOrig.x) / 1.5708 + 4.), 2.) < .5 ? kOut : vec3(1.);
       float kgBump = 0., kgMelt = 0.;
       if (vOrig.w > .5) {
@@ -1863,7 +1866,8 @@ pileMat.onBeforeCompile = sh => {
         float sw = sin(o.x * 61. + sin(o.y * 47. + o.z * 13.) * 2.4 + o.z * 39.) * .5 + .5;
         float rind = smoothstep(kHalf - .017, kHalf - .008, mx);
         diffuseColor.rgb = mix(uIns[kk] * (.92 + .12 * sw), kOut * .92, rind);
-        float age = max(uTime - vHot, 0.), h = exp(-age * .5);
+        if (kk == 10) { float L = fract(o.y * 14. + .3); vec3 lay = L < .6 ? vec3(.96, .8, .5) * (.93 + .1 * sw) : (L < .8 ? vec3(1., .97, .92) : vec3(.8, .1, .22)); diffuseColor.rgb = mix(lay, kOut, rind); }
+        float age = max(uTime - vHot, 0.), h = kk == 10 ? 0. : exp(-age * .5);
         if (h > .01) {
           // the lava flows fast at first, then slows and sets as it cools
           float tf = 1.6 * (1. - exp(-age * .7)), on = smoothstep(.01, .09, h);
@@ -2162,7 +2166,8 @@ function bladeSlice(dt) {
         _a1.subVectors(_pt, k.e); _a1.addScaledVector(k.ax, -_a1.dot(k.ax));
         const L = _a1.length();
         // a quick swing cuts dead straight on contact; slower ones follow your hand and part once the blade is through
-        if (L > travel && sp > FAST) { cuts.push(planeCut(pc, k.ax, _a1, k.e, sp)); pc.trk = null; break; }
+        if (L > travel && sp > FAST * (1 + 2.5 * Math.max(0, pc.rad - .2))) {   // big pieces need a really quick swing before a cut snaps straight
+ cuts.push(planeCut(pc, k.ax, _a1, k.e, sp)); pc.trk = null; break; }
         if (L > travel && L > .9 * widthAlong(pc, _a1)) { cuts.push(pathCut(pc, k)); pc.trk = null; break; }
       } else if (pc.trk) {
         // the blade came out: cut if it went through, not if it was pulled back the way it came
@@ -2205,8 +2210,9 @@ function pathCut(pc, k) {
   const ax = V(); for (const s of P) ax.addScaledVector(s.ax, s.ax.dot(k.ax) < 0 ? -1 : 1); ax.normalize();
   let pts = P.map(s => s.m.clone().addScaledVector(ax, -s.m.dot(ax)));   // flatten onto the plane square to the blade
   const chord = V().subVectors(pts[pts.length - 1], pts[0]); if (chord.length() < 1e-3) return null;
-  let tol = Math.max(.004, .035 * widthAlong(pc, chord));
-  let ch = simplify(pts, tol); while (ch.length > 6) { tol *= 1.6; ch = simplify(pts, tol); }
+  const big = pc.rad > .3;   // the MEGA cube follows your swing much more closely
+  let tol = Math.max(.003, (big ? .012 : .035) * widthAlong(pc, chord));
+  let ch = simplify(pts, tol); while (ch.length > (big ? 10 : 6)) { tol *= 1.4; ch = simplify(pts, tol); }
   ch = ch.filter((p, i) => i === 0 || i === ch.length - 1 || p.distanceTo(ch[i - 1]) > .006);
   if (ch.length < 3) return planeCut(pc, ax, chord, pts[0], k.spMax);
   const lines = [], bis = [], dirs = [];
@@ -2247,13 +2253,14 @@ function cutPiece2(pc, cut) {
   if (held) { toLocal(pc, _a1.copy(held.pos).sub(ARENA), _pl); keep = outside(ch[0].parts, _a2.subVectors(_pl, ch[0].c)) <= outside(ch[1].parts, _a3.subVectors(_pl, ch[1].c)) ? 0 : 1; }
   const frozen = cut.extreme && (held || frzH || LV.length() < 1.5);   // anime cut: it looks fine... for a second
   removePiece(pc);
+  const cake = !cut.bite && kind !== 10 && (AR.forceCake || rnd() < .005); AR.forceCake = false;   // 1 in 200: it was CAKE all along
   const nW = cut.nMain.clone().applyQuaternion(q); let made = 0;
   const bs = AR.bladeV.length(), carry = AR.bladeV.clone().multiplyScalar(.14); if (carry.length() > 1.4) carry.setLength(1.4);
   for (let s = 0; s < 2; s++) {
     const c = ch[s], off = c.c.clone().applyQuaternion(q), P = off.clone().add(T);
     // halves ease apart along the cut, and a quick swing carries them a little in its direction
     const v = frozen ? V() : LV.clone().add(_a2.crossVectors(AV, off)).addScaledVector(nW, (s ? 1 : -1) * (.28 + .04 * Math.min(bs, 8))).add(carry);
-    const child = makePiece(kind, c.parts, c.vol, P, q, v, frozen ? V() : AV, false);
+    const child = makePiece(cake ? 10 : kind, c.parts, c.vol, P, q, v, frozen ? V() : AV, false);
     if (!child) continue;
     child.cool = .07; made++;
     addSeam(child, seg, c.c, frozen ? FREEZE_T : 0);
@@ -2261,6 +2268,7 @@ function cutPiece2(pc, cut) {
     else if (frozen) freezePiece(child, held || frzH, nW.clone().multiplyScalar(s ? 1 : -1));
   }
   if (cut.bite) return made > 0;
+  if (cake) itsCake(V().copy(cut.e).applyQuaternion(q).add(T));
   AR.cuts++; AR.heat = Math.min(1, AR.heat + .5); AR.lastSp = cut.sp;
   const cw = V().copy(cut.e).applyQuaternion(q).add(T);
   sparkBurst(cw, frozen ? 26 : 12, bs); sfxSlice(pc.vol); sfxSizzle(); if (frozen) sfxAnime(); if (sword.held) buzz(sword.held, .65, 28);
@@ -2577,6 +2585,7 @@ function swordNear(h) {
   return _a1.distanceTo(h.pos) < (sword.mode === 'stone' ? .22 : .2);
 }
 function grabAny(h) {
+  if (toughGrab(h)) return;
   if (state.area === 'arena' && AR.ready && h.tracked) {
     if (swordNear(h)) { takeSword(h); return; }
     const pc = pieceNear(h); if (pc) { holdPiece(h, pc); return; }
@@ -2585,6 +2594,7 @@ function grabAny(h) {
   grabProp(h);
 }
 function dropAny(h) {
+  if (PULL.h === h) { pullStop(false); return; }
   if (h.sword) { releaseSword(h); return; }
   if (h.piece) { releasePiece(h); return; }
   if (pip.heldBy === h) { pipDrop(h); return; }
@@ -2612,7 +2622,7 @@ function deskInteract() {
       return;
     }
     if (h.sword) { headWorld(_a1); camera.getWorldQuaternion(_aq); releaseSword(h, V(0, .5, -2.2).applyQuaternion(_aq)); return; }
-    const sw = aimAt(3, f => f(sword, _a4.copy(sword.g.position).add(ARENA), .25)); if (sw) { takeSword(h); return; }
+    const sw = aimAt(3, f => f(sword, _a4.copy(sword.g.position).add(ARENA), .25)); if (sw) { if (sword.mode === 'stone') pullStart(h, 'sword', true); else takeSword(h); return; }
   }
   deskGrab();
 }
@@ -2809,18 +2819,17 @@ const moon = new THREE.Mesh(new THREE.SphereGeometry(7, 20, 14), new THREE.MeshB
 moon.position.set(-70, 95, -110); moon.visible = false; scene.userData.sky.add(moon);
 
 /* ---------- the switch, tucked inside the leaves ---------- */
-const SWITCH_AT = V(-23.62, 7.35, -2.12);
-const SWITCH_HOLD = 1.5;   // seconds you must keep your paw on it
+const SWITCH_AT = V(3.3, .75, 18.07);   // tucked away on the back of the climbing wall
 const lever = new THREE.Group();
 const swG = (() => {
-  const g = new THREE.Group(); g.position.copy(SWITCH_AT); g.rotation.y = Math.atan2(24, 2); scene.add(g);
+  const g = new THREE.Group(); g.position.copy(SWITCH_AT); g.rotation.y = 0; scene.add(g);
   const plate = new THREE.Mesh(new THREE.BoxGeometry(.15, .21, .035), mat(0x3a2a1c)); g.add(plate);
   [-1, 1].forEach(s => { const sc = new THREE.Mesh(new THREE.CylinderGeometry(.008, .008, .01, 6), mat(0x9a9a9a, { metalness: .6 })); sc.rotation.x = Math.PI / 2; sc.position.set(0, s * .085, .02); g.add(sc); });
   const slot = new THREE.Mesh(new THREE.BoxGeometry(.025, .1, .01), new THREE.MeshBasicMaterial({ color: 0x050505 })); slot.position.z = .019; g.add(slot);
   lever.position.z = .02; g.add(lever);
   const stick = new THREE.Mesh(new THREE.CylinderGeometry(.01, .012, .11, 8), mat(0xb8b8b8, { metalness: .7, roughness: .4, flatShading: false })); stick.position.y = .055; lever.add(stick);
   const knob = new THREE.Mesh(new THREE.SphereGeometry(.026, 12, 9), mat(0xd0302a, { emissive: 0x801010, emissiveIntensity: .6, flatShading: false })); knob.position.y = .115; lever.add(knob);
-  lever.rotation.x = -.55;
+  lever.rotation.x = .25;
   return g;
 })();
 
@@ -3033,7 +3042,7 @@ function setHorror(on, quiet) {
   torch.intensity = on ? 9 : 0; moon.visible = on;
   scene.userData.sky.children.forEach(c => { if (c !== moon) c.visible = !on; });   // no fluffy clouds at night
   mirScreen.material = on ? mirNight : mirDay;
-  lever.rotation.x = on ? .55 : -.55;
+  lever.rotation.x = on ? 1.7 : .25;
   if (on) { startAmb(); HZ.rollT = 0; HZ.textT = 14 + rnd() * 12; HZ.ambT = 4 + rnd() * 5; HZ.peekCool = 8; if (!quiet) { sfxSwitch(true); toast('🔦 ...the lights went out.', 3); } }
   else { stopAmb(quiet); clearFig(); peek.g.visible = false; wordsMesh.visible = false; ghost.visible = false; if (!quiet) { sfxSwitch(false); toast('☀️ Phew. The sun is back.', 2.5); } }
 }
@@ -3106,20 +3115,8 @@ function stepHorror(dt) {
   if (HZ.fadeIn > 0) { HZ.fadeIn = Math.max(0, HZ.fadeIn - dt * 1.2); fxQ.visible = HZ.fadeIn > 0; u.black.value = HZ.fadeIn; u.stat.value = 0; }
   if (state.mode !== 'play') return;
   headWorld(_hz);
-  // the switch
-  // you have to HOLD it (1.5 s), so a bump while climbing never flips it by accident
-  HZ.flipCool = Math.max(0, HZ.flipCool - dt);
-  const near = _hz.distanceTo(SWITCH_AT) < .55 || hands.some(h => h.tracked && h.pos.distanceTo(SWITCH_AT) < .28);
-  if (!near) HZ.swIn = false;   // let go after a flip before it can be flipped again
-  if (near && !HZ.swIn && HZ.flipCool <= 0 && !HZ.crash) {
-    const was = HZ.hold || 0; HZ.hold = was + dt;
-    if (Math.floor(HZ.hold / .15) !== Math.floor(was / .15)) {   // a soft tick + buzz that grows as you hold on
-      const k = Math.min(1, HZ.hold / SWITCH_HOLD); hands.forEach(h => { if (h.pos.distanceTo(SWITCH_AT) < .4) buzz(h, .15 + .6 * k, 40); });
-      if (ac) tone('square', 900 + 500 * k, 700 + 500 * k, .03, .05 + .08 * k);
-    }
-    if (HZ.hold >= SWITCH_HOLD) { HZ.hold = 0; HZ.swIn = true; HZ.flipCool = 1.5; setHorror(!HZ.on); hands.forEach(h => { if (h.pos.distanceTo(SWITCH_AT) < .4) buzz(h, 1, 120); }); }
-  } else HZ.hold = Math.max(0, (HZ.hold || 0) - dt * 3);   // let go early and it springs back
-  const from = HZ.on ? .55 : -.55; lever.rotation.x = from - Math.sign(from) * 1.1 * Math.min(1, (HZ.hold || 0) / SWITCH_HOLD);
+  // the switch is pulled by hand now (see the tough pulls below)
+  if (HZ.pullK !== undefined) { const from = HZ.on ? 1.7 : .25; lever.rotation.x = from + ((HZ.on ? .25 : 1.7) - from) * HZ.pullK; }
   if (!HZ.on) { redMul.visible = redAdd.visible = false; return; }
 
   // flicker: the moonlight stutters and the flashlight sometimes cuts out
@@ -3389,9 +3386,84 @@ function stepPip(dt) {
 }
 function stepExtras(dt) {
   if (state.mode !== 'play') return;
-  stepSizzleLoop(dt); stepToyPortal(dt); stepBites(dt); stepPip(dt);
+  stepSizzleLoop(dt); stepToyPortal(dt); stepBites(dt); stepPip(dt); stepPull(dt);
 }
-window.__kg.extras = { pip, pipGrab, pipDrop, pipSay, takeBite, toyToYard, toyTpl, stepSizzleLoop };
+/* ---------- tough pulls: the sword in the stone and the secret switch both fight back ---------- */
+// squeeze grip on it, then PULL: it only gives a little at a time, rumbling and shaking, until it comes free
+const PULL = { h: null, what: null, start: V(), dir: V(), k: 0, desk: false, grind: null };
+HZ.pullK = 0;
+const PULL_NEED = { sword: .3, switch: .26 };   // how far your paw must haul it (metres)
+function pullStart(h, what, desk) {
+  if (PULL.h) pullStop(false);
+  PULL.h = h; PULL.what = what; PULL.k = 0; PULL.dt = 0; PULL.desk = !!desk; PULL.start.copy(h.pos);
+  PULL.dir.set(0, what === 'sword' ? 1 : 0, what === 'sword' ? 0 : 1);   // the sword comes UP, the lever comes TOWARD you
+  buzz(h, .6, 60); if (ac) { tone('sine', 90, 70, .25, .3); }
+  if (what === 'sword' && !AR.toldPull) { AR.toldPull = true; toast(desk ? '💪 Heave...!' : '💪 It is stuck tight! Keep squeezing and PULL it up hard!', desk ? 1.5 : 4); }
+  return true;
+}
+function pullStop(done) {
+  const what = PULL.what, h = PULL.h; PULL.h = null; PULL.what = null;
+  if (PULL.grind && ac) { const t = ac.currentTime; PULL.grind.g.gain.setTargetAtTime(0, t, .03); PULL.grind.n.stop(t + .2); PULL.grind = null; }
+  if (what === 'sword' && sword.mode === 'stone') { sword.g.position.copy(STONE_POSE.p); sword.g.quaternion.copy(STONE_POSE.q); }
+  if (done) {
+    if (what === 'sword') { takeSword(h); sfxChoir(); confetti(V().copy(ARENA).add(STONE).add(V(0, 1, 0)), 60, [0xfff3b0, 0xffffff, 0xffd25a]); }
+    else { HZ.flipCool = 1.5; setHorror(!HZ.on); }
+  }
+  PULL.k = 0; HZ.pullK = 0;
+}
+function toughGrab(h) {
+  if (!h.tracked) return false;
+  if (state.area === 'arena' && AR.ready && sword.mode === 'stone' && swordNear(h)) return pullStart(h, 'sword', false);
+  if (state.area !== 'arena' && !HZ.crash && HZ.flipCool <= 0 && h.pos.distanceTo(SWITCH_AT) < .2) return pullStart(h, 'switch', false);
+  return false;
+}
+function deskSwitch() {
+  if (state.area === 'arena' || HZ.crash || HZ.flipCool > 0 || PULL.h) return false;
+  headWorld(_a1); if (_a1.distanceTo(SWITCH_AT) > 2) return false;
+  return !!aimAt(2, f => f(1, SWITCH_AT, .25)) && pullStart(hands[1], 'switch', true);
+}
+function stepPull(dt) {
+  if (!PULL.h) return;
+  const h = PULL.h;
+  if (PULL.what === 'sword' && (state.area !== 'arena' || sword.mode !== 'stone')) return pullStop(false);
+  let want;
+  if (PULL.desk) want = (PULL.dt = (PULL.dt || 0) + dt) / 1.3;                                   // desktop: a long heave on its own
+  else { if (!h.tracked) return pullStop(false); want = clamp(_a1.subVectors(h.pos, PULL.start).dot(PULL.dir) / PULL_NEED[PULL.what], 0, 1.2); }
+  const prev = PULL.k; PULL.k += (Math.min(1.08, want) - PULL.k) * Math.min(1, dt * 2.6);   // it gives slowly, however hard you yank
+  const k = PULL.k, moving = Math.abs(k - prev) / Math.max(dt, 1e-3);
+  if (PULL.what === 'sword') {   // it creeps up out of the stone, shaking
+    sword.g.position.copy(STONE_POSE.p).add(_a2.set((rnd() - .5) * .012 * (k + .2), k * .09, (rnd() - .5) * .012 * (k + .2)));
+    if (rnd() < moving * .5) crumbs(V().copy(ARENA).add(STONE).add(V(0, .35, 0)), 2, 1);
+  } else HZ.pullK = k;
+  if ((PULL.tick = (PULL.tick || 0) - dt) < 0) { PULL.tick = .07; buzz(h, Math.min(1, .25 + .9 * moving + .4 * k), 60); }
+  if (ac) {   // a deep stony grind while it moves
+    if (!PULL.grind) { const n = noiseLoop(), f = ac.createBiquadFilter(), g = ac.createGain(); f.type = 'lowpass'; f.frequency.value = 320; g.gain.value = 0; n.connect(f); f.connect(g); g.connect(master); n.start(); PULL.grind = { n, g }; }
+    PULL.grind.g.gain.setTargetAtTime(Math.min(.5, moving * .6), ac.currentTime, .04);
+  }
+  if (k > .97) pullStop(true);
+}
+// the holy-grail moment: a choir swells up out of nowhere
+function sfxChoir() {
+  if (!ac) return; const t = ac.currentTime, out = ac.createGain(), dl = ac.createDelay(1), fb = ac.createGain();
+  out.gain.setValueAtTime(0, t); out.gain.linearRampToValueAtTime(.5, t + .5); out.gain.setValueAtTime(.5, t + 2.2); out.gain.linearRampToValueAtTime(0, t + 3.6);
+  dl.delayTime.value = .19; fb.gain.value = .45; out.connect(master); out.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(master);   // a little echo, like a big hall
+  [[220, 0], [277.2, 0], [329.6, 0], [440, .25], [554.4, .25], [659.3, .5]].forEach(([f, d]) => {
+    for (const det of [-4, 0, 5]) {   // each note is a few singers, slightly out of step, singing "aaah"
+      const o = ac.createOscillator(), v = ac.createOscillator(), vg = ac.createGain(), f1 = ac.createBiquadFilter(), f2 = ac.createBiquadFilter(), g = ac.createGain(), g2 = ac.createGain();
+      o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = det; v.frequency.value = 5 + Math.random(); vg.gain.value = f * .006; v.connect(vg); vg.connect(o.frequency);
+      f1.type = 'bandpass'; f1.frequency.value = 800; f1.Q.value = 6; f2.type = 'bandpass'; f2.frequency.value = 1150; f2.Q.value = 8;
+      g.gain.setValueAtTime(0, t + d); g.gain.linearRampToValueAtTime(.09, t + d + .6); g2.gain.value = .6;
+      o.connect(f1); o.connect(f2); f1.connect(g); f2.connect(g2); g2.connect(g); g.connect(out); o.start(t + d); v.start(t + d); o.stop(t + 3.8); v.stop(t + 3.8);
+    }
+  });
+  [1760, 2217, 2637].forEach((f, i) => tone('sine', f, f, 1.6, .03, .4 + i * .15));   // sparkle on top
+}
+function itsCake(pLocal) {
+  const w = V().copy(pLocal).add(ARENA); confetti(w, 50, [0xffc4e1, 0xffffff, 0x6fd3ff, 0xffe066]);
+  if (ac) [523, 659, 784, 1046].forEach((f, i) => tone('triangle', f, f * 1.01, .25, .15, i * .09));
+  toast('🎂 Wait... IT WAS CAKE THE WHOLE TIME?!', 4);
+}
+window.__kg.extras = { PULL, pullStart, sfxChoir, pip, pipGrab, pipDrop, pipSay, takeBite, toyToYard, toyTpl, stepSizzleLoop };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
 </body>
