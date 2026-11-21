@@ -849,6 +849,23 @@ const L_UP = .3, L_FORE = .3;
     const smile = new THREE.Mesh(sg, pm.material); smile.name = 'Smile'; smile.position.copy(pm.position); smile.quaternion.copy(pm.quaternion); smile.scale.copy(pm.scale);
     pm.parent.add(smile);
   })();
+  (() => {   // each eye (white + pupil) gets its own pivot, so eyes can grow when you shout
+    const hd = get('Head'), byMat = {}; hd.traverse(c => { if (c.isMesh && (c.material.name === 'EyeWhite' || c.material.name === 'Pupil') && c.name !== 'Smile') byMat[c.material.name] = c; });
+    const W = byMat.EyeWhite, P = byMat.Pupil; if (!W || !W.geometry.index) return;
+    const parent = W.parent; parent.updateMatrix(); W.updateMatrix(); if (P) P.updateMatrix();
+    const side = (m, sgn) => {   // the triangles of mesh m on one side (x < 0 or x > 0), baked into parent space
+      const g = m.geometry.clone(); g.applyMatrix4(m.matrix); const pos = g.attributes.position, ix = g.index.array, keep = [];
+      for (let i = 0; i < ix.length; i += 3) if ((pos.getX(ix[i]) + pos.getX(ix[i + 1]) + pos.getX(ix[i + 2])) * sgn > 0) keep.push(ix[i], ix[i + 1], ix[i + 2]);
+      g.setIndex(keep); return keep.length ? g : null;
+    };
+    [-1, 1].forEach(sgn => {
+      const wg = side(W, sgn); if (!wg) return; const bb = new THREE.Box3(), wp = wg.attributes.position, wi = wg.index.array; for (let i = 0; i < wi.length; i++) bb.expandByPoint(_tmp.fromBufferAttribute(wp, wi[i])); const c = bb.getCenter(V());   // only the vertices this eye uses
+      const pv = new THREE.Group(); pv.name = sgn < 0 ? 'EyeL' : 'EyeR'; pv.position.copy(c); parent.add(pv);
+      wg.translate(-c.x, -c.y, -c.z); pv.add(new THREE.Mesh(wg, W.material));
+      const pg = P && side(P, sgn); if (pg) { pg.translate(-c.x, -c.y, -c.z); pv.add(new THREE.Mesh(pg, P.material)); }
+    });
+    W.removeFromParent(); if (P) P.removeFromParent();
+  })();
   const furOf = o => { let m = null; o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') m = c.material; }); return m; };
   const prep = (o, layer) => { o.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; if (layer) c.layers.set(layer); } }); return o; };
   AV.torso = prep(get('Torso').clone(), SELF_LAYER); AV.head = prep(get('Head').clone(), SELF_LAYER);
@@ -5292,6 +5309,8 @@ function setMouth(head, k) {
   const talk = k > .04; m.visible = talk; m.scale.y = .12 + k * .95;
   if (head.userData.smile === undefined) head.userData.smile = head.getObjectByName('Smile') || null;
   if (head.userData.smile) head.userData.smile.visible = !talk;   // talking: the smile goes away, the open mouth takes over
+  if (!head.userData.eyes) head.userData.eyes = ['EyeL', 'EyeR'].map(n => head.getObjectByName(n)).filter(Boolean);
+  const e = 1 + Math.min(1, k * 1.3) * .85; head.userData.eyes.forEach(o => o.scale.setScalar(e));   // the louder you talk, the bigger your eyes
 }
 const _ls = V(), _lf = V(), _lu = V(), _lq = new THREE.Quaternion();
 function stepVoice(dt) {
@@ -5310,7 +5329,7 @@ function stepVoice(dt) {
   }
 }
 { const b = $('btnMute'); if (b) b.onclick = () => { if (!VC.mic) { VC.asked = false; micOn(); } else setMute(!VC.muted); }; setMute(VC.muted); }
-window.__kg.voice = { VC, micOn, setMute, voiceMeet, micLevel };
+window.__kg.voice = { VC, micOn, setMute, voiceMeet, micLevel, setMouth, AV };
 window.__kg.holds = HOLDS; window.__kg.glass = { GL, glassHit, paneHole, paneCarve, paneCarvePath, blade: glassBlade, LAB, labSet, paneSdf, pieceShatter, glassReset, glassSeeds, paneShatter, GPILE, stepGlassPre, netSend };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
