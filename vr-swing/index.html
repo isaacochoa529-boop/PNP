@@ -112,7 +112,6 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { Reflector } from 'three/addons/objects/Reflector.js';
 // TreeKit: finished low-poly trees for Three.js. Safe on r128 and newer (no CapsuleGeometry, no newer-only APIs).
 // Every tree is ONE merged BufferGeometry with vertex colors and flat (per-face) normals, so it can be
 // instanced (hundreds of trees = one draw call) and needs no textures.
@@ -367,6 +366,45 @@ function sdf(c, p, n) {
   n.multiplyScalar(1 / L); return L - c.r;
 }
 const _n = V();
+/* Exact shapes: rocks, cliffs, tree trunks + branches, mushrooms, the stump, the log and the island collide with
+   their real triangles (bucketed in a 2 m grid), so paws touch exactly what you see. */
+const TRI_CELL = 2, triGrid = new Map(), tris = [];
+let triStamp = 0;
+const cellKey = (i, j) => i * 4096 + j;
+function addMeshCollider(mesh, owner, keep) {
+  mesh.updateWorldMatrix(true, false);
+  const g = mesh.geometry, p = g.attributes.position, idx = g.index, n = idx ? idx.count : p.count;
+  const va = V(), vb = V(), vc = V();
+  for (let k = 0; k < n; k += 3) {
+    const ia = idx ? idx.getX(k) : k, ib = idx ? idx.getX(k + 1) : k + 1, ic = idx ? idx.getX(k + 2) : k + 2;
+    va.fromBufferAttribute(p, ia).applyMatrix4(mesh.matrixWorld); vb.fromBufferAttribute(p, ib).applyMatrix4(mesh.matrixWorld); vc.fromBufferAttribute(p, ic).applyMatrix4(mesh.matrixWorld);
+    if (keep && !keep(va, vb, vc)) continue;
+    const tri = new THREE.Triangle(va.clone(), vb.clone(), vc.clone()), nrm = V(); tri.getNormal(nrm);
+    if (nrm.lengthSq() < .5) continue;   // degenerate sliver
+    const t = { tri, n: nrm, owner, stamp: 0,
+      minx: Math.min(va.x, vb.x, vc.x), maxx: Math.max(va.x, vb.x, vc.x), miny: Math.min(va.y, vb.y, vc.y), maxy: Math.max(va.y, vb.y, vc.y), minz: Math.min(va.z, vb.z, vc.z), maxz: Math.max(va.z, vb.z, vc.z) };
+    tris.push(t);
+    for (let i = Math.floor(t.minx / TRI_CELL); i <= Math.floor(t.maxx / TRI_CELL); i++)
+      for (let j = Math.floor(t.minz / TRI_CELL); j <= Math.floor(t.maxz / TRI_CELL); j++) { const key = cellKey(i, j); let b = triGrid.get(key); if (!b) triGrid.set(key, b = []); b.push(t); }
+  }
+}
+const _cp = V(), _dv = V(), _pn = V();
+// calls fn(t, signedDistance, normal) for every triangle within r of p
+function triQuery(p, r, fn) {
+  triStamp++;
+  for (let i = Math.floor((p.x - r) / TRI_CELL); i <= Math.floor((p.x + r) / TRI_CELL); i++)
+    for (let j = Math.floor((p.z - r) / TRI_CELL); j <= Math.floor((p.z + r) / TRI_CELL); j++) {
+      const b = triGrid.get(cellKey(i, j)); if (!b) continue;
+      for (const t of b) {
+        if (t.stamp === triStamp) continue; t.stamp = triStamp;
+        if (p.x + r < t.minx || p.x - r > t.maxx || p.y + r < t.miny || p.y - r > t.maxy || p.z + r < t.minz || p.z - r > t.maxz) continue;
+        t.tri.closestPointToPoint(p, _cp); _dv.subVectors(p, _cp); const d = _dv.length();
+        if (d >= r) continue;
+        if (_dv.dot(t.n) < 0) fn(t, -d, t.n);                       // centre slipped behind the surface: push out through the face
+        else fn(t, d, d > 1e-6 ? _n.copy(_dv).multiplyScalar(1 / d) : t.n);
+      }
+    }
+}
 // push sphere (p, r) out of everything; info collects what it touched
 function pushOut(p, r, info) {
   let any = false;
@@ -380,6 +418,12 @@ function pushOut(p, r, info) {
         if (info) { info.nrm.add(_n); if (_n.y > 0.6) { info.ground = true; if (c.bounce) info.bounce = c; } info.col = c; }
       }
     }
+    let deep = null, dd = r; const dn = _pn;
+    triQuery(p, r, (t, d, n) => { if (d < dd) { dd = d; deep = t; dn.copy(n); } });
+    if (deep) {
+      p.addScaledVector(dn, r - dd); moved = any = true;
+      if (info) { info.nrm.add(dn); if (dn.y > 0.6) { info.ground = true; if (deep.owner.bounce) info.bounce = deep.owner; } info.col = deep.owner; }
+    }
     if (!moved) break;
   }
   return any;
@@ -392,6 +436,7 @@ function pawHit(p) {
     const d = sdf(c, p, _n);
     if (d < bd) { bd = d; best = { c, d, n: _n.clone() }; }
   }
+  triQuery(p, PAW_R, (t, d, n) => { if (d < bd) { bd = d; best = { c: t.owner, d, n: n.clone() }; } });
   return best;
 }
 
@@ -406,6 +451,7 @@ function jitterGeo(g, amt, k = 0) {
   g.computeVertexNormals(); return g;
 }
 function paint(g, fn) { const p = g.attributes.position, col = new Float32Array(p.count * 3), c = new THREE.Color(); for (let i = 0; i < p.count; i++) { fn(c, p.getX(i), p.getY(i), p.getZ(i)); col.set([c.r, c.g, c.b], i * 3); } g.setAttribute('color', new THREE.BufferAttribute(col, 3)); return g; }
+const OWN = { rock: { tag: 'rock' }, wood: { tag: 'wood' }, grass: { tag: 'grass' }, mush: { tag: 'mush' } };
 const shadowy = m => { m.castShadow = true; m.receiveShadow = true; return m; };
 
 function box(x, y, z, w, h, d, color, o = {}) {
@@ -417,7 +463,7 @@ function box(x, y, z, w, h, d, color, o = {}) {
 function rock(x, y, z, r, o = {}) {
   const g = paint(jitterGeo(new THREE.IcosahedronGeometry(r, 1), r * .28, x), (c, px, py) => c.setHSL(.28 + hsh(px, py, 0, 3) * .04, .08, .42 + py / r * .12 + hsh(px, py, 1, 2) * .06));
   const m = shadowy(new THREE.Mesh(g, vcMat)); m.position.set(x, y, z); m.scale.set(1, o.sy || 1, 1); scene.add(m);
-  addCol({ t: 2, c: V(x, y, z), r: r * (o.sy ? Math.min(1, o.sy) : 1) * .92, tag: 'rock' });
+  addMeshCollider(m, OWN.rock);
   return m;
 }
 
@@ -448,7 +494,7 @@ const cliffTops = [];
     const g = paint(jitterGeo(new THREE.BoxGeometry(w, h, d, 5, Math.ceil(h / 2), 1), .35, i), (c, px, py) => {
       const band = Math.sin((py + h / 2) * 1.7 + i) * .5 + .5; c.setHSL(.07 + band * .03, .32, .44 + band * .1 + hsh(px, py, i, 4) * .05);
     });
-    box(x, h / 2, z, w, h, d, 0, { geo: g, material: vcMat, yaw, tag: 'rock' });
+    addMeshCollider(box(x, h / 2, z, w, h, d, 0, { geo: g, material: vcMat, yaw, solid: false }), OWN.rock);
     // grassy cap on top
     const cap = new THREE.Mesh(new THREE.BoxGeometry(w, .25, d + .2), mat(0x4caf50)); cap.position.set(x, h + .1, z); cap.rotation.y = yaw; cap.receiveShadow = true; scene.add(cap);
     cliffTops.push({ i, x: Math.cos(a) * (R + 1.5), z: Math.sin(a) * (R + 1.5), h });
@@ -466,7 +512,8 @@ function trunkRadius(geo, y0, y1) {
 function bigTree(type, x, z, s, seed) {
   const t = TreeKit.mesh(type, { seed }); t.position.set(x, -.1, z); t.scale.setScalar(s); t.rotation.y = seed; scene.add(t);
   const inf = TreeKit.info[type], tr = trunkRadius(t.geometry, inf.canopyBase * .25, inf.canopyBase * .7) * s;
-  addCol({ t: 1, x, z, cy: inf.canopyBase * s * .55, hy: inf.canopyBase * s * .55, r: Math.max(.3, tr * .95), tag: 'wood' });
+  const cut = -.1 + inf.canopyBase * s * .97;
+  addMeshCollider(t, OWN.wood, (a, b, c) => Math.max(a.y, b.y, c.y) < cut);
   return { x, z, s, top: inf.canopyBase * s, r: tr };
 }
 const oakA = bigTree('oak', -12, -8, 1.6, 2);
@@ -490,7 +537,7 @@ bigTree('birch', 4, -22, 1.4, 3); bigTree('birch', -24, -2, 1.3, 6); bigTree('bi
   const side = mat(0x7a4d2b);
   const m = shadowy(new THREE.Mesh(jitterGeo(new THREE.CylinderGeometry(2.2, 2.5, .55, 18, 2), .06), [side, new THREE.MeshStandardMaterial({ map: tt, roughness: .9 }), side]));
   m.position.set(0, .275, 0); scene.add(m);
-  addCol({ t: 1, x: 0, z: 0, cy: .275, hy: .275, r: 2.3, tag: 'wood' });
+  addMeshCollider(m, OWN.wood);
 }
 
 /* ---------------- sign with instructions ---------------- */
@@ -525,11 +572,12 @@ function mushroom(x, z, h, cr, color, bouncy) {
   const dm = mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: bouncy ? .5 : .05 });
   for (let i = 0; i < 7; i++) { const a = rnd() * 6.283, el = .35 + rnd() * .8; const d = new THREE.Mesh(new THREE.SphereGeometry(cr * .11, 8, 6), dm);
     d.position.set(Math.cos(a) * Math.cos(el) * cr, Math.sin(el) * cr * .55, Math.sin(a) * Math.cos(el) * cr); d.scale.y = .4; d.lookAt(d.position.clone().multiplyScalar(2)); capG.add(d); }
-  addCol({ t: 1, x, z, cy: h / 2, hy: h / 2, r: cr * .3, tag: 'mush' });
-  const top = h + cr * .42;
-  const col = addCol({ t: 1, x, z, cy: (h + top) / 2, hy: (top - h) / 2, r: cr * .95, tag: 'mush', bounce: bouncy ? bouncy : 0 });
-  const m = { g, capG, col, bouncy, squish: 0, top };
-  col.mush = m; mushrooms.push(m); return m;
+  const top = h + cr * .55;
+  const owner = { tag: 'mush', bounce: bouncy || 0 };
+  const m = { g, capG, col: owner, bouncy, squish: 0, top };
+  owner.mush = m; mushrooms.push(m);
+  addMeshCollider(stem, OWN.mush); addMeshCollider(cap, owner); addMeshCollider(under, owner);
+  return m;
 }
 // stepping path up to oak B's lookout
 const path = [[5, -2, 1.1, 1.1, 0xff5a4f], [7.5, -4.5, 1.9, 1.2, 0xff8a3d], [9.5, -2.2, 2.7, 1.1, 0xffc93d], [11.2, -5.0, 3.5, 1.2, 0xff5a4f], [10.8, -7.6, 4.25, 1.0, 0xff8a3d]];
@@ -575,11 +623,10 @@ const isl = { x: -2, z: -16, top: 5.6 };
   const under = shadowy(new THREE.Mesh(paint(jitterGeo(new THREE.ConeGeometry(3.1, 3.2, 10, 3), .25, 5), (c, x, y) => c.setHSL(.08, .3, .38 + y * .04)), vcMat));
   under.rotation.x = Math.PI; under.position.set(isl.x, isl.top - 1.85, isl.z); scene.add(under);
   const grass = shadowy(new THREE.Mesh(new THREE.CylinderGeometry(3.15, 3.1, .3, 10), mat(0x52b84a))); grass.position.set(isl.x, isl.top - .15, isl.z); scene.add(grass);
-  addCol({ t: 1, x: isl.x, z: isl.z, cy: isl.top - .45, hy: .45, r: 3.1, tag: 'grass' });
-  addCol({ t: 1, x: isl.x, z: isl.z, cy: isl.top - 2.2, hy: 1.4, r: 1.6, tag: 'rock' });
+  addMeshCollider(grass, OWN.grass); addMeshCollider(under, OWN.rock);
   rock(isl.x + 1.6, isl.top + .3, isl.z - 1.2, .6);
   const ib = TreeKit.mesh('birch', { seed: 4 }); ib.scale.setScalar(.6); ib.position.set(isl.x - 1.4, isl.top - .1, isl.z - 1); scene.add(ib);
-  addCol({ t: 1, x: isl.x - 1.4, z: isl.z - 1, cy: isl.top + 1.6, hy: 1.6, r: .2, tag: 'wood' });
+  addMeshCollider(ib, OWN.wood, (a, b, c) => Math.max(a.y, b.y, c.y) < isl.top - .1 + 5.4 * .6 * .97);
 }
 // log from the treehouse deck edge to the island
 const logA = V(oakA.x + 2.6, houseY, oakA.z - 1.2), logB = V(isl.x - 2.8, isl.top - .2, isl.z + 1.2);
@@ -588,7 +635,7 @@ const logA = V(oakA.x + 2.6, houseY, oakA.z - 1.2), logB = V(isl.x - 2.8, isl.to
   const g = paint(jitterGeo(new THREE.CylinderGeometry(.38, .42, L, 10, 6), .03), (c, x, y, z) => c.setHSL(.07, .45, .3 + hsh(x, y, z, 5) * .08));
   g.rotateZ(Math.PI / 2);
   const m = shadowy(new THREE.Mesh(g, vcMat)); m.position.set(mid.x, mid.y, mid.z); m.rotation.y = yaw; scene.add(m);
-  addCol({ t: 0, x: mid.x, y: mid.y, z: mid.z, hx: L / 2, hy: .36, hz: .36, yaw, tag: 'wood' });
+  addMeshCollider(m, OWN.wood);
   scene.userData.logMid = mid;
 }
 
@@ -716,9 +763,12 @@ function drawWrist() {
 }
 
 /* ======================= the Thumpling (modelled in Blender: models/thumpling.glb) ======================= */
-// Torso + head live on SELF_LAYER: the mirror and the desktop third-person camera see them, your own eyes don't.
-const SELF_LAYER = 5;
-const AV = { ready: false, root: new THREE.Group(), torso: null, head: null, arms: [], armFur: null };
+// Torso + head live on SELF_LAYER: the selfie screen and the desktop third-person camera see them, your own eyes don't.
+// FP_LAYER holds a shorter copy of the body that only your own eyes see: it sits on the ground and comes up to your waist.
+const SELF_LAYER = 5, FP_LAYER = 6;
+camera.layers.enable(FP_LAYER);
+const AV = { ready: false, root: new THREE.Group(), fpRoot: new THREE.Group(), torso: null, head: null, arms: [], armFur: null };
+scene.add(AV.fpRoot); AV.fpRoot.visible = false;
 scene.add(AV.root); AV.root.visible = false;
 const avSc = () => state.bodyH / .85;                         // the model is built with its eyes 0.85 m up
 const SHOULDER = [V(-.235, .585, .02), V(.235, .585, .02)];   // torso space (model faces -Z)
@@ -730,8 +780,9 @@ const L_UP = .3, L_FORE = .3;
   const furOf = o => { let m = null; o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') m = c.material; }); return m; };
   const prep = (o, layer) => { o.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; if (layer) c.layers.set(layer); } }); return o; };
   AV.torso = prep(get('Torso').clone(), SELF_LAYER); AV.head = prep(get('Head').clone(), SELF_LAYER);
-  AV.torso.position.set(0, 0, 0); AV.head.position.set(0, 0, 0); AV.head.visible = false;
+  AV.torso.position.set(0, -.12, 0); AV.head.position.set(0, 0, 0); AV.head.visible = false;   // -.12: the bean's bottom sits on the floor
   AV.root.add(AV.torso); scene.add(AV.head);
+  const fp = prep(get('Torso').clone(), FP_LAYER); fp.position.set(0, -.12, 0); AV.fpRoot.add(fp);
   AV.armFur = furOf(get('Paw')).clone();
   const withArmFur = o => { o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') c.material = AV.armFur; }); return o; };
   for (let i = 0; i < 2; i++) {
@@ -760,6 +811,10 @@ function poseAvatar(dt) {
   AV.root.visible = true; AV.head.visible = true;
   AV.root.position.set(_h.x - _fw.x * .03, _h.y - .85 * sc, _h.z - _fw.z * .03);
   AV.root.rotation.set(0, yaw, 0); AV.root.scale.setScalar(sc);
+  // first-person body: same spot, a little behind your paws, squashed so its top is at your waist
+  AV.fpRoot.visible = !(state.third && !state.xr);
+  AV.fpRoot.position.set(_h.x - _fw.x * .12, _h.y - state.bodyH, _h.z - _fw.z * .12); AV.fpRoot.rotation.set(0, yaw, 0);
+  AV.fpRoot.scale.set(sc, Math.max(.2, state.bodyH - .45) / .6, sc);
   // lean forward a little while you're in the air
   const air = state.grounded ? 0 : 1; AV.torso.rotation.x += ((air ? -.15 : 0) - AV.torso.rotation.x) * Math.min(1, dt * 6);
   AV.head.position.copy(_h); AV.head.quaternion.copy(_hq); AV.head.scale.setScalar(sc);
@@ -784,16 +839,34 @@ function poseAvatar(dt) {
   });
 }
 
-/* ======================= selfie mirror at spawn ======================= */
-const mirror = (() => {
+/* ======================= selfie screen at spawn ======================= */
+// A camera in the frame films you and shows it flipped like a mirror. Unlike a real reflection it looks the same
+// to both eyes in VR, so it stays smooth and steady in the headset.
+const selfie = (() => {
   const g = new THREE.Group(); g.position.set(-3.4, 0, -3.0); g.rotation.y = Math.atan2(3.4, 3.0); scene.add(g);
-  const r = new Reflector(new THREE.PlaneGeometry(1.5, 2.1), { textureWidth: 512, textureHeight: 720, color: 0xc8e6dd });
-  r.position.set(0, 1.35, .06); g.add(r); r.camera.layers.enable(SELF_LAYER);
+  const rt = new THREE.WebGLRenderTarget(384, 540); rt.texture.colorSpace = THREE.SRGBColorSpace;
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 2.1), new THREE.MeshBasicMaterial({ map: rt.texture, toneMapped: false }));
+  screen.position.set(0, 1.35, .075); screen.scale.x = -1; g.add(screen);     // flipped, so it behaves like a mirror
+  const back = new THREE.Mesh(new THREE.BoxGeometry(1.66, 2.26, .1), mat(0x6b4426)); back.position.set(0, 1.35, 0); back.castShadow = true; g.add(back);
   const fm = mat(0x8a5a32);
-  [[0, 2.45, 1.8, .16], [0, .25, 1.8, .16], [-.83, 1.35, .16, 2.3], [.83, 1.35, .16, 2.3]].forEach(([x, y, w, h]) => { const b = shadowy(new THREE.Mesh(new THREE.BoxGeometry(w, h, .14), fm)); b.position.set(x, y, 0); g.add(b); });
+  [[0, 2.45, 1.8, .16], [0, .25, 1.8, .16], [-.83, 1.35, .16, 2.3], [.83, 1.35, .16, 2.3]].forEach(([x, y, w, h]) => { const b = shadowy(new THREE.Mesh(new THREE.BoxGeometry(w, h, .14), fm)); b.position.set(x, y, .02); g.add(b); });
   const leaf = mat(0x4fd65a); for (let k = 0; k < 6; k++) { const l = new THREE.Mesh(new THREE.SphereGeometry(.12, 8, 6), leaf); l.scale.set(1, .4, .6); l.position.set(-.8 + k * .32, 2.58, .05); l.rotation.z = k % 2 ? .4 : -.4; g.add(l); }
-  addCol({ t: 0, x: g.position.x, y: 1.3, z: g.position.z, hx: .92, hy: 1.3, hz: .1, yaw: g.rotation.y, tag: 'wood' });
-  return r;
+  addCol({ t: 0, x: g.position.x, y: 1.3, z: g.position.z, hx: .92, hy: 1.3, hz: .12, yaw: g.rotation.y, tag: 'wood' });
+  const cam = new THREE.PerspectiveCamera(48, 384 / 540, .05, 80); cam.layers.enable(SELF_LAYER);
+  g.updateMatrixWorld(true); g.localToWorld(cam.position.set(0, 1.35, .15));
+  const look = V(), _sh = V(); let frame = 0;
+  return {
+    g, near: false,
+    update() {
+      headWorld(_sh); this.near = _sh.distanceTo(cam.position) < 9 && state.mode === 'play';
+      if (!this.near || (frame++ & 1)) return;                       // only when you're close, every other frame
+      look.lerp(_sh.clone().add(V(0, -.25, 0)), look.lengthSq() ? .25 : 1); cam.lookAt(look);
+      const xrOn = renderer.xr.enabled, shadowAuto = renderer.shadowMap.autoUpdate, prev = renderer.getRenderTarget();
+      renderer.xr.enabled = false; renderer.shadowMap.autoUpdate = false; screen.visible = false;
+      renderer.setRenderTarget(rt); renderer.render(scene, cam); renderer.setRenderTarget(prev);
+      renderer.xr.enabled = xrOn; renderer.shadowMap.autoUpdate = shadowAuto; screen.visible = true;
+    },
+  };
 })();
 
 /* ======================= audio (all synthesized) ======================= */
@@ -1096,7 +1169,7 @@ function animateWorld(dt, t) {
 addEventListener('keydown', e => {
   state.keys[e.code] = true;
   if (e.code === 'KeyR' && state.mode === 'play') respawn();
-  if (e.code === 'KeyV' && state.mode === 'play' && !state.xr) { state.third = !state.third; camera.layers[state.third ? 'enable' : 'disable'](SELF_LAYER); }
+  if (e.code === 'KeyV' && state.mode === 'play' && !state.xr) { state.third = !state.third; camera.layers[state.third ? 'enable' : 'disable'](SELF_LAYER); camera.layers[state.third ? 'disable' : 'enable'](FP_LAYER); }
   if (e.code === 'Escape' && state.mode === 'play' && !state.xr) openMenu();
   if (e.key && e.key.length === 1) { state.typed = (state.typed + e.key.toLowerCase()).slice(-4); if (state.typed === 'bonk' && state.mode === 'play') clapParty(); }
   if (state.mode === 'play' && ['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
@@ -1208,7 +1281,7 @@ function update(dt) {
     collectCheck();
     if (state.running) { state.time += dt; $('hudT').textContent = fmtTime(state.time); const s = Math.floor(state.time); if (state.xr && s !== lastWristSec) { lastWristSec = s; drawWrist(); } }
   } else if (!state.xr) { // menu: slow orbit of the grove
-    AV.root.visible = false; if (AV.head) AV.head.visible = false; AV.arms.forEach(a => a.up.visible = a.fore.visible = a.elbow.visible = false);
+    AV.root.visible = false; AV.fpRoot.visible = false; if (AV.head) AV.head.visible = false; AV.arms.forEach(a => a.up.visible = a.fore.visible = a.elbow.visible = false);
     rig.position.set(Math.sin(tAll * .05) * 14, 3, Math.cos(tAll * .05) * 14); rig.rotation.y = tAll * .05; camera.rotation.set(-.12, 0, 0);
   }
   animateWorld(dt, tAll); stepFx(dt);
@@ -1216,13 +1289,13 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  mirror.visible = rig.position.distanceTo(mirror.parent.position) < 14;
+
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
 window.__kg.start = () => { state.mode = 'play'; $('menu').hidden = true; resetRun(); respawn(); };
-window.__kg.respawn = respawn;
+window.__kg.respawn = respawn; window.__kg.pawHit = pawHit; window.__kg.tris = tris;
 updateHud();
-renderer.setAnimationLoop(() => { if (window.__kg.paused) return; update(Math.min(.05, clock.getDelta())); renderer.render(scene, camera); });
+renderer.setAnimationLoop(() => { if (window.__kg.paused) return; update(Math.min(.05, clock.getDelta())); selfie.update(); renderer.render(scene, camera); });
 </script>
 </body>
 </html>
