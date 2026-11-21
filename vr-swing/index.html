@@ -73,6 +73,16 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
 .hud .b { font-family: var(--display); font-size: 30px; color: var(--berry); }
 .hud .t { font-size: 16px; color: var(--ink); }
 .hud .hint { font-size: 13px; color: var(--muted); }
+.touch { position: fixed; inset: 0; z-index: 4; pointer-events: none; user-select: none; -webkit-user-select: none; }
+.touch button { pointer-events: auto; touch-action: none; }
+.touch .stick { pointer-events: auto; touch-action: none; position: absolute; left: calc(env(safe-area-inset-left, 0px) + 24px); bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  width: 140px; height: 140px; border-radius: 50%; background: rgba(16,40,34,.35); border: 3px solid rgba(255,255,255,.45); }
+.touch .nub { position: absolute; left: 41px; top: 41px; width: 58px; height: 58px; border-radius: 50%; background: rgba(255,255,255,.75); box-shadow: 0 3px 8px rgba(0,0,0,.3); }
+.touch .tbtns { position: absolute; right: calc(env(safe-area-inset-right, 0px) + 18px); bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); display: grid; grid-template-columns: repeat(2, 76px); gap: 10px; }
+.touch .tbtns button { width: 76px; height: 76px; border-radius: 50%; padding: 0; font-size: 28px; line-height: 1; display: grid; place-items: center; }
+.touch .tbtns small { display: block; font-size: 12px; margin-top: -14px; }
+.touch .ttop { position: absolute; left: calc(env(safe-area-inset-left, 0px) + 12px); top: calc(env(safe-area-inset-top, 0px) + 12px); display: flex; gap: 8px; }
+.touch .ttop button { width: 48px; height: 48px; padding: 0; font-size: 22px; border-radius: 14px; }
 .cross { position: fixed; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px; border-radius: 50%;
   background: rgba(255,255,255,.8); z-index: 3; pointer-events: none; }
 .toast { position: fixed; z-index: 6; left: 50%; bottom: 36px; transform: translateX(-50%);
@@ -124,6 +134,17 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
   <div class="hint">Esc = menu · R = respawn</div>
 </div>
 <div class="cross" id="cross" hidden></div>
+<div class="touch" id="touch" hidden>
+  <div class="stick" id="stick"><div class="nub" id="nub"></div></div>
+  <div class="tbtns">
+    <button id="tJump">🦘<small>Jump</small></button>
+    <button id="tGrab" class="alt">✋<small>Grab</small></button>
+    <button id="tUse">⚔️<small>Use</small></button>
+    <button id="tSlash" class="alt" hidden>⚡<small>Slash</small></button>
+    <button id="tBite" class="alt" hidden>😋<small>Bite</small></button>
+  </div>
+  <div class="ttop"><button id="tMenu">☰</button><button id="tView">👀</button><button id="tResp">🔄</button></div>
+</div>
 <div class="toast" id="toast" style="opacity:0" aria-live="polite"></div>
 
 <script type="importmap">
@@ -311,7 +332,8 @@ const BERRIES_TOTAL = 12;
 
 /* ---------------- renderer / scene ---------------- */
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const IS_TOUCH = (matchMedia && matchMedia('(pointer: coarse)').matches) || ('ontouchstart' in window && navigator.maxTouchPoints > 0);
+renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -1070,7 +1092,7 @@ const sfxWin = () => { if (!ac) return; [523, 659, 784, 1046, 1318].forEach((f, 
 const sfxSqueak = () => { if (!ac) return; tone('sine', 900, 1500, .12, .25); tone('sine', 1300, 1900, .1, .2, .12); };
 
 /* ======================= game state ======================= */
-const state = { mode: 'menu', xr: false, got: 0, time: 0, running: false, done: false, size: 1, bodyH: .6, third: false, vel: V(), grounded: false, wasStuck: false, velBuf: [], golden: false, claps: [], yaw: 0, pitch: 0, keys: {}, typed: '' };
+const state = { mode: 'menu', xr: false, got: 0, time: 0, running: false, done: false, size: 1, bodyH: .6, third: false, vel: V(), grounded: false, wasStuck: false, velBuf: [], golden: false, claps: [], yaw: 0, pitch: 0, keys: {}, typed: '', joy: { x: 0, y: 0 }, touch: false };
 window.__kg = { state, hands, rig, camera, colliders, berries, sim: { on: false, local: [V(-.25, 1, -.3), V(.25, 1, -.3)] }, step: null };
 const sim = window.__kg.sim;
 
@@ -1273,8 +1295,10 @@ function stepArms(dt) {
 
 /* ---------- desktop walking ---------- */
 function stepDesktop(dt) {
-  const k = state.keys, f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0), s = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
-  const sp = k.ShiftLeft || k.ShiftRight ? 7.5 : 4.5;
+  const k = state.keys, J = state.joy, jm = Math.hypot(J.x, J.y);
+  let f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0), s = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
+  if (jm > .12) { f = -J.y; s = J.x; }   // phone stick: push it all the way to run
+  const sp = k.ShiftLeft || k.ShiftRight || jm > .92 ? 7.5 : jm > .12 ? 4.5 * Math.min(1, jm * 1.3) : 4.5;
   const fx = -Math.sin(state.yaw), fz = -Math.cos(state.yaw), rx = Math.cos(state.yaw), rz = -Math.sin(state.yaw);
   let wx = fx * f + rx * s, wz = fz * f + rz * s; const L = Math.hypot(wx, wz); if (L > 0) { wx /= L; wz /= L; }
   const acc = state.grounded ? 14 : 3.5, v = state.vel;
@@ -1424,18 +1448,20 @@ document.addEventListener('mousemove', e => {
 canvas.addEventListener('pointerdown', e => {
   if (state.mode !== 'play' || state.xr) return;
   audioOn();
+  if (state.touch) return;   // phones look around with the touch controls instead
   if (document.pointerLockElement !== canvas && canvas.requestPointerLock) { try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (err) {} }
   dragging = true; lastX = e.clientX; lastY = e.clientY;
 });
 addEventListener('pointerup', () => { dragging = false; });
 document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && state.mode === 'play' && !state.xr && !dragging) openMenu(); });
 
-function openMenu() { if (state.mode === 'play') state.savedPos = rig.position.clone(); state.mode = 'menu'; $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true; hands.forEach(h => h.paw.visible = false); }
+function openMenu() { if (state.mode === 'play') state.savedPos = rig.position.clone(); state.mode = 'menu'; if ($('touch')) $('touch').hidden = true; state.joy.x = state.joy.y = 0; state.keys = {}; $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true; hands.forEach(h => h.paw.visible = false); }
 function startDesktop() {
   audioOn(); state.mode = 'play'; $('menu').hidden = true; $('hud').hidden = false; $('cross').hidden = false;
   camera.position.set(0, state.bodyH, 0);
   if (state.done || (!state.running && state.got === 0)) { resetRun(); respawn(); }
   else if (state.savedPos) rig.position.copy(state.savedPos);   // the menu's fly-over moved the camera rig; put you back
+  if (state.touch) { $('touch').hidden = false; $('cross').hidden = false; toast('🕹️ Left stick runs, drag to look, tap the buttons to jump, grab and swing!', 5); return; }
   try { const r = canvas.requestPointerLock && canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
   toast('🐾 WASD to run, Space to jump, E to grab, V to see yourself!', 4);
 }
@@ -1541,7 +1567,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi();
 
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
@@ -2693,11 +2719,11 @@ function deskInteract() {
   deskGrab();
 }
 canvas.addEventListener('pointerdown', e => {
-  if (state.mode !== 'play' || state.xr || e.button !== 0 || document.pointerLockElement !== canvas || state.area !== 'arena') return;
+  if (state.mode !== 'play' || state.xr || e.button !== 0 || (document.pointerLockElement !== canvas && !state.touch) || state.area !== 'arena') return;
   if (hands[1].sword) startSwing(false); else { const b = aimButton(); if (b) pressButton(b, null); }
 });
 // right click: a lightning-fast anime slash
-canvas.addEventListener('pointerdown', e => { if (state.mode === 'play' && !state.xr && e.button === 2 && document.pointerLockElement === canvas && state.area === 'arena' && hands[1].sword) startSwing(true); });
+canvas.addEventListener('pointerdown', e => { if (state.mode === 'play' && !state.xr && e.button === 2 && (document.pointerLockElement === canvas || state.touch) && state.area === 'arena' && hands[1].sword) startSwing(true); });
 canvas.addEventListener('contextmenu', e => { if (state.area === 'arena') e.preventDefault(); });
 function startSwing(fast) { const s = AR.swing; if (s.t < 1) { s.queued = true; return; } s.dir = -s.dir; s.t = 0; s.r = 0; s.fast = !!fast; if (ac) tone('sine', fast ? 500 : 300, 180, .15, .05); }
 
@@ -3926,7 +3952,7 @@ function compDesk() {
   const hit = _ray.intersectObjects([comp.scr, comp.kb], false)[0]; if (!hit || !hit.uv) return false;
   return hit.object === comp.scr ? (compTapScreen(hit.uv.x, hit.uv.y), true) : (compTapKb(hit.uv.x, hit.uv.y), true);
 }
-canvas.addEventListener('pointerdown', e => { if (state.mode === 'play' && !state.xr && e.button === 0 && document.pointerLockElement === canvas) compDesk(); });
+canvas.addEventListener('pointerdown', e => { if (state.mode === 'play' && !state.xr && e.button === 0 && (document.pointerLockElement === canvas || state.touch)) compDesk(); });
 CP.ready = true; drawKb(); compDraw();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { drawKb(); compDraw(); });
 window.__kg.comp = { CP, comp, compKey, compTapScreen, compTapKb, compDraw, myId, COMP_AT };
@@ -4152,6 +4178,51 @@ function figRoll() {
   if (who === 'host') spawnFig(); else netSend({ t: 'fig', ev: 'spawn', to: who });
 }
 window.__kg.net = { online, mine, claim, netGot, netSend, sendSnap, objOf, FIG, packCut, unpackCut };
+/* ======================================================================
+   PHONES + TABLETS: a stick to run, drag anywhere to look, big buttons to jump, grab and swing.
+   Tap the grove computer's keys right on the screen. Same rooms, same world as PC and VR.
+   ====================================================================== */
+state.touch = IS_TOUCH;
+if (IS_TOUCH) { $('btnDesk').textContent = '📱 Play on phone / tablet'; const hint = $('hud').querySelector('.hint'); if (hint) hint.textContent = '☰ = menu'; }
+function tapAt(x, y) {   // a quick tap on the computer presses what you tapped
+  if (state.area !== 'grove') return false;
+  const r = canvas.getBoundingClientRect(); _ray.setFromCamera({ x: (x - r.left) / r.width * 2 - 1, y: -((y - r.top) / r.height * 2 - 1) }, camera); _ray.far = 3;
+  const hit = _ray.intersectObjects([comp.scr, comp.kb], false)[0]; if (!hit || !hit.uv) return false;
+  if (hit.object === comp.scr) compTapScreen(hit.uv.x, hit.uv.y); else compTapKb(hit.uv.x, hit.uv.y);
+  return true;
+}
+{
+  const stick = $('stick'), nub = $('nub'); let sid = null, cx = 0, cy = 0;
+  const setNub = (x, y) => { nub.style.transform = `translate(${x}px, ${y}px)`; };
+  const move = e => { if (e.pointerId !== sid) return; let dx = e.clientX - cx, dy = e.clientY - cy; const L = Math.hypot(dx, dy), RR = 55; if (L > RR) { dx *= RR / L; dy *= RR / L; } state.joy.x = dx / RR; state.joy.y = dy / RR; setNub(dx, dy); };
+  stick.addEventListener('pointerdown', e => { sid = e.pointerId; try { stick.setPointerCapture(sid); } catch (er) {} const r = stick.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2; move(e); audioOn(); e.preventDefault(); });
+  stick.addEventListener('pointermove', move);
+  const end = e => { if (e.pointerId !== sid) return; sid = null; state.joy.x = state.joy.y = 0; setNub(0, 0); };
+  stick.addEventListener('pointerup', end); stick.addEventListener('pointercancel', end);
+  // look: drag anywhere else. A quick tap pokes the computer where you tapped.
+  const looks = new Map();
+  canvas.addEventListener('pointerdown', e => { if (!e.isTrusted || !state.touch || state.mode !== 'play' || state.xr) return; looks.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() }); });
+  canvas.addEventListener('pointermove', e => { const L = looks.get(e.pointerId); if (!L) return; const dx = e.clientX - L.x, dy = e.clientY - L.y; L.x = e.clientX; L.y = e.clientY; state.yaw -= dx * .0055; state.pitch = clamp(state.pitch - dy * .0045, -1.45, 1.45); });
+  const lookEnd = e => { const L = looks.get(e.pointerId); if (!L) return; looks.delete(e.pointerId); if (e.type === 'pointerup' && Math.hypot(e.clientX - L.sx, e.clientY - L.sy) < 12 && performance.now() - L.t < 350) tapAt(e.clientX, e.clientY); };
+  canvas.addEventListener('pointerup', lookEnd); canvas.addEventListener('pointercancel', lookEnd);
+  const btn = (id, on, off) => { const b = $(id); b.addEventListener('pointerdown', e => { e.preventDefault(); audioOn(); on(); }); if (off) ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => b.addEventListener(ev, off)); b.addEventListener('contextmenu', e => e.preventDefault()); };
+  const click = button => canvas.dispatchEvent(new PointerEvent('pointerdown', { button, pointerId: 999 }));
+  btn('tJump', () => { state.keys.Space = true; }, () => { state.keys.Space = false; });
+  btn('tGrab', () => deskInteract());
+  btn('tUse', () => click(0));
+  btn('tSlash', () => click(2));
+  btn('tBite', () => { const h = hands.find(x => x.piece); if (h && biteCool <= 0) takeBite(h.piece); });
+  btn('tMenu', () => openMenu());
+  btn('tView', () => { state.third = !state.third; camera.layers[state.third ? 'enable' : 'disable'](SELF_LAYER); camera.layers[state.third ? 'disable' : 'enable'](FP_LAYER); });
+  btn('tResp', () => respawn());
+}
+let _tuiS = '';
+function stepTouchUi() {   // only show Slash and Bite when they do something
+  if (!state.touch || state.mode !== 'play') return;
+  const sl = !!hands[1].sword, bi = hands.some(h => h.piece), k = (sl ? 1 : 0) + (bi ? 2 : 0) + '';
+  if (k === _tuiS) return; _tuiS = k; $('tSlash').hidden = !sl; $('tBite').hidden = !bi;
+}
+window.__kg.touch = { tapAt, stepTouchUi };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
 </body>
