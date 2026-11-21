@@ -1,7 +1,7 @@
 # Builds the Thumpling (Knuckle Grove's player critter) in Blender and exports thumpling.glb.
 # Run:  blender --background --python make_thumpling.py      (or with the `bpy` Python module)
 # Parts are separate objects so the game can pose them:
-#   Torso  : body, belly, feet. Origin at the feet. Faces +Y in Blender (= -Z in three.js).
+#   Torso  : body, belly, tail (no legs). Origin at the feet. Faces +Y in Blender (= -Z in three.js).
 #   Head   : head, face, ears, leaf sprout. Origin at the point between the eyes.
 #   ArmSeg : one fuzzy arm segment along +Z from 0 to 1 (the game stretches it).
 #   Elbow  : the round joint between the two arm segments.
@@ -86,15 +86,10 @@ def join(objs, name, origin=None):
     for p in o.data.polygons: p.use_smooth = False
     return o
 
-# ---------------- Torso: a round fuzzy bean with a belly and two stubby feet ----------------
+# ---------------- Torso: a round fuzzy bean with a belly (no legs: Thumplings get around on their paws) ----------------
 parts = []
 parts.append(ico((0, 0, 0.42), 1, FUR, sub=3, fuzz=0.035, scale=(0.27, 0.24, 0.3)))
 parts.append(sphere((0, 0.15, 0.4), (0.18, 0.1, 0.21), CREAM, seg=14, rings=8))
-for s in (-1, 1):
-    parts.append(sphere((s * 0.12, 0.05, 0.05), (0.085, 0.13, 0.06), CREAM, seg=12, rings=8))
-    for k in (-1, 0, 1):  # toe beans
-        parts.append(sphere((s * 0.12 + k * 0.035, 0.17, 0.035), (0.025, 0.025, 0.022), PAD, seg=8, rings=6))
-    parts.append(sphere((s * 0.12, 0.0, 0.13), (0.07, 0.07, 0.09), FUR, seg=10, rings=8))  # little legs
 parts.append(ico((0, -0.24, 0.25), 0.07, CREAM, sub=1, fuzz=0.02))  # fluffy tail
 torso = join(parts, 'Torso', origin=(0, 0, 0))
 
