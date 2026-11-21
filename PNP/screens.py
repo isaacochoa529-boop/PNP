@@ -28,14 +28,15 @@ def draw_start_screen(game):
     
     midi_status = "Connected" if game.input_manager.midi_enabled else "Not Connected"
     midi = game.font.render(f"MIDI: {midi_status}", True, WHITE)
-    game.screen.blit(midi, midi.get_rect(center=(WIDTH // 2, 320)))
+    game.screen.blit(midi, midi.get_rect(center=(WIDTH // 2, 340)))
 
     controls = [
         "Up / Down = Change Tempo",
         "M = Reconnect MIDI",
         "Enter = Key Check",
         "Esc = Quit",
-        "A / D or Left / Right = Change Song", 
+        "A / D or Left / Right = Change Song",
+        "W / S = Change Mode",
     ]
 
     for i, text in enumerate(controls):
