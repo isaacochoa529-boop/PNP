@@ -835,6 +835,16 @@ const L_UP = .3, L_FORE = .3;
 (window.THUMPLING_B64 ? (cb, _p, eb) => new GLTFLoader().parse(Uint8Array.from(atob(window.THUMPLING_B64), c => c.charCodeAt(0)).buffer, '', cb, eb)
   : (cb, p, eb) => new GLTFLoader().load('models/thumpling.glb', cb, p, eb))(gltf => {
   const get = n => gltf.scene.getObjectByName(n);
+  (() => {   // the smile is drawn with the pupil material: split it into its own mesh so talking can swap it for an open mouth
+    const hd = get('Head'); let pm = null; hd.traverse(c => { if (c.isMesh && c.material.name === 'Pupil') pm = c; });
+    if (!pm || !pm.geometry.index) return;
+    const g = pm.geometry, y = g.attributes.position, ix = g.index.array, keep = [], sm = [];
+    for (let i = 0; i < ix.length; i += 3) (y.getY(ix[i]) < -.07 && y.getY(ix[i + 1]) < -.07 && y.getY(ix[i + 2]) < -.07 ? sm : keep).push(ix[i], ix[i + 1], ix[i + 2]);
+    if (!sm.length) return;
+    const sg = g.clone(); sg.setIndex(sm); g.setIndex(keep);
+    const smile = new THREE.Mesh(sg, pm.material); smile.name = 'Smile'; smile.position.copy(pm.position); smile.quaternion.copy(pm.quaternion); smile.scale.copy(pm.scale);
+    pm.parent.add(smile);
+  })();
   const furOf = o => { let m = null; o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') m = c.material; }); return m; };
   const prep = (o, layer) => { o.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; if (layer) c.layers.set(layer); } }); return o; };
   AV.torso = prep(get('Torso').clone(), SELF_LAYER); AV.head = prep(get('Head').clone(), SELF_LAYER);
@@ -4339,7 +4349,12 @@ function addMouth(head, layer) {
   const m = new THREE.Mesh(MOUTH_G, MOUTH_M); m.position.set(0, -.142, -.185); m.scale.set(1.25, .12, .45); m.userData.keep = true; if (layer) m.layers.set(layer);
   head.add(m); head.userData.mouth = m; return m;
 }
-function setMouth(head, k) { const m = head && head.userData.mouth; if (m) { m.visible = k > .04; m.scale.y = .12 + k * .95; } }   // quiet: the model's own smile shows
+function setMouth(head, k) {
+  const m = head && head.userData.mouth; if (!m) return;
+  const talk = k > .04; m.visible = talk; m.scale.y = .12 + k * .95;
+  if (head.userData.smile === undefined) head.userData.smile = head.getObjectByName('Smile') || null;
+  if (head.userData.smile) head.userData.smile.visible = !talk;   // talking: the smile goes away, the open mouth takes over
+}
 const _ls = V(), _lf = V(), _lu = V(), _lq = new THREE.Quaternion();
 function stepVoice(dt) {
   const raw = online() ? micLevel() : 0;
