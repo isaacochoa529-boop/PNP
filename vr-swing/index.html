@@ -107,7 +107,7 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
     <label class="row">Your name: <input id="mpName" maxlength="12" autocomplete="off"></label>
     <div class="two" id="mpStart"><button id="btnHost">🏠 Make a room</button><button class="alt" id="btnJoin">🔢 Join a room</button></div>
     <div id="mpPad" hidden><div class="code" id="mpCode">_ _ _ _</div><div class="keys" id="mpKeys"></div></div>
-    <div id="mpIn" hidden><div class="info" id="mpInfo"></div><button class="alt" id="btnLeave" style="width:100%;margin-top:8px">👋 Leave room</button></div>
+    <div id="mpIn" hidden><div class="info" id="mpInfo"></div><button class="alt" id="btnMute" style="width:100%;margin-top:8px">🎤 Turn on mic</button><button class="alt" id="btnLeave" style="width:100%;margin-top:8px">👋 Leave room</button></div>
     <div class="note" id="mpNote">Make a room, then tell friends the 4 numbers. Then press Enter VR!</div>
   </div>
   <ul class="how">
@@ -1569,7 +1569,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors();
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt);
 
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
@@ -3586,6 +3586,7 @@ function loadPeerJS() {
 }
 function mpName() { const el = $('mpName'); let n = (el && el.value || '').trim().slice(0, 12); if (!n) n = MP_NAMES[Math.floor(Math.random() * MP_NAMES.length)] + Math.floor(Math.random() * 90 + 10); store.set('kg-name', n); return n; }
 function mpLeave(quiet) {
+  voiceStop();
   try { if (MP.peer) MP.peer.destroy(); } catch (e) {}
   MP.peer = null; MP.hostConn = null; MP.conns.clear(); MP.host = false; MP.code = ''; MP.status = 'off';
   for (const id of [...MP.others.keys()]) dropOther(id);
@@ -3594,7 +3595,7 @@ function mpLeave(quiet) {
   mpUi();
 }
 async function mpHost() {
-  mpLeave(true); MP.name = mpName(); mpNote('⏳ Making a room…');
+  mpLeave(true); MP.name = mpName(); mpNote('⏳ Making a room…'); micOn();
   let Peer; try { Peer = await loadPeerJS(); } catch (e) { mpNote('😕 Could not reach the internet. You can still play alone!'); return; }
   const tryCode = (left) => {
     const code = String(Math.floor(1000 + Math.random() * 9000)), peer = new Peer(MP_PREFIX + code);
@@ -3602,6 +3603,7 @@ async function mpHost() {
       MP.peer = peer; MP.host = true; MP.code = code; MP.status = 'host'; MP.myColor = MP_COLORS[0]; MP.me = 'host';
       mpNote(`🏠 Your room code is ${code}. Tell your friends!`); mpUi(); toast(`🏠 Room ${code} is open! Friends type ${code} to join.`, 6);
     });
+    peer.on('call', voiceAnswer);
     peer.on('connection', conn => {
       conn.on('open', () => {
         if (MP.conns.size >= MP_MAX - 1) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
@@ -3621,9 +3623,9 @@ async function mpHost() {
   tryCode(4);
 }
 async function mpJoin(code) {
-  mpLeave(true); MP.name = mpName(); mpNote(`⏳ Joining room ${code}…`);
+  mpLeave(true); MP.name = mpName(); mpNote(`⏳ Joining room ${code}…`); micOn();
   let Peer; try { Peer = await loadPeerJS(); } catch (e) { mpNote('😕 Could not reach the internet. You can still play alone!'); return; }
-  const peer = new Peer(); MP.peer = peer;
+  const peer = new Peer(); MP.peer = peer; peer.on('call', voiceAnswer);
   const fail = (why) => { if (MP.status === 'joined') return; mpNote(why); mpLeave(true); mpNote(why); };
   const timer = setTimeout(() => fail(`😕 No room ${code} found. Check the number with your friend!`), 12000);
   peer.on('open', () => {
@@ -3651,6 +3653,7 @@ function myState() {
   const fc = myFur(), pc = myPawCol();
   const s = { t: 's', n: MP.name, i: myId(), c: fc, c2: pc, b: r3(state.bodyH), h: [r3(_mpv.x), r3(_mpv.y), r3(_mpv.z), r3(_mq.x), r3(_mq.y), r3(_mq.z), r3(_mq.w)] };
   s.p = hands.map(h => h.paw.visible ? packPose(h.paw) : 0);
+  s.v = Math.round(VC.level * 20) / 20;
   s.f = hands.map(h => (h.paw.userData.curl || [.25, .25, .25]).map(v => Math.round(v * 20) / 20));
   return s;
 }
@@ -3671,7 +3674,7 @@ function makeFriend(color, pawC, name) {
     const T = AV.tpl, f2 = T.fur.clone(); f2.color.set(color < 0 ? 0xffffff : color);
     const dress = o => { o.traverse(c => { if (c.isMesh) { c.userData.keep = true; c.castShadow = true; if (c.material.name === 'Fur') c.material = f2; } }); return o; };
     root = new THREE.Group(); g.add(root); torso = dress(T.torso.clone()); torso.position.set(0, -.12, 0); root.add(torso);
-    head = dress(T.head.clone()); g.add(head); body = root;
+    head = dress(T.head.clone()); g.add(head); body = root; addMouth(head);
     arms = [0, 1].map(() => { const a = { up: dress(T.arm.clone()), fore: dress(T.arm.clone()), elbow: dress(T.elbow.clone()) }; g.add(a.up, a.fore, a.elbow); return a; });
     fur.dispose(); return finishFriend({ g, head, body, root, torso, arms, paws, name, color, pawC, fur: f2, thump: true });
   }
@@ -3725,7 +3728,7 @@ function gotState(d) {
   const name = String(d.n || 'Friend').slice(0, 12), okc = x => x === -1 || (Number.isInteger(x) && x >= 0 && x <= 0xffffff);
   const c = okc(d.c) ? d.c : 0xffffff, c2 = okc(d.c2) ? d.c2 : c;
   if (!f || f.name !== name || f.color !== c || f.pawC !== c2) {
-    const isNew = !f; if (f) dropOther(d.id, true);
+    const isNew = !f; if (f) dropOther(d.id, true); if (isNew) voiceMeet(d.id);
     f = makeFriend(c, c2, name); MP.others.set(d.id, f);
     if (isNew) { toast(`👋 ${name} is here!`, 3); if (ac) [660, 880].forEach((q, i) => tone('triangle', q, q, .2, .15, i * .1)); }
     mpUi();
@@ -3733,7 +3736,7 @@ function gotState(d) {
   f.pid = /^KG-[A-Z0-9]{4}$/.test(d.i) ? d.i : '?';
   f.tgt = d; f.seen = tAll; if (!f.cur) f.cur = JSON.parse(JSON.stringify(d));
 }
-function byeOther(id) { const f = MP.others.get(id); if (f) toast(`👋 ${f.name} left.`, 2.5); dropOther(id); dropOwner(id); }
+function byeOther(id) { voiceBye(id); const f = MP.others.get(id); if (f) toast(`👋 ${f.name} left.`, 2.5); dropOther(id); dropOwner(id); }
 function dropOther(id, quiet) { const f = MP.others.get(id); if (!f) return; if (f.rb && AR.world) f.rb.forEach(b => AR.world.removeRigidBody(b)); scene.remove(f.g); f.g.traverse(o => { if (o.geometry && !o.userData.keep) o.geometry.dispose(); }); MP.others.delete(id); if (!quiet) mpUi(); }
 function lerpPose(a, b, k) { if (!b) return a; if (!a) return b.slice(); for (let i = 0; i < 3; i++) a[i] += (b[i] - a[i]) * k; _fq.set(a[3], a[4], a[5], a[6]).slerp(_mq.set(b[3], b[4], b[5], b[6]), k); a[3] = _fq.x; a[4] = _fq.y; a[5] = _fq.z; a[6] = _fq.w; return a; }
 function stepFriends(dt) {
@@ -3746,6 +3749,7 @@ function stepFriends(dt) {
     if (f.pawC < 0) f.paws.forEach(p => p.userData.fur.color.setHSL((tAll * .25 + .33) % 1, .8, .6));
     lerpPose(c.h, t.h, k); c.b = t.b;
     f.head.position.set(c.h[0], c.h[1], c.h[2]); f.head.quaternion.set(c.h[3], c.h[4], c.h[5], c.h[6]);
+    f.talk = (f.talk || 0) + ((+t.v || 0) - (f.talk || 0)) * Math.min(1, dt * 18); setMouth(f.head, f.talk);   // their mouth moves when they talk
     const bh = clamp(c.b || .6, .35, 1.1);
     if (f.thump) {
       _fF.set(0, 0, -1).applyQuaternion(f.head.quaternion); const yaw = Math.atan2(-_fF.x, -_fF.z), sc = clamp(bh / AVATAR_EYE, .75, 1.1);
@@ -3893,7 +3897,8 @@ function compDraw() {
     } else {
       txt(g, st === 'host' ? `🏠 Your room: ${MP.code}` : `🎉 In room ${MP.code}`, 512, 150, 62, '#ffd25a');
       playersList().forEach((p, i) => { txt(g, `${p.me ? '⭐ ' : '🐾 '}${p.n}  ·  ${p.i}`, 512, 225 + i * 52, 38, css(p.c)); });
-      btn(g, 362, 450, 300, 90, '👋 Leave', '#ff8a8a', () => { mpLeave(); toast('👋 Left the room.', 2); compDraw(); });
+      btn(g, 150, 450, 340, 90, '👋 Leave', '#ff8a8a', () => { mpLeave(); toast('👋 Left the room.', 2); compDraw(); });
+      btn(g, 534, 450, 340, 90, !VC.mic ? '🎤 Mic on' : VC.muted ? '🔇 Unmute' : '🎤 Mute', !VC.mic || VC.muted ? '#ffd25a' : '#2fc6a3', () => { if (!VC.mic) { VC.asked = false; micOn(); } else setMute(!VC.muted); });
     }
   } else if (CP.page === 'name') {
     txt(g, 'Your name:', 512, 145, 42);
@@ -4267,6 +4272,92 @@ function stepTouchUi() {   // only show Slash and Bite when they do something
   if (k === _tuiS) return; _tuiS = k; $('tSlash').hidden = !sl; $('tBite').hidden = !bi;
 }
 window.__kg.touch = { tapAt, stepTouchUi };
+/* ======================================================================
+   VOICE CHAT: talk to everyone in your room. Each pair of players gets a direct WebRTC audio call.
+   You hear friends from where they stand (3D sound), never yourself. Mouths open with how loud you talk.
+   No mic (or "Block")? Everything still works: you can still hear them, they just can't hear you.
+   ====================================================================== */
+const VC = { mic: null, micSrc: null, an: null, buf: null, level: 0, muted: store.get('kg-mute') === '1', asked: false, denied: false, calls: new Map(), silent: null };
+function voicePeerId(id) { return id === 'host' ? MP_PREFIX + MP.code : id; }
+async function micOn() {   // asked once when you make or join a room
+  if (VC.mic || VC.asked) return VC.mic; VC.asked = true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { VC.denied = true; return null; }
+  try {
+    VC.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    audioOn(); if (ac) { VC.micSrc = ac.createMediaStreamSource(VC.mic); VC.an = ac.createAnalyser(); VC.an.fftSize = 512; VC.buf = new Uint8Array(VC.an.fftSize); VC.micSrc.connect(VC.an); }   // measured only, never played back
+    setMute(VC.muted); toast(VC.muted ? '🔇 Your mic is muted. Unmute it on the menu or the computer.' : '🎤 Mic on! Friends in your room can hear you.', 4);
+  } catch (e) { VC.denied = true; toast('🔇 No mic, no problem: you can still hear friends. (Allow the mic in your browser to talk.)', 5); }
+  compDraw(); mpUi(); return VC.mic;
+}
+function setMute(m) {
+  VC.muted = m; store.set('kg-mute', m ? '1' : '0');
+  if (VC.mic) VC.mic.getAudioTracks().forEach(t => { t.enabled = !m; });
+  const b = $('btnMute'); if (b) b.textContent = !VC.mic ? '🎤 Turn on mic' : m ? '🔇 Mic muted' : '🎤 Mic on';
+  compDraw();
+}
+function outStream() {   // what we send: your mic, or silence if there's none (a call needs something to send)
+  if (VC.mic) return VC.mic;
+  if (!VC.silent && ac) { const d = ac.createMediaStreamDestination(); VC.silent = d.stream; }
+  return VC.silent;
+}
+function hookCall(call, id) {
+  const old = VC.calls.get(id); if (old && old.call !== call) { try { old.call.close(); } catch (e) {} dropVoiceNodes(old); }
+  const v = { call, id, el: null, src: null, pan: null };
+  VC.calls.set(id, v);
+  call.on('stream', stream => {
+    if (v.el) return; audioOn(); if (!ac) return;
+    v.el = new Audio(); v.el.srcObject = stream; v.el.muted = true; v.el.play().catch(() => {});   // Chrome only feeds WebAudio while an element holds the stream
+    v.src = ac.createMediaStreamSource(stream);
+    v.pan = ac.createPanner(); v.pan.panningModel = 'HRTF'; v.pan.distanceModel = 'inverse'; v.pan.refDistance = 1.2; v.pan.rolloffFactor = .9; v.pan.maxDistance = 60;
+    v.src.connect(v.pan); v.pan.connect(master);
+  });
+  call.on('close', () => { if (VC.calls.get(id) === v) { VC.calls.delete(id); dropVoiceNodes(v); } });
+  call.on('error', () => {});
+}
+function dropVoiceNodes(v) { try { if (v.src) v.src.disconnect(); if (v.pan) v.pan.disconnect(); if (v.el) { v.el.srcObject = null; } } catch (e) {} v.src = v.pan = v.el = null; }
+function voiceAnswer(call) {   // someone is calling us
+  const id = call.peer === MP_PREFIX + MP.code ? 'host' : call.peer;
+  try { call.answer(outStream()); hookCall(call, id); } catch (e) {}
+}
+function voiceMeet(id) {   // a new friend showed up: the player with the "smaller" id rings the other one, so each pair talks once
+  if (!MP.peer || !MP.peer.call || VC.calls.has(id)) return;
+  const them = voicePeerId(id), me = MP.peer.id;
+  if (!(me < them)) return;
+  const st = outStream(); if (!st) return;
+  try { const call = MP.peer.call(them, st); if (call) hookCall(call, id); } catch (e) {}
+}
+function voiceBye(id) { const v = VC.calls.get(id); if (!v) return; VC.calls.delete(id); try { v.call.close(); } catch (e) {} dropVoiceNodes(v); }
+function voiceStop() { for (const id of [...VC.calls.keys()]) voiceBye(id); }
+function micLevel() {
+  if (!VC.an || VC.muted) return 0;
+  VC.an.getByteTimeDomainData(VC.buf); let s = 0; for (let i = 0; i < VC.buf.length; i += 2) { const x = (VC.buf[i] - 128) / 128; s += x * x; }
+  return clamp((Math.sqrt(s / (VC.buf.length / 2)) - .015) * 9, 0, 1);
+}
+/* ---------- mouths ---------- */
+const MOUTH_G = new THREE.SphereGeometry(.03, 14, 8), MOUTH_M = new THREE.MeshStandardMaterial({ color: 0x5a1626, roughness: .7 });
+function addMouth(head, layer) {
+  const m = new THREE.Mesh(MOUTH_G, MOUTH_M); m.position.set(0, -.142, -.185); m.scale.set(1.25, .12, .45); m.userData.keep = true; if (layer) m.layers.set(layer);
+  head.add(m); head.userData.mouth = m; return m;
+}
+function setMouth(head, k) { const m = head && head.userData.mouth; if (m) { m.visible = k > .04; m.scale.y = .12 + k * .95; } }   // quiet: the model's own smile shows
+const _ls = V(), _lf = V(), _lu = V(), _lq = new THREE.Quaternion();
+function stepVoice(dt) {
+  const raw = online() ? micLevel() : 0;
+  VC.level += (raw - VC.level) * Math.min(1, dt * (raw > VC.level ? 30 : 12));
+  if (AV.head) { if (!AV.head.userData.mouth) addMouth(AV.head, SELF_LAYER); setMouth(AV.head, VC.level); }
+  if (!online() || !ac || !VC.calls.size) return;
+  // your ears are where your head is
+  headWorld(_ls); camera.getWorldQuaternion(_lq); _lf.set(0, 0, -1).applyQuaternion(_lq); _lu.set(0, 1, 0).applyQuaternion(_lq);
+  const L = ac.listener, t = ac.currentTime;
+  if (L.positionX) { L.positionX.setTargetAtTime(_ls.x, t, .03); L.positionY.setTargetAtTime(_ls.y, t, .03); L.positionZ.setTargetAtTime(_ls.z, t, .03); L.forwardX.setTargetAtTime(_lf.x, t, .03); L.forwardY.setTargetAtTime(_lf.y, t, .03); L.forwardZ.setTargetAtTime(_lf.z, t, .03); L.upX.setTargetAtTime(_lu.x, t, .03); L.upY.setTargetAtTime(_lu.y, t, .03); L.upZ.setTargetAtTime(_lu.z, t, .03); }
+  else { L.setPosition(_ls.x, _ls.y, _ls.z); L.setOrientation(_lf.x, _lf.y, _lf.z, _lu.x, _lu.y, _lu.z); }
+  for (const [id, v] of VC.calls) {
+    const f = MP.others.get(id); if (!v.pan || !f) continue; const p = f.head.position;
+    if (v.pan.positionX) { v.pan.positionX.setTargetAtTime(p.x, t, .03); v.pan.positionY.setTargetAtTime(p.y, t, .03); v.pan.positionZ.setTargetAtTime(p.z, t, .03); } else v.pan.setPosition(p.x, p.y, p.z);
+  }
+}
+{ const b = $('btnMute'); if (b) b.onclick = () => { if (!VC.mic) { VC.asked = false; micOn(); } else setMute(!VC.muted); }; setMute(VC.muted); }
+window.__kg.voice = { VC, micOn, setMute, voiceMeet, micLevel };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
 </body>
