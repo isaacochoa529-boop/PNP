@@ -2792,6 +2792,7 @@ moon.position.set(-70, 95, -110); moon.visible = false; scene.userData.sky.add(m
 
 /* ---------- the switch, tucked inside the leaves ---------- */
 const SWITCH_AT = V(-23.62, 7.35, -2.12);
+const SWITCH_HOLD = 1.5;   // seconds you must keep your paw on it
 const lever = new THREE.Group();
 const swG = (() => {
   const g = new THREE.Group(); g.position.copy(SWITCH_AT); g.rotation.y = Math.atan2(24, 2); scene.add(g);
@@ -3088,10 +3089,19 @@ function stepHorror(dt) {
   if (state.mode !== 'play') return;
   headWorld(_hz);
   // the switch
+  // you have to HOLD it (1.5 s), so a bump while climbing never flips it by accident
   HZ.flipCool = Math.max(0, HZ.flipCool - dt);
   const near = _hz.distanceTo(SWITCH_AT) < .55 || hands.some(h => h.tracked && h.pos.distanceTo(SWITCH_AT) < .28);
-  if (near && !HZ.swIn && HZ.flipCool <= 0 && !HZ.crash) { HZ.flipCool = 1.5; setHorror(!HZ.on); hands.forEach(h => { if (h.pos.distanceTo(SWITCH_AT) < .4) buzz(h, .9, 80); }); }
-  HZ.swIn = near;
+  if (!near) HZ.swIn = false;   // let go after a flip before it can be flipped again
+  if (near && !HZ.swIn && HZ.flipCool <= 0 && !HZ.crash) {
+    const was = HZ.hold || 0; HZ.hold = was + dt;
+    if (Math.floor(HZ.hold / .15) !== Math.floor(was / .15)) {   // a soft tick + buzz that grows as you hold on
+      const k = Math.min(1, HZ.hold / SWITCH_HOLD); hands.forEach(h => { if (h.pos.distanceTo(SWITCH_AT) < .4) buzz(h, .15 + .6 * k, 40); });
+      if (ac) tone('square', 900 + 500 * k, 700 + 500 * k, .03, .05 + .08 * k);
+    }
+    if (HZ.hold >= SWITCH_HOLD) { HZ.hold = 0; HZ.swIn = true; HZ.flipCool = 1.5; setHorror(!HZ.on); hands.forEach(h => { if (h.pos.distanceTo(SWITCH_AT) < .4) buzz(h, 1, 120); }); }
+  } else HZ.hold = Math.max(0, (HZ.hold || 0) - dt * 3);   // let go early and it springs back
+  const from = HZ.on ? .55 : -.55; lever.rotation.x = from - Math.sign(from) * 1.1 * Math.min(1, (HZ.hold || 0) / SWITCH_HOLD);
   if (!HZ.on) { redMul.visible = redAdd.visible = false; return; }
 
   // flicker: the moonlight stutters and the flashlight sometimes cuts out
