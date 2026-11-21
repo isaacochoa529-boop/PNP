@@ -934,6 +934,7 @@ function grabProp(h) {
   for (const p of props) { const d = p.g.position.distanceTo(h.pos) - p.r; if (d < bd) { bd = d; best = p; } }
   if (!best) return;
   if (best.held) best.held.holding = null;
+  claim(best, 'p', props.indexOf(best));
   best.held = h; best.rest = false; h.holding = best; h.stuck = false; h.reset = true;
   buzz(h, .5, 30); if (ac) tone('sine', 500, 800, .08, .2);
 }
@@ -954,10 +955,14 @@ function deskGrab() {
   headWorld(_h); const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_hq));
   let best = null, bd = 3.5;
   for (const p of props) { const to = p.g.position.clone().sub(_h), d = to.length(); if (d < bd && to.normalize().dot(f) > .6) { bd = d; best = p; } }
-  if (best) { if (best.held) best.held.holding = null; best.held = h; h.holding = best; best.rest = false; if (ac) tone('sine', 500, 800, .08, .2); }
+  if (best) { if (best.held) best.held.holding = null; claim(best, 'p', props.indexOf(best)); best.held = h; h.holding = best; best.rest = false; if (ac) tone('sine', 500, 800, .08, .2); }
 }
 const _pp = V(), _rw = V(), _ut = V(), _spinQ = new THREE.Quaternion(), _bh = V(), _bhPrev = V(), _bv = V();
 let _bhInit = false;
+function propTouched(p, feetY) {   // your paw or body bumps someone else's toy: it's yours now
+  for (const h of hands) if (h.tracked && h.vel && !h.holding && h.pos.distanceTo(p.g.position) < p.r + PAW_R && h.vel.length() > .5) return true;
+  const by = Math.min(Math.max(p.g.position.y, feetY), _bh.y); return _pp.set(_bh.x, by, _bh.z).distanceTo(p.g.position) < p.r + (by === _bh.y ? .17 : .25);
+}
 function stepProps(dt) {
   // your body is solid to toys: roll into a ball and it gets shoved along
   headWorld(_bh); if (!_bhInit) { _bhPrev.copy(_bh); _bhInit = true; }
@@ -965,6 +970,7 @@ function stepProps(dt) {
   if (_bv.length() > 20) _bv.set(0, 0, 0);   // teleports / respawns aren't shoves
   const feetY = _bh.y - state.bodyH + .25;
   for (const p of props) {
+    if (!mine(p)) { if (propTouched(p, feetY)) claim(p, 'p', props.indexOf(p)); else continue; }
     if (p.held) {
       const h = p.held;
       if ((state.xr || sim.on) && h.tracked) p.g.position.copy(h.pos);              // VR: the toy IS the paw's contact point
@@ -1021,12 +1027,13 @@ function stepProps(dt) {
   for (let a = 0; a < props.length; a++) for (let b = a + 1; b < props.length; b++) {
     const A = props[a], B = props[b];
     _pp.subVectors(B.g.position, A.g.position); const d = _pp.length(), min = A.r + B.r;
-    if (d >= min || d < 1e-5 || (A.held && B.held)) continue;
+    const aW = A.held || !mine(A), bW = B.held || !mine(B);   // held toys and other people's toys push like moving walls
+    if (d >= min || d < 1e-5 || (aW && bW)) continue;
     const n = _pp.multiplyScalar(1 / d), over = min - d;
     const va = A.held ? (A.held.vel || V()) : A.vel, vb = B.held ? (B.held.vel || V()) : B.vel;
     const rel = vb.clone().sub(va).dot(n);
-    if (A.held) { B.g.position.addScaledVector(n, over); if (rel < 0) B.vel.addScaledVector(n, -1.8 * rel); }
-    else if (B.held) { A.g.position.addScaledVector(n, -over); if (rel < 0) A.vel.addScaledVector(n, 1.8 * rel); }
+    if (aW) { B.g.position.addScaledVector(n, over); if (rel < 0) B.vel.addScaledVector(n, -1.8 * rel); }
+    else if (bW) { A.g.position.addScaledVector(n, -over); if (rel < 0) A.vel.addScaledVector(n, 1.8 * rel); }
     else {
       A.g.position.addScaledVector(n, -over / 2); B.g.position.addScaledVector(n, over / 2);
       if (rel < 0) { const j = -.9 * rel; A.vel.addScaledVector(n, -j); B.vel.addScaledVector(n, j); }
@@ -1534,7 +1541,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt);
 
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
@@ -1567,7 +1574,7 @@ state.area = 'grove';
 
 const arena = new THREE.Group(); arena.position.copy(ARENA); scene.add(arena); arena.updateMatrixWorld(true);
 const AR = { R: null, world: null, ready: false, failed: false, pieces: [], portalCool: 0, swing: { t: 2, r: 2, dir: -1, queued: false }, snap: true,
-  btnT: [0, 0], greenTimes: [], bladeOk: false, heat: 0, bladeV: V(), b0: V(), t0: V(), b1: V(), t1: V(), cuts: 0, spawnQ: [], cutQ: [] };
+  btnT: [0, 0], greenTimes: [], byId: new Map(), bladeOk: false, heat: 0, bladeV: V(), b0: V(), t0: V(), b1: V(), t1: V(), cuts: 0, spawnQ: [], cutQ: [] };
 const pmrem = new THREE.PMREMGenerator(renderer);
 const ENV = pmrem.fromScene(new RoomEnvironment(), .04).texture;
 const _a1 = V(), _a2 = V(), _a3 = V(), _a4 = V(), _a5 = V(), _aq = new THREE.Quaternion(), _aq2 = new THREE.Quaternion();
@@ -2140,7 +2147,10 @@ function makePiece(kind, parts, vol, pos, quat, lv, av, pop) {
   if (!ok) { AR.world.removeRigidBody(body); return null; }
   const hull = new Float32Array(nh); nh = 0; for (const p of parts) { hull.set(p.hull, nh); nh += p.hull.length; }
   const pc = { kind, parts, vol, body, hull, rad, cool: .06, trk: null, held: null, dying: 0, born: tAll, pop: pop ? 0 : 1, sc: pop ? .01 : 1, frz: 0, frzH: null, slot: -1 };
-  pileAdd(pc); AR.pieces.push(pc); return pc;
+  pc.id = AR.forceId || (AR.ready ? newPieceId() : 'i' + AR.pieces.length); pc.own = AR.makeOwn || (online() ? MP.me : undefined); AR.byId.set(pc.id, pc);
+  pileAdd(pc); AR.pieces.push(pc);
+  if (!mine(pc)) { body.setBodyType(AR.R.RigidBodyType.KinematicPositionBased, true); netSeed(pc); }
+  return pc;
 }
 function wakeNear(pc) {   // something moved away: whatever was resting on or against it wakes up and falls
   if (!pc.body) return; const t = pc.body.translation();
@@ -2150,11 +2160,14 @@ function removePiece(pc) {
   wakeNear(pc);
   const i = AR.pieces.indexOf(pc); if (i >= 0) AR.pieces.splice(i, 1);
   if (pc.held) { pc.held.piece = null; pc.held = null; }
+  if (AR.byId.get(pc.id) === pc) AR.byId.delete(pc.id);
   pileRemove(pc); if (pc.body) AR.world.removeRigidBody(pc.body); pc.body = null;
 }
 function spawnCube(kind, p, pop) {
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, kind === 6 ? 0 : rnd() * .6 - .3, 0)), t = tplFor(KINDS[kind].size);
-  return makePiece(kind, [{ vis: Float32Array.from(t.vis), phys: Float32Array.from(t.phys) }], KINDS[kind].size ** 3, p, q, V(0, pop ? -.5 : 0, 0), V(), pop);
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, kind === 6 ? 0 : rnd() * .6 - .3, 0)), t = tplFor(KINDS[kind].size), lv = V(0, pop ? -.5 : 0, 0);
+  const pc = makePiece(kind, [{ vis: Float32Array.from(t.vis), phys: Float32Array.from(t.phys) }], KINDS[kind].size ** 3, p, q, lv, V(), pop);
+  if (AR.ready) sendSpawn(pc, 'c', lv, V(), pop);
+  return pc;
 }
 function spawnSet(drop) { PEDS.forEach((p, i) => spawnCube(i, V(p.x, drop ? 1.25 + i * .06 : PED_TOP + CUBE / 2 + .002, p.z), drop)); }
 function spawnMega(drop) { spawnCube(6, V(MEGA_AT.x, drop ? 1.9 : MEGA / 2 + .002, MEGA_AT.z), drop); megaSign(); }
@@ -2301,22 +2314,23 @@ function cutPiece2(pc, cut) {
   // the half your paw is in (or nearest to) stays in your paw
   let keep = -1;
   if (held) { toLocal(pc, _a1.copy(held.pos).sub(ARENA), _pl); keep = outside(ch[0].parts, _a2.subVectors(_pl, ch[0].c)) <= outside(ch[1].parts, _a3.subVectors(_pl, ch[1].c)) ? 0 : 1; }
-  const frozen = cut.extreme && (held || frzH || LV.length() < 1.5);   // anime cut: it looks fine... for a second
+  const frozen = cut.fz !== undefined ? cut.fz : cut.extreme && (held || frzH || LV.length() < 1.5);   // anime cut: it looks fine... for a second
   removePiece(pc);
-  const cake = !cut.bite && kind !== 10 && (AR.forceCake || rnd() < .005); AR.forceCake = false;   // 1 in 200: it was CAKE all along
+  const cake = cut.cake !== undefined ? cut.cake : !cut.bite && kind !== 10 && (AR.forceCake || rnd() < .005); AR.forceCake = false;   // 1 in 200: it was CAKE all along
   const nW = cut.nMain.clone().applyQuaternion(q); let made = 0;
   const bs = AR.bladeV.length(), carry = AR.bladeV.clone().multiplyScalar(.14); if (carry.length() > 1.4) carry.setLength(1.4);
   for (let s = 0; s < 2; s++) {
     const c = ch[s], off = c.c.clone().applyQuaternion(q), P = off.clone().add(T);
     // halves ease apart along the cut, and a quick swing carries them a little in its direction
     const v = frozen ? V() : LV.clone().add(_a2.crossVectors(AV, off)).addScaledVector(nW, (s ? 1 : -1) * (.28 + .04 * Math.min(bs, 8))).add(carry);
-    const child = makePiece(cake ? 10 : kind, c.parts, c.vol, P, q, v, frozen ? V() : AV, false);
+    AR.forceId = pc.id + (s ? 'b' : 'a'); const child = makePiece(cake ? 10 : kind, c.parts, c.vol, P, q, v, frozen ? V() : AV, false); AR.forceId = null;
     if (!child) continue;
     child.cool = .07; made++;
     addSeam(child, seg, c.c, frozen ? FREEZE_T : 0);
-    if (held && s === keep) keepHeld(held, child);
+    if (held && s === keep) { keepHeld(held, child); if (cut.remote) claim(child, 'pc', child.id); }
     else if (frozen) freezePiece(child, held || frzH, nW.clone().multiplyScalar(s ? 1 : -1));
   }
+  if (!cut.remote && made) netSend({ t: 'cut', id: pc.id, c: packCut(cut), fz: frozen ? 1 : 0, cake: cake ? 1 : 0 });
   if (cut.bite) return made > 0;
   if (cake) itsCake(V().copy(cut.e).applyQuaternion(q).add(T));
   AR.cuts++; AR.heat = Math.min(1, AR.heat + .5); AR.lastSp = cut.sp;
@@ -2348,7 +2362,7 @@ function freezePiece(pc, h, out) {
 }
 function unfreeze(pc) {
   const h = pc.frzH; pc.frz = 0; pc.frzH = null;
-  if (!pc.body || pc.held) return;
+  if (!pc.body || pc.held || !mine(pc)) return;
   pc.body.setBodyType(AR.R.RigidBodyType.Dynamic, true);
   const n = pc.out, v = V(), w = V();
   if (h && h.vel) v.copy(h.vel);
@@ -2571,7 +2585,7 @@ function vrPose(h, pos, q) {
 function takeSword(h) {
   if (sword.held && sword.held !== h) sword.held.sword = false;
   if (sword.body) { AR.world.removeRigidBody(sword.body); sword.body = null; }
-  const fromStone = sword.mode === 'stone';
+  const fromStone = sword.mode === 'stone'; claim(sword, 'sw', 0);
   sword.held = h; h.sword = true; sword.mode = 'held'; AR.bladeOk = false; trail.hist.length = 0;
   buzz(h, .8, 60); if (fromStone) { sfxShing(); crumbs(V().copy(ARENA).add(STONE).add(V(0, .35, 0)), 2, 6); if (!AR.toldSwing) { AR.toldSwing = true; toast(state.xr ? '⚔️ Got it! Swing slow to carve curvy cuts, swing SUPER fast for an anime slice. Let go of grip to drop it.' : '⚔️ Got it! Click to swing, right-click for an anime slash, E to drop it.', state.xr ? 9 : 6.5); } }
   else if (ac) tone('triangle', 900, 1300, .12, .12);
@@ -2604,6 +2618,7 @@ function relToPaw(h, pc) {   // where the piece is right now, in the paw's frame
   pc.relP = pc.relP0.clone(); pc.relQ = pc.relQ0.clone(); pc.relPT = pc.relP0.clone(); pc.relQT = pc.relQ0.clone(); pc.hk = 1;
 }
 function holdPiece(h, pc) {
+  claim(pc, 'pc', pc.id);
   pc.held = h; h.piece = pc; pc.trk = null; pc.frz = 0; pc.frzH = null;
   wakeNear(pc); pc.body.setBodyType(AR.R.RigidBodyType.KinematicPositionBased, true);
   relToPaw(h, pc);
@@ -2696,7 +2711,8 @@ function pressButton(b, h) {
     else spawnSet(true);
   } else {
     AR.pieces.forEach((p, i) => { if (!p.held) p.dying = .2 + Math.min(i, 150) * .002; });
-    if (sword.mode !== 'held') swordToStone();
+    if (sword.mode !== 'held' && sword.mode !== 'far' && mine(sword)) swordToStone();
+    netSend({ t: 'reset' });
     AR.spawnQ.push([tAll + .45, true]);
     toast('🔄 Fresh cubes coming up!', 2.5);
   }
@@ -2771,7 +2787,7 @@ function followPaw(h, pc, dt) {   // a kinematic piece riding along with a paw
 }
 function stepArena(dt) {
   if (state.mode === 'play') portalCheck(dt);
-  if (state.area !== 'arena' || !AR.ready || state.mode !== 'play') return;
+  if ((state.area !== 'arena' && !online()) || !AR.ready || state.mode !== 'play') return;
   const w = AR.world;
   U_TIME.value = tAll;
   // 1) where the sword is this frame
@@ -2808,7 +2824,7 @@ function stepArena(dt) {
     if (pc.frz > 0) { pc.frz -= dt; if (pc.frz <= 0) unfreeze(pc); }
     if (pc.pop < 1) { pc.pop = Math.min(1, pc.pop + dt * 5); const k = pc.pop; pc.sc = Math.max(.01, k * (1 + Math.sin(k * Math.PI) * .25 * (1 - k))); }
     if (pc.dying) { pc.dying -= dt; pc.sc *= Math.exp(-dt * 14); if (pc.dying <= 0) { removePiece(pc); continue; } }
-    if (pc.body.translation().y < -8) { removePiece(pc); continue; }
+    if (pc.body.translation().y < -8) { if (!mine(pc)) continue; sendKill([pc]); removePiece(pc); continue; }
     const asleep = pc.body.isSleeping();
     // piles settle for good: a piece that has been still for a moment naps (anything that bumps it wakes it again)
     if (!asleep && !pc.held && !pc.frz && pc.body.bodyType() === 0) {
@@ -3086,6 +3102,7 @@ function sfxBoo() { if (!ac) return; const t = ac.currentTime, o = ac.createOsci
 /* ---------- turning it on and off ---------- */
 function setHorror(on, quiet) {
   if (HZ.on === on) return; HZ.on = on;
+  if (!HZ.fromNet) netSend({ t: 'hz', on: on ? 1 : 0, quiet: quiet ? 1 : 0 });
   const fogC = on ? new THREE.Color(0x151a26) : DAY.fog;
   scene.background.copy(on ? new THREE.Color(0x0b0e16) : DAY.bg); scene.fog.color.copy(fogC); scene.fog.near = on ? 1.5 : DAY.near; scene.fog.far = on ? 21 : DAY.far;
   hemi.intensity = on ? .16 : DAY.hemi; hemi.color.set(on ? 0x6f7fb0 : DAY.hc); hemi.groundColor.set(on ? 0x0e140e : DAY.hg); sun.intensity = on ? 0 : DAY.sun;
@@ -3209,7 +3226,7 @@ function stepHorror(dt) {
   }
 
   // the figure: 1 in 888 every second
-  if (HZ.phase === 'none') { HZ.rollT += dt; while (HZ.rollT >= 1) { HZ.rollT -= 1; if (rnd() < 1 / 888) { spawnFig(); break; } } }
+  if (HZ.phase === 'none') { HZ.rollT += dt; while (HZ.rollT >= 1) { HZ.rollT -= 1; if (rnd() < 1 / 888) { figRoll(); break; } } }
   else HZ.pt += dt;
   if (HZ.phase === 'tpose') { hitCheck(); if (HZ.phase === 'tpose' && HZ.pt > 5) { fig.g.visible = false; HZ.phase = 'none'; if (ac) tone('sawtooth', 60, 30, .15, .1); } }
   else if (HZ.phase === 'spazz' || HZ.phase === 'chase') {
@@ -3263,8 +3280,9 @@ function toyToYard(p, carried) {
   const pos = V().copy(AR_PORTAL).add(V(0, 1, -.7)), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rnd() * 3, rnd() * 3, rnd() * 3));
   if (carried) { headWorld(_a1); pos.set(AR_SPAWN.x + .25, 1.2, AR_SPAWN.z - .7); }
   const lv = carried ? V(0, .5, 0) : V(0, 1 + sp * .15, -Math.max(1.5, sp * .8));
-  const pc = makePiece(t.k, [{ vis: Float32Array.from(t.vis), phys: Float32Array.from(t.phys) }], t.vol, pos, q, lv, V(rnd() * 4 - 2, rnd() * 4 - 2, rnd() * 4 - 2), true);
+  const av = V(rnd() * 4 - 2, rnd() * 4 - 2, rnd() * 4 - 2), pc = makePiece(t.k, [{ vis: Float32Array.from(t.vis), phys: Float32Array.from(t.phys) }], t.vol, pos, q, lv, av, true);
   if (!pc) return false;
+  sendSpawn(pc, p.kind, lv, av, true);
   // the grove gets its toy back a moment later
   p.g.position.copy(p.home); p.vel.set(0, 0, 0); p.w.set(0, 0, 0); p.rest = false; p.g.scale.setScalar(.01); p.regrow = 1;
   confetti(V().copy(pos).add(ARENA), 20, [0x3fe0bd, 0x8b6bff, 0xffffff]);
@@ -3276,7 +3294,7 @@ function stepToyPortal(dt) {
   if (!AR.ready) return;
   for (const p of props) {
     if (p.regrow > 0) { p.regrow = Math.max(0, p.regrow - dt * 1.5); p.g.scale.setScalar(1 - p.regrow); }
-    if (p.held || p.vel.lengthSq() < .25) continue;
+    if (p.held || p.vel.lengthSq() < .25 || !mine(p)) continue;
     portalGrove.g.worldToLocal(_a2.copy(p.g.position));
     if (Math.abs(_a2.z) < .3 && Math.hypot(_a2.x, _a2.y - 1) < .8) toyToYard(p, false);
   }
@@ -3307,7 +3325,7 @@ function sfxChomp(big) { if (!ac) return; const t = ac.currentTime; for (let i =
 const BITE_R = .05, ONE_BITE = 3.4e-4;   // bite radius, and anything smaller than ~7 cm across goes down in one
 function mouthWorld(out) { headWorld(out); camera.getWorldQuaternion(_aq); return out.add(_a1.set(0, -.07, -.03).applyQuaternion(_aq)); }
 function eatWhole(pc) {
-  const t = pc.body.translation(), w = V(t.x, t.y, t.z).add(ARENA); removePiece(pc); crumbs(w, pc.kind, 10); sfxChomp(true);
+  const t = pc.body.translation(), w = V(t.x, t.y, t.z).add(ARENA); sendKill([pc], true); removePiece(pc); crumbs(w, pc.kind, 10); sfxChomp(true);
   if (!AR.toldEat) { AR.toldEat = true; toast('😋 Gulp! Down in one bite.', 2.5); }
 }
 function takeBite(pc) {
@@ -3331,7 +3349,7 @@ function takeBite(pc) {
   const before = new Set(AR.pieces), kind = pc.kind, holder = pc.held;
   if (!cutPiece2(pc, { pc, lines, bis, nMain: lines[3][0], e: base, sp: 0, extreme: false, bite: true })) { if (pc.vol < ONE_BITE * 3) eatWhole(pc); return; }
   const kids = AR.pieces.filter(c => !before.has(c)).sort((a, b) => a.vol - b.vol), bite = kids.length > 1 ? kids[0] : null, rest = kids[kids.length - 1];
-  if (bite) { const u = bite.body.translation(); crumbs(V(u.x, u.y, u.z).add(ARENA), kind, 6); removePiece(bite); }
+  if (bite) { const u = bite.body.translation(); crumbs(V(u.x, u.y, u.z).add(ARENA), kind, 6); sendKill([bite], true); removePiece(bite); }
   if (holder && !holder.piece && rest && rest.body && !rest.held) holdPiece(holder, rest);   // you keep holding what's left
   sfxChomp(false);
   if (!AR.toldBite) { AR.toldBite = true; toast('😋 Nom! Little pieces go down in one bite.', 3); }
@@ -3364,8 +3382,9 @@ const PIP_SAY = {
   sword: ['EEK! The pointy thing!', 'Put that AWAY! 😱', 'Not the sword!!', 'Keep it away from me!'],
   thrown: ['WAAAAH!', 'Again! Again!', 'Ooof!'],
 };
-function pipSay(kind) {
-  const L = PIP_SAY[kind], msg = L[Math.floor(rnd() * L.length)], g = bubble.g; g.clearRect(0, 0, 512, 160);
+function pipSay(kind, forced) {
+  const L = PIP_SAY[kind] || PIP_SAY.idle, msg = forced ? String(forced).slice(0, 60) : L[Math.floor(rnd() * L.length)], g = bubble.g;
+  if (!forced && online() && mine(pip)) netSend({ t: 'say', kind, m: msg }); g.clearRect(0, 0, 512, 160);
   g.fillStyle = kind === 'dark' || kind === 'sword' ? '#2a1f3a' : '#ffffff'; g.beginPath(); g.roundRect(8, 8, 496, 118, 36); g.fill();
   g.beginPath(); g.moveTo(230, 124); g.lineTo(256, 154); g.lineTo(282, 124); g.fill();
   g.fillStyle = kind === 'dark' || kind === 'sword' ? '#ffd6f0' : '#5a2d0c'; g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -3376,7 +3395,7 @@ function pipSay(kind) {
 function pipCenter(out) { return out.copy(pip.g.position).add(_a3.set(0, .3, 0)); }
 function pipGrab(h) {
   if (pip.heldBy || !h.tracked || pipCenter(_a1).distanceTo(h.pos) > .42) return false;
-  pip.heldBy = h; pip.vel.set(0, 0, 0); buzz(h, .5, 40); sfxSqueak(); pipSay('held'); return true;
+  claim(pip, 'pip', 0); pip.heldBy = h; pip.vel.set(0, 0, 0); buzz(h, .5, 40); sfxSqueak(); pipSay('held'); return true;
 }
 function pipDrop(h) { if (pip.heldBy !== h) return; pip.heldBy = null; pip.vel.copy(h.vel || V()).multiplyScalar(1.1); if (pip.vel.length() > 10) pip.vel.setLength(10); pip.flying = pip.vel.length() > 2.5; }
 function pipDeskGrab() {
@@ -3384,12 +3403,14 @@ function pipDeskGrab() {
   if (pip.heldBy) { const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_aq)); pip.heldBy = null; pip.vel.copy(f).multiplyScalar(4).add(V(0, 2, 0)); pip.flying = true; return true; }
   if (h.holding || h.piece || h.sword) return false;
   const hit = aimAt(2.6, f => f(pip, pipCenter(V()), .32)); if (!hit) return false;
-  pip.heldBy = h; sfxSqueak(); pipSay('held'); return true;
+  claim(pip, 'pip', 0); pip.heldBy = h; sfxSqueak(); pipSay('held'); return true;
 }
 const _pw = V();
 function stepPip(dt) {
   const g = pip.g.position, inYard = g.x > 200, floorY = inYard ? ARENA.y : -1e9;
-  if (pip.heldBy) {
+  const pipMine = mine(pip);
+  if (!pipMine) { /* someone else has Pip: it glides along (see stepShared) */ }
+  else if (pip.heldBy) {
     const h = pip.heldBy;
     if ((state.xr || sim.on) && h.tracked) g.copy(h.pos).add(_a1.set(0, -.3, 0));
     else { h.paw.updateMatrixWorld(); h.paw.localToWorld(g.set(0, -.25, -.45)); }
@@ -3407,9 +3428,9 @@ function stepPip(dt) {
     if (g.y < -10 || (!inYard && Math.hypot(g.x, g.z) > 45)) { g.copy(pip.home); pip.vel.set(0, 0, 0); pip.resting = true; }
     if (inYard && state.area === 'grove' && (pip.away = (pip.away || 0) + dt) > 12) { g.copy(pip.home); pip.resting = true; pip.away = 0; }
   }
-  if (pip.heldBy || pip.vel.lengthSq() > .01) pip.resting = false;
+  if (pipMine && (pip.heldBy || pip.vel.lengthSq() > .01)) pip.resting = false;
   // into the grove's portal? off to the yard (and back through the yard's portal)
-  if (!pip.heldBy && pip.vel.lengthSq() > .3) {
+  if (pipMine && !pip.heldBy && pip.vel.lengthSq() > .3) {
     const P = inYard ? portalYard : portalGrove; P.g.worldToLocal(_a2.copy(g).add(_a3.set(0, .3, 0)));
     if (Math.abs(_a2.z) < .3 && Math.hypot(_a2.x, _a2.y - 1) < .8) {
       if (inYard) g.copy(GROVE_PORTAL).add(V(-GROVE_PORTAL.x, 0, -GROVE_PORTAL.z).normalize().multiplyScalar(1.4));
@@ -3428,11 +3449,11 @@ function stepPip(dt) {
     pip.eyes.forEach(e => { e.children[0].scale.setScalar(1 - .5 * sc); e.scale.setScalar(1 + .25 * sc); });   // eyes wide, pupils tiny
     pip.arms.forEach((a, i) => { a.rotation.z = (i ? 1 : -1) * (2.6 * sc) + (i ? .2 : -.2) * (1 - sc); a.rotation.x = -.8 * sc; });   // paws up over its face
   } else { pip.body.position.x = 0; pip.eyes.forEach(e => { e.children[0].scale.setScalar(1); e.scale.x = e.scale.z = 1; }); }
-  if (swordNear && !pip.heldBy && !pip.wasSword) { pipSay('sword'); pip.vel.set(0, 2.6, 0); _a1.subVectors(g, _a2.copy(sword.g.position).add(ARENA)); _a1.y = 0; if (_a1.lengthSq() > 1e-4) pip.vel.addScaledVector(_a1.normalize(), 2.2); pip.resting = false; }
+  if (pipMine && swordNear && !pip.heldBy && !pip.wasSword) { pipSay('sword'); pip.vel.set(0, 2.6, 0); _a1.subVectors(g, _a2.copy(sword.g.position).add(ARENA)); _a1.y = 0; if (_a1.lengthSq() > 1e-4) pip.vel.addScaledVector(_a1.normalize(), 2.2); pip.resting = false; }
   pip.wasSword = swordNear;
   // now and then it says something (only if you're near enough to hear)
   headWorld(_a1); const near = _a1.distanceTo(g) < 7;
-  if ((pip.talkT -= dt) < 0) { pip.talkT = 11 + rnd() * 14; if (near && bubbleT <= 0) pipSay(swordNear ? 'sword' : dark ? 'dark' : pip.heldBy ? 'held' : 'idle'); }
+  if ((pip.talkT -= dt) < 0 && pipMine) { pip.talkT = 11 + rnd() * 14; if (near && bubbleT <= 0) pipSay(swordNear ? 'sword' : dark ? 'dark' : pip.heldBy ? 'held' : 'idle'); }
   if (bubbleT > 0) { bubbleT -= dt; bubbleS.position.copy(g).add(_a2.set(0, 1.05, 0)); if (bubbleT <= 0) bubbleS.visible = false; }
 }
 function stepExtras(dt) {
@@ -3540,6 +3561,7 @@ function mpLeave(quiet) {
   try { if (MP.peer) MP.peer.destroy(); } catch (e) {}
   MP.peer = null; MP.hostConn = null; MP.conns.clear(); MP.host = false; MP.code = ''; MP.status = 'off';
   for (const id of [...MP.others.keys()]) dropOther(id);
+  MP.me = null; reassertAll();
   if (!quiet) mpNote('');
   mpUi();
 }
@@ -3549,17 +3571,18 @@ async function mpHost() {
   const tryCode = (left) => {
     const code = String(Math.floor(1000 + Math.random() * 9000)), peer = new Peer(MP_PREFIX + code);
     peer.on('open', () => {
-      MP.peer = peer; MP.host = true; MP.code = code; MP.status = 'host'; MP.myColor = MP_COLORS[0];
+      MP.peer = peer; MP.host = true; MP.code = code; MP.status = 'host'; MP.myColor = MP_COLORS[0]; MP.me = 'host';
       mpNote(`🏠 Your room code is ${code}. Tell your friends!`); mpUi(); toast(`🏠 Room ${code} is open! Friends type ${code} to join.`, 6);
     });
     peer.on('connection', conn => {
       conn.on('open', () => {
         if (MP.conns.size >= MP_MAX - 1) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
         const used = new Set([MP.myColor, ...[...MP.conns.values()].map(c => c.color)]), color = MP_COLORS.find(c => !used.has(c));
-        conn.color = color; MP.conns.set(conn.peer, conn); conn.send({ t: 'hi', c: color, code });
+        conn.color = color; MP.conns.set(conn.peer, conn); conn.send({ t: 'hi', c: color, code }); sendSnap(conn);
         mpUi();
       });
-      conn.on('data', d => { if (d && d.t === 's') { d.id = conn.peer; gotState(d); for (const [id, c] of MP.conns) if (id !== conn.peer && c.open) c.send(d); } });
+      conn.on('data', d => { if (!d || !MP.conns.has(conn.peer)) return; if (d.t === 's') d.id = conn.peer; else d.from = conn.peer;
+        if (d.t === 's') gotState(d); else netGot(d); for (const [id, c] of MP.conns) if (id !== conn.peer && c.open) c.send(d); });
       conn.on('close', () => { MP.conns.delete(conn.peer); byeOther(conn.peer); for (const c of MP.conns.values()) if (c.open) c.send({ t: 'bye', id: conn.peer }); mpUi(); });
     });
     peer.on('error', err => {
@@ -3576,14 +3599,15 @@ async function mpJoin(code) {
   const fail = (why) => { if (MP.status === 'joined') return; mpNote(why); mpLeave(true); mpNote(why); };
   const timer = setTimeout(() => fail(`😕 No room ${code} found. Check the number with your friend!`), 12000);
   peer.on('open', () => {
-    const conn = peer.connect(MP_PREFIX + code, { reliable: false });
+    const conn = peer.connect(MP_PREFIX + code, { reliable: true });
     conn.on('open', () => { MP.hostConn = conn; });
     conn.on('data', d => {
       if (!d) return;
-      if (d.t === 'hi') { clearTimeout(timer); MP.status = 'joined'; MP.code = code; MP.myColor = d.c; mpNote(`🎉 You're in room ${code}!`); mpUi(); toast(`🎉 Joined room ${code}!`, 4); }
+      if (d.t === 'hi') { clearTimeout(timer); MP.status = 'joined'; MP.code = code; MP.myColor = d.c; MP.me = peer.id; reassertAll(); mpNote(`🎉 You're in room ${code}!`); mpUi(); toast(`🎉 Joined room ${code}!`, 4); }
       else if (d.t === 'full') { clearTimeout(timer); fail('😕 That room is full (4 players max).'); }
       else if (d.t === 's') gotState(d);
       else if (d.t === 'bye') byeOther(d.id);
+      else netGot(d);
     });
     conn.on('close', () => { if (MP.status === 'joined') { toast('👋 The room closed.', 3); mpLeave(); } });
   });
@@ -3645,8 +3669,8 @@ function gotState(d) {
   f.pid = /^KG-[A-Z0-9]{4}$/.test(d.i) ? d.i : '?';
   f.tgt = d; f.seen = tAll; if (!f.cur) f.cur = JSON.parse(JSON.stringify(d));
 }
-function byeOther(id) { const f = MP.others.get(id); if (f) toast(`👋 ${f.name} left.`, 2.5); dropOther(id); }
-function dropOther(id, quiet) { const f = MP.others.get(id); if (!f) return; scene.remove(f.g); f.g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); MP.others.delete(id); if (!quiet) mpUi(); }
+function byeOther(id) { const f = MP.others.get(id); if (f) toast(`👋 ${f.name} left.`, 2.5); dropOther(id); dropOwner(id); }
+function dropOther(id, quiet) { const f = MP.others.get(id); if (!f) return; if (f.rb && AR.world) f.rb.forEach(b => AR.world.removeRigidBody(b)); scene.remove(f.g); f.g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); MP.others.delete(id); if (!quiet) mpUi(); }
 function lerpPose(a, b, k) { if (!b) return a; if (!a) return b.slice(); for (let i = 0; i < 3; i++) a[i] += (b[i] - a[i]) * k; _fq.set(a[3], a[4], a[5], a[6]).slerp(_mq.set(b[3], b[4], b[5], b[6]), k); a[3] = _fq.x; a[4] = _fq.y; a[5] = _fq.z; a[6] = _fq.w; return a; }
 function stepFriends(dt) {
   const k = 1 - Math.exp(-dt * 14);   // smooth between the 20-a-second updates
@@ -3907,6 +3931,227 @@ CP.ready = true; drawKb(); compDraw();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { drawKb(); compDraw(); });
 window.__kg.comp = { CP, comp, compKey, compTapScreen, compTapKb, compDraw, myId, COMP_AT };
 window.__kg.mp = { MP, mpHost, mpJoin, mpLeave, gotState, myState };
+/* ======================================================================
+   SHARED WORLD: in a room everybody sees and moves the same toys, cubes, cuts, sword, Pip and spooky night.
+   Every thing has an owner. The owner runs its physics and sends where it is ~15 times a second; everyone
+   else just glides it there. Grab, throw, bump or slice something and it becomes yours. Cuts are sent as the
+   cut itself (planes in the piece's own space), so every game carves the exact same shapes.
+   The room's host owns everything nobody has touched, and catches anything a leaving player owned.
+   ====================================================================== */
+const NET_TAG = Math.random().toString(36).slice(2, 6);
+let netIdC = 0;
+const online = () => MP.status === 'host' || MP.status === 'joined';
+const ownerOf = o => o.own || 'host';
+const mine = o => !online() || ownerOf(o) === MP.me;
+function netSend(d) {
+  if (!online()) return; d.from = MP.me;
+  if (MP.host) { for (const c of MP.conns.values()) if (c.open) c.send(d); }
+  else if (MP.hostConn && MP.hostConn.open) MP.hostConn.send(d);
+}
+function objOf(k, id) { return k === 'p' ? props[id] : k === 'pip' ? pip : k === 'sw' ? sword : k === 'pc' ? AR.byId.get(id) : null; }
+function claim(o, k, id) {
+  if (!online()) return;
+  if (ownerOf(o) === MP.me) { o.own = MP.me; return; }
+  o.ov = (o.ov || 0) + 1; o.own = MP.me; o.nt = null;
+  netSend({ t: 'own', k, id, v: o.ov });
+  gotOwn(o, k, true);
+}
+function gotOwn(o, k, nowMine) {
+  if (k === 'pc') {
+    const pc = o; if (!pc.body) return;
+    if (nowMine) { if (!pc.held && !(pc.frz > 0)) { pc.body.setBodyType(AR.R.RigidBodyType.Dynamic, true); if (pc.nv) pc.body.setLinvel(pc.nv, true); } }
+    else { if (pc.held) { pc.held.piece = null; pc.held = null; } pc.frz = 0; pc.frzH = null; pc.body.setBodyType(AR.R.RigidBodyType.KinematicPositionBased, true); netSeed(pc); }
+  } else if (k === 'p') { if (!nowMine && o.held) { o.held.holding = null; o.held.reset = true; o.held = null; } }
+  else if (k === 'pip') { if (!nowMine && pip.heldBy) pip.heldBy = null; }
+  else if (k === 'sw') {
+    if (nowMine && sword.mode === 'far' && !sword.held) swordToStone();   // whoever had it left: back in the stone
+    if (!nowMine) {
+      if (sword.held) { sword.held.sword = false; sword.held = null; }
+      if (sword.body) { AR.world.removeRigidBody(sword.body); sword.body = null; }
+      if (sword.mode !== 'stone') sword.mode = 'far'; AR.bladeOk = false;
+    }
+  }
+}
+function netSeed(pc) { const t = pc.body.translation(), r = pc.body.rotation(); pc.np = V(t.x, t.y, t.z); pc.nq = new THREE.Quaternion(r.x, r.y, r.z, r.w); }
+function reassertAll() {   // after joining or leaving: every piece's body matches who owns it now
+  if (!online()) { [...props, pip, sword, ...AR.pieces].forEach(o => { o.nt = null; o.own = undefined; o.ov = 0; }); FIG.seen = -9; if (sword.mode === 'far') swordToStone(); }
+  if (!AR.ready) return;
+  for (const pc of AR.pieces) { if (!pc.body) continue; if (mine(pc)) { if (!pc.held && !(pc.frz > 0) && pc.body.bodyType() !== 0) pc.body.setBodyType(AR.R.RigidBodyType.Dynamic, true); } else gotOwn(pc, 'pc', false); }
+}
+function dropOwner(id) {   // a player left: the host looks after their stuff now
+  const take = o => { if (o.own === id) { o.own = 'host'; if (MP.host) gotOwn(o, o === pip ? 'pip' : o === sword ? 'sw' : o.body !== undefined ? 'pc' : 'p', true); } };
+  props.forEach(take); take(pip); take(sword); AR.pieces.forEach(take);
+  if (FIG.from === id) { FIG.seen = -9; }
+}
+
+/* ---------- sending: everything you own that is moving ---------- */
+const r4 = x => Math.round(x * 1e4) / 1e4;
+const qa = q => [r4(q.x), r4(q.y), r4(q.z), r4(q.w)], va = v => [r4(v.x), r4(v.y), r4(v.z)];
+const SW_MODE = { stone: 0, held: 1, free: 2 };
+function netTick(dt) {
+  if (!online()) return;
+  if ((MP.wT = (MP.wT || 0) - dt) > 0) return; MP.wT = 1 / 15;
+  const o = [];
+  props.forEach((p, i) => { if (!mine(p)) return; const moving = p.held || !p.rest; if (moving || !p.sentRest) { o.push(['p', i, ...va(p.g.position), ...qa(p.g.quaternion), ...va(p.vel), p.held ? 1 : 0, p.rest ? 1 : 0]); p.sentRest = !moving; } });
+  if (mine(pip)) { const moving = pip.heldBy || !pip.resting; if (moving || !pip.sentRest) { o.push(['pip', 0, ...va(pip.g.position), ...va(pip.vel), pip.heldBy ? 1 : 0, pip.resting ? 1 : 0]); pip.sentRest = !moving; } }
+  if (mine(sword) && sword.mode !== 'far') { const m = SW_MODE[sword.mode]; if (m !== 0 || sword.sentMode !== 0) { o.push(['sw', 0, m, ...va(sword.g.position), ...qa(sword.g.quaternion)]); sword.sentMode = m; } }
+  if (AR.ready) {
+    let n = 0;
+    for (const pc of AR.pieces) {
+      if (!pc.body || pc.dying || !mine(pc)) continue;
+      const still = !pc.held && !(pc.frz > 0) && pc.body.isSleeping();
+      if (still && pc.sentRest) continue;
+      const t = pc.body.translation(), r = pc.body.rotation(), v = pc.body.linvel();
+      o.push(['pc', pc.id, r4(t.x), r4(t.y), r4(t.z), r4(r.x), r4(r.y), r4(r.z), r4(r.w), r4(v.x), r4(v.y), r4(v.z)]); pc.sentRest = still;
+      if (++n > 60) break;
+    }
+  }
+  if (HZ.phase !== 'none' && fig.g.visible) { const g = fig.g.position; o.push(['fig', 0, r4(g.x), r4(g.y), r4(g.z), r4(fig.g.rotation.y), HZ.phase === 'tpose' ? 1 : HZ.phase === 'spazz' ? 2 : 3, r4(HZ.speed)]); }
+  if (o.length) netSend({ t: 'w', o });
+}
+
+/* ---------- receiving ---------- */
+function netGot(d) {
+  if (!d || !d.t) return;
+  if (d.t === 'w') {
+    for (const e of d.o || []) {
+      const k = e[0];
+      if (k === 'fig') { FIG.nt = e; FIG.seen = tAll; FIG.from = d.from; continue; }
+      const o = objOf(k, e[1]); if (!o || mine(o)) continue;
+      if (k === 'p') o.nt = { p: V(e[2], e[3], e[4]), q: new THREE.Quaternion(e[5], e[6], e[7], e[8]), v: V(e[9], e[10], e[11]), held: e[12], rest: e[13] };
+      else if (k === 'pip') o.nt = { p: V(e[2], e[3], e[4]), v: V(e[5], e[6], e[7]), held: e[8], rest: e[9] };
+      else if (k === 'sw') { o.nt = { m: e[2], p: V(e[3], e[4], e[5]), q: new THREE.Quaternion(e[6], e[7], e[8], e[9]) }; }
+      else if (k === 'pc') { o.nt = { p: V(e[2], e[3], e[4]), q: new THREE.Quaternion(e[5], e[6], e[7], e[8]) }; o.nv = { x: e[9], y: e[10], z: e[11] }; if (!o.np) netSeed(o); }
+    }
+  } else if (d.t === 'own') {
+    const o = objOf(d.k, d.id); if (!o) return;
+    const v = o.ov || 0;
+    if (d.v > v || (d.v === v && String(d.from) < String(ownerOf(o)))) { const was = mine(o); o.ov = d.v; o.own = d.from; if (was) gotOwn(o, d.k, false); }
+  } else if (d.t === 'cut') {
+    const pc = AR.byId.get(d.id); if (!pc || !AR.ready) return;
+    const c = unpackCut(d.c); c.remote = true; c.fz = !!d.fz; c.cake = !!d.cake;
+    AR.makeOwn = d.from; quietIfAway(() => cutPiece2(pc, c)); AR.makeOwn = null;
+  } else if (d.t === 'spawn') {
+    if (!AR.ready || AR.byId.has(d.id)) return;
+    const t = d.tp === 'c' ? tplFor(KINDS[d.k].size) : toyTpl(d.tp);
+    AR.forceId = d.id; AR.makeOwn = d.from;
+    makePiece(d.k, [{ vis: Float32Array.from(t.vis), phys: Float32Array.from(t.phys) }], d.vol, V(...d.p), new THREE.Quaternion(...d.q), V(...d.lv), V(...d.av), !!d.pop);
+    AR.forceId = null; AR.makeOwn = null;
+    if (d.k === 6) megaSign();
+  } else if (d.t === 'kill') {
+    for (const id of d.ids || []) { const pc = AR.byId.get(id); if (!pc) continue; if (d.eat && pc.body) { const t = pc.body.translation(); crumbs(V(t.x, t.y, t.z).add(ARENA), pc.kind, 8); } removePiece(pc); }
+  } else if (d.t === 'reset') {
+    AR.pieces.forEach((p, i) => { if (p.held) { p.held.piece = null; p.held = null; } p.dying = .2 + Math.min(i, 150) * .002; });
+  } else if (d.t === 'hz') { HZ.fromNet = true; setHorror(!!d.on, d.quiet); HZ.fromNet = false; }
+  else if (d.t === 'fig') {
+    if (d.ev === 'spawn' && d.to === MP.me) { if (HZ.on && HZ.phase === 'none' && !HZ.crash) spawnFig(); }
+    else if (d.ev === 'hit' && HZ.phase === 'tpose') { HZ.phase = 'none'; fig.g.visible = false; }   // someone else smacked it: it's after THEM now
+  } else if (d.t === 'say') { if (!mine(pip)) pipSay(d.kind, d.m); }
+  else if (d.t === 'snap') gotSnap(d);
+  else if (d.t === 'pcs') { if (!AR.ready) { (MP.snapQ = MP.snapQ || []).push(d); return; } d.list.forEach(addSnapPiece); }
+}
+function quietIfAway(f) { const keep = ac; if (state.area !== 'arena') ac = null; try { return f(); } finally { ac = keep; } }
+function packCut(c) {
+  const pl = l => [l[0].x, l[0].y, l[0].z, l[1]];   // full precision: every game must carve the very same shape
+  return { l: c.lines.map(pl), b: c.bis.map(pl), n: [c.nMain.x, c.nMain.y, c.nMain.z], e: [c.e.x, c.e.y, c.e.z], sp: c.sp || 0, x: c.extreme ? 1 : 0, bite: c.bite ? 1 : 0 };
+}
+function unpackCut(c) {
+  const up = a => [V(a[0], a[1], a[2]), a[3]];
+  return { lines: c.l.map(up), bis: c.b.map(up), nMain: V(...c.n), e: V(...c.e), sp: c.sp, extreme: !!c.x, bite: !!c.bite };
+}
+function newPieceId() { return NET_TAG + (++netIdC).toString(36); }
+function sendSpawn(pc, tp, lv, av, pop) {
+  if (!online() || !pc) return; const t = pc.body.translation(), r = pc.body.rotation();
+  netSend({ t: 'spawn', id: pc.id, k: pc.kind, tp, vol: pc.vol, p: [t.x, t.y, t.z], q: [r.x, r.y, r.z, r.w], lv: va(lv), av: va(av), pop: pop ? 1 : 0 });
+}
+function sendKill(pcs, eat) { if (online() && pcs.length) netSend({ t: 'kill', ids: pcs.map(p => p.id), eat: eat ? 1 : 0 }); }
+
+/* ---------- a new friend gets the whole world from the host ---------- */
+function sendSnap(conn) {
+  const pk = o => ({ own: ownerOf(o), ov: o.ov || 0 });
+  conn.send({ t: 'snap', hz: HZ.on ? 1 : 0,
+    props: props.map(p => [...va(p.g.position), ...qa(p.g.quaternion), p.rest ? 1 : 0, ownerOf(p), p.ov || 0]),
+    pip: [...va(pip.g.position), ownerOf(pip), pip.ov || 0],
+    sword: [sword.mode === 'stone' ? 0 : sword.mode === 'held' || sword.mode === 'far' ? 1 : 2, ...va(sword.g.position), ...qa(sword.g.quaternion), ownerOf(sword), sword.ov || 0], cnt: AR.pieces.length });
+  if (!AR.ready) return;
+  const list = AR.pieces.filter(p => p.body && !p.dying).map(pc => {
+    const t = pc.body.translation(), r = pc.body.rotation();
+    return { id: pc.id, k: pc.kind, vol: pc.vol, p: [t.x, t.y, t.z], q: [r.x, r.y, r.z, r.w], o: ownerOf(pc), ov: pc.ov || 0,
+      parts: pc.parts.map(pt => [pt.vis.buffer.slice(pt.vis.byteOffset, pt.vis.byteOffset + pt.vis.byteLength), pt.phys.buffer.slice(pt.phys.byteOffset, pt.phys.byteOffset + pt.phys.byteLength)]) };
+  });
+  for (let i = 0; i < list.length; i += 6) conn.send({ t: 'pcs', list: list.slice(i, i + 6) });
+}
+function gotSnap(d) {
+  (d.props || []).forEach((a, i) => { const p = props[i]; if (!p) return; if (p.held) { p.held.holding = null; p.held = null; } p.g.position.set(a[0], a[1], a[2]); p.g.quaternion.set(a[3], a[4], a[5], a[6]); p.rest = !!a[7]; p.vel.set(0, 0, 0); p.own = a[8]; p.ov = a[9]; p.nt = null; });
+  if (d.pip) { pip.heldBy = null; pip.g.position.set(d.pip[0], d.pip[1], d.pip[2]); pip.own = d.pip[3]; pip.ov = d.pip[4]; pip.resting = true; }
+  if (d.sword) { const s = d.sword; sword.own = s[8]; sword.ov = s[9]; if (s[0] === 0) { swordToStone(); } else { gotOwn(sword, 'sw', false); sword.mode = s[0] === 1 ? 'far' : 'free'; sword.g.position.set(s[1], s[2], s[3]); sword.g.quaternion.set(s[4], s[5], s[6], s[7]); } }
+  HZ.fromNet = true; setHorror(!!d.hz, true); HZ.fromNet = false;
+  const clear = () => { for (const pc of [...AR.pieces]) removePiece(pc); MP.snapQ = []; };
+  if (AR.ready) clear(); else MP.clearOnReady = true;
+}
+function addSnapPiece(s) {
+  if (AR.byId.has(s.id)) return;
+  const parts = s.parts.map(([v, ph]) => ({ vis: new Float32Array(v), phys: new Float32Array(ph) }));
+  AR.forceId = s.id; AR.makeOwn = s.o;
+  const pc = makePiece(s.k, parts, s.vol, V(...s.p), new THREE.Quaternion(...s.q), V(), V(), false);
+  AR.forceId = null; AR.makeOwn = null;
+  if (pc) { pc.ov = s.ov; pc.cool = .2; }
+}
+
+/* ---------- every frame: glide what other people own, and let friends' paws push your stuff ---------- */
+const FIG = { nt: null, seen: -9, from: null, shown: false };
+const _sv1 = V();
+function stepShared(dt) {
+  if (!online()) return;
+  if (AR.ready && MP.clearOnReady) { MP.clearOnReady = false; for (const pc of [...AR.pieces]) removePiece(pc); }
+  if (AR.ready && MP.snapQ && MP.snapQ.length) { const q = MP.snapQ; MP.snapQ = []; q.forEach(d => d.list.forEach(addSnapPiece)); }
+  const k = 1 - Math.exp(-dt * 14);
+  for (const p of props) if (!mine(p) && p.nt) { p.g.position.lerp(p.nt.p, k); p.g.quaternion.slerp(p.nt.q, k); p.vel.copy(p.nt.v); p.rest = !!p.nt.rest; }
+  if (!mine(pip) && pip.nt) { pip.g.position.lerp(pip.nt.p, k); pip.vel.copy(pip.nt.v); pip.resting = !!pip.nt.rest; pip.body.rotation.z = pip.nt.held ? Math.sin(tAll * 9) * .15 : pip.body.rotation.z * .9; }
+  if (!mine(sword) && sword.nt) {
+    const n = sword.nt;
+    if (n.m === 0) { if (sword.mode !== 'stone') { sword.mode = 'stone'; sword.g.position.copy(STONE_POSE.p); sword.g.quaternion.copy(STONE_POSE.q); } }
+    else { sword.mode = n.m === 1 ? 'far' : 'free'; sword.g.position.lerp(n.p, Math.min(1, k * 1.5)); sword.g.quaternion.slerp(n.q, Math.min(1, k * 1.5)); }
+  }
+  if (AR.ready) {
+    for (const pc of AR.pieces) {
+      if (!pc.body || mine(pc) || !pc.nt) continue;
+      if (!pc.np) netSeed(pc);
+      pc.np.lerp(pc.nt.p, k); pc.nq.slerp(pc.nt.q, k);
+      pc.body.setNextKinematicTranslation(pc.np); pc.body.setNextKinematicRotation({ x: pc.nq.x, y: pc.nq.y, z: pc.nq.z, w: pc.nq.w });
+    }
+    // friends' paws and bodies are solid in the yard too
+    for (const f of MP.others.values()) {
+      if (!f.rb) { const R = AR.R; f.rb = [0, 1, 2].map(i => { const b = AR.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -60, 0)); AR.world.createCollider(i < 2 ? R.ColliderDesc.ball(PAW_R * .9).setFriction(1) : R.ColliderDesc.capsule(.17, .2), b); return b; }); }
+      f.paws.forEach((p, i) => { _sv1.copy(p.position).sub(ARENA); if (!p.visible) _sv1.set(i * 3 + 9, -60, 0); f.rb[i].setNextKinematicTranslation(_sv1); });
+      _sv1.copy(f.head.position).sub(ARENA); _sv1.y -= ((f.cur && f.cur.b) || .6) * .4; f.rb[2].setNextKinematicTranslation(_sv1);
+    }
+  }
+  netTick(dt);
+}
+// a friend's fig (in someone else's game): show it where they say, and you can still smack it
+function stepFigRemote(dt) {
+  const live = online() && HZ.on && HZ.phase === 'none' && FIG.nt && tAll - FIG.seen < .6;
+  if (!live) { if (FIG.shown) { FIG.shown = false; if (HZ.phase === 'none') fig.g.visible = false; } return; }
+  const e = FIG.nt, k = 1 - Math.exp(-dt * 14);
+  if (!FIG.shown) { fig.g.position.set(e[2], e[3], e[4]); FIG.shown = true; }
+  fig.g.position.lerp(_sv1.set(e[2], e[3], e[4]), k); fig.g.rotation.set(0, e[5], 0); fig.g.visible = true;
+  if (e[6] === 1) {
+    tPose(fig);
+    // smack it and it comes after YOU
+    let hit = false;
+    if (state.area === 'arena' && sword.mode === 'held') for (let j = 0; j <= 4 && !hit; j++) { _hzP.lerpVectors(AR.b1, AR.t1, j / 4).add(ARENA); hit = figTouches(_hzP, .04); }
+    for (const h of hands) if (!hit && h.tracked && h.vel && h.vel.length() > 1 && figTouches(h.pos, PAW_R)) hit = true;
+    if (hit) { FIG.shown = false; FIG.seen = -9; HZ.phase = 'tpose'; netSend({ t: 'fig', ev: 'hit' }); hitFig(); }
+  } else spazz(fig, .9, 8 + e[7] * 1.6, tAll);
+}
+function figRoll() {
+  if (!online()) return spawnFig();
+  if (!MP.host || tAll - FIG.seen < 2) return;
+  const ids = ['host', ...MP.others.keys()], who = ids[Math.floor(rnd() * ids.length)];
+  if (who === 'host') spawnFig(); else netSend({ t: 'fig', ev: 'spawn', to: who });
+}
+window.__kg.net = { online, mine, claim, netGot, netSend, sendSnap, objOf, FIG, packCut, unpackCut };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
 </body>
