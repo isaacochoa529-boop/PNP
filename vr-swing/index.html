@@ -2751,7 +2751,7 @@ function glassPaw(h, hit, p, speed) {
   h.glT = tAll; h.glP = pane;
   toPane(pane, _g4.copy(p).sub(ARENA), _g1);
   const vW = V().copy(hit.n).multiplyScalar(-speed);
-  const r = glassHit(pane, _g1.x, _g1.y, speed, vW, { Rk: 2.5 });   // punched holes are big
+  const r = glassHit(pane, _g1.x, _g1.y, speed, vW, { Rk: pane.T <= .0011 ? 2.5 : 1 });   // ultra-thin glass: punched holes are BIG
   buzz(h, r === 'break' ? 1 : r === 'crack' ? .7 : .25, r === 'break' ? 60 : 20);
   if (r === 'break') { h.glSkip = pane; h.glSkipT = tAll + .3; return true; }
   return false;
@@ -3143,8 +3143,9 @@ function labSet(k, fromNet) {
   {
     GL.voidU = { uTime: { value: 0 } };
     const vm = new THREE.ShaderMaterial({ uniforms: GL.voidU, side: THREE.DoubleSide, fog: false,
-      vertexShader: 'void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-      fragmentShader: `uniform float uTime;
+      vertexShader: `varying vec3 vL, vC;
+        void main(){ vL = position; vC = (inverse(modelMatrix) * vec4(cameraPosition, 1.)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `uniform float uTime; varying vec3 vL, vC;
         float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         vec3 layer(vec2 uv, float sc, float ang, float spd, vec3 col){
           float c = cos(ang), s = sin(ang); uv = mat2(c, -s, s, c) * uv * sc; uv.y += uTime * spd;
@@ -3154,13 +3155,16 @@ function labSet(k, fromNet) {
           return col * star * (.6 + .4 * sin(uTime * 2. + r * 40.));
         }
         void main(){
-          vec2 uv = gl_FragCoord.xy / 260.;   // screen-space: the pattern never grows or shrinks
+          // star layers sit at fixed depths BEHIND the glass, like a deep box: both eyes see the same real 3D stars
+          vec3 d = normalize(vL - vC); vec2 dd = d.xy / max(abs(d.z), .2);
+          #define L(D) (vL.xy + dd * D)
+          vec2 uv = L(1.2);
           vec3 c = vec3(.012, .02, .035) + vec3(.02, .07, .08) * (sin(uv.x * 1.3 + uTime * .1) * sin(uv.y * 1.7 - uTime * .07) + 1.) * .5;
-          c += layer(uv, 1.0, .0, .04, vec3(.3, .95, .85));
-          c += layer(uv, 1.6, .9, .06, vec3(.45, .3, 1.));
-          c += layer(uv, 2.3, 2.1, .09, vec3(.2, 1., .55));
-          c += layer(uv, 3.4, 3.7, .12, vec3(.9, .95, 1.));
-          c += layer(uv, 5.0, 5.1, .16, vec3(.35, .8, 1.)) * .7;
+          c += layer(L(.35), 3.0, .0, .04, vec3(.3, .95, .85));
+          c += layer(L(.7), 4.0, .9, .06, vec3(.45, .3, 1.));
+          c += layer(L(1.1), 5.5, 2.1, .09, vec3(.2, 1., .55));
+          c += layer(L(1.7), 7.5, 3.7, .12, vec3(.9, .95, 1.));
+          c += layer(L(2.6), 10., 5.1, .16, vec3(.35, .8, 1.)) * .7;
           gl_FragColor = vec4(c, 1.);
         }` });
     const vg = new THREE.PlaneGeometry(W - .004, H - .004); vg.translate(0, H / 2, 0);
@@ -3259,8 +3263,8 @@ function glassBlade(dt) {
     if (pane.trace) {   // scoring: follow the blade
       if (!cur) { traceEnd(pane); pane.bTouch = touch; continue; }
       const T = pane.trace, last = T.pts[T.pts.length - 1];
-      T.tw = (T.tw || 0) + bladeTwist();
-      if (!desk && T.len < .06 && T.tw > .3) { stabStart(pane, T.pts[0], tf); pane.bTouch = true; continue; }   // you turned it instead of dragging: that's a stab
+      T.tw = (T.tw || 0) + swordTurn(); T.mv = (T.mv || 0) + sword.g.position.distanceTo(sword.ppos);
+      if (!desk && T.tw > .3 && T.tw > T.mv * 5) { stabStart(pane, T.pts[0], tf); pane.bTouch = true; continue; }   // you turned it instead of dragging: that's a stab
       if (Math.hypot(cur[0] - last[0], cur[1] - last[1]) > .012) {
         T.pts.push(cur); T.len += Math.hypot(cur[0] - last[0], cur[1] - last[1]);
         pane.crk.push(last[0], last[1], cur[0], cur[1]); T.segs++; pane.shown = pane.crk.length / 4; crackGeo(pane);
@@ -3279,17 +3283,22 @@ function bladeTwist() {   // how far the sword turned about its own blade since 
   _gq.copy(sword.pq).invert().multiply(sword.g.quaternion); let w = _gq.w, y = _gq.y; if (w < 0) { w = -w; y = -y; }
   return Math.abs(2 * Math.atan2(y, w));
 }
+function swordTurn() {   // how far the sword turned (any way: twist, wiggle, drill) since last frame
+  if (sword.mode !== 'held') return 0;
+  _gq.copy(sword.pq).invert().multiply(sword.g.quaternion); return 2 * Math.acos(clamp(Math.abs(_gq.w), 0, 1));
+}
 function stabStart(pane, p, tf) {
   traceEnd(pane, true);
   if (pane.galaxy || pane.T >= .07) { glassHit(pane, p[0], p[1], .5, V()); if (ac) tone('square', 300, 200, .08, .06); if (!GL.toldFox) { GL.toldFox = true; toast(pane.galaxy ? '🌌 The blade just... slides off.' : '🦊 FOX-PROOF! Way too tough to stab. Only patience will do it...', 4); } return; }
-  pane.stab = { x: p[0], y: p[1], tw: 0, need: 1.0 * Math.max(.7, Math.pow(tf, .25)), cT: 0, hT: 0, nT: 0 };
+  pane.stab = { x: p[0], y: p[1], tw: 0, need: .9 * Math.max(.7, Math.pow(tf, .2)), cT: 0, hT: 0, nT: 0, out: 0 };
   sfxCrack(.5); sfxScratch(); if (sword.held) buzz(sword.held, .8, 40);
   if (!GL.toldStab) { GL.toldStab = true; toast('🗡️ STABBED! Now twist the sword round and round 🌀💨', 4.5); }
 }
 function stabStep(pane, cur, tf) {
   const S = pane.stab;
-  if (!cur || Math.hypot(cur[0] - S.x, cur[1] - S.y) > .1) { pane.stab = null; sfxScratch(); return; }   // pulled out early
-  const d = bladeTwist(), k = clamp((S.tw += d) / S.need, 0, 1);
+  if (!cur || Math.hypot(cur[0] - S.x, cur[1] - S.y) > .4) { if ((S.out += AR.dt || 1 / 72) > .18) { pane.stab = null; sfxScratch(); } return; }   // pulled out (a little wobble is fine)
+  S.out = 0;
+  const d = swordTurn(), k = clamp((S.tw += d) / S.need, 0, 1);
   const wp = pane.pos.clone().add(_g2.set(S.x, S.y, 0).applyQuaternion(pane.q));
   if (d > .012) {
     steamBurst(wp, pane.n, 1 + Math.round(k * 4), .35 + k);
