@@ -916,6 +916,7 @@ function dropProp(h) {
   else p.w.set(rnd() * 6 - 3, rnd() * 6 - 3, rnd() * 6 - 3);                     // pinecones and stars tumble
 }
 function deskGrab() {
+  if (pipDeskGrab()) return;
   const h = hands[1];
   if (h.holding) { const p = h.holding; dropProp(h); const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_hq)); p.vel.copy(f).multiplyScalar(9).add(V(0, 2, 0)); if (p.kind === 'ball') throwSpin(p); return; }
   headWorld(_h); const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_hq));
@@ -1337,7 +1338,7 @@ function animateWorld(dt, t) {
   pip.body.position.y = Math.abs(Math.sin(pip.hop * Math.PI * 2)) * .45 * pip.hop + Math.sin(t * 2.5) * .01;
   pip.body.scale.set(1 + Math.sin(t * 2.5) * .02, 1 - Math.sin(t * 2.5) * .02, 1);
   const pc = _p.copy(pip.g.position).add(V(0, .3, 0));
-  if (pip.hop <= 0 && hands.some(h => h.tracked && h.pos.distanceTo(pc) < .36)) { pip.hop = 1; sfxSqueak(); hearts(pc.clone().add(V(0, .4, 0))); }
+  if (pip.hop <= 0 && !pip.heldBy && hands.some(h => h.tracked && h.pos.distanceTo(pc) < .36)) { pip.hop = 1; sfxSqueak(); hearts(pc.clone().add(V(0, .4, 0))); }
   if (scene.userData.pond) scene.userData.pond.material.color.setHSL(.56, .7, .55 + Math.sin(t) * .03);
 }
 
@@ -1482,7 +1483,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt);
+  stepHorror(dt); stepExtras(dt);
 
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
@@ -1812,6 +1813,8 @@ const KINDS = [
   { out: 0xff4f6d, ins: 0xffd9df }, { out: 0xff9a3c, ins: 0xffe9c9 }, { out: 0x5fd94a, ins: 0xebffd9 },
   { out: 0x3fb2ff, ins: 0xdaf2ff }, { out: 0x9a6bff, ins: 0xf0e6ff }, { out: 0xffd84f, ins: 0xfff6c9, butter: true },
   { out: 0xff4fc3, ins: 0xffe2f5, size: MEGA }];
+// toys that come through the portal become sliceable too: 7 beach ball (bouncy rubber, even in pieces), 8 pinecone, 9 star
+KINDS.push({ out: 0xff4f6d, ins: 0xffb3c0, size: .28, rub: true }, { out: 0x7a4d2b, ins: 0xe2c08f, size: .2 }, { out: 0xffc93a, ins: 0xfff1b8, size: .22 });
 KINDS.forEach(k => { k.size = k.size || CUBE; });
 const VS = 11;   // vis soup stride: [px py pz nx ny nz ox oy oz cap hot] per vertex; phys soups are a sharp box, [px py pz]
 let CUT_T = -1e4;   // cap faces made by the cut happening right now remember this time, so they glow hot and cool down
@@ -1852,9 +1855,11 @@ pileMat.onBeforeCompile = sh => {
   sh.fragmentShader = sh.fragmentShader
     .replace('#include <common>', `#include <common>\nuniform vec3 uOut[${NK}]; uniform vec3 uIns[${NK}]; uniform float uHalf[${NK}]; uniform float uTime; varying vec4 vOrig; varying float vHot; varying float vKind;\n${NOISE}`)
     .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `int kk = int(vKind + .5); vec3 kOut = uOut[kk]; float kHalf = uHalf[kk];
-      vec4 diffuseColor = vec4( kOut, opacity ); vec3 kgHot = vec3(0.); float kgBump = 0., kgMelt = 0.;
+      vec4 diffuseColor = vec4( kOut, opacity ); vec3 kgHot = vec3(0.);
+      if (kk == 7 && vOrig.w < .5) diffuseColor.rgb = mod(floor(atan(vOrig.z, vOrig.x) / 1.5708 + 4.), 2.) < .5 ? kOut : vec3(1.);
+      float kgBump = 0., kgMelt = 0.;
       if (vOrig.w > .5) {
-        vec3 o = vOrig.xyz; float mx = max(abs(o.x), max(abs(o.y), abs(o.z)));
+        vec3 o = vOrig.xyz; float mx = kk >= 7 ? length(o) : max(abs(o.x), max(abs(o.y), abs(o.z)));
         float sw = sin(o.x * 61. + sin(o.y * 47. + o.z * 13.) * 2.4 + o.z * 39.) * .5 + .5;
         float rind = smoothstep(kHalf - .017, kHalf - .008, mx);
         diffuseColor.rgb = mix(uIns[kk] * (.92 + .12 * sw), kOut * .92, rind);
@@ -2000,7 +2005,12 @@ function splitSoup(v, S, n, d, capIt = true) {
     if (poly.length >= 3 && capIt) {
       for (let side = 0; side < 2; side++) {
         const cn = side ? -1 : 1, o = outs[side];   // the negative half's cap faces +n, the positive half's faces -n
-        const cv = poly.map(p => { const r = p.slice(); if (S >= 6) { r[3] = nx * cn; r[4] = ny * cn; r[5] = nz * cn; } if (S >= 10) r[9] = 1; if (S >= 11) r[10] = CUT_T; return r; });
+        let qx = 0, qy = 0, qz = 0; for (const p of poly) { qx += p[0]; qy += p[1]; qz += p[2]; } qx /= poly.length; qy /= poly.length; qz /= poly.length;
+        const cv = poly.map(p => { const r = p.slice();
+          // a join between two slabs of one curvy cut: draw it too (if the slabs end up in different halves it is the outside!),
+          // but pulled in a hair from the edge so where it is hidden inside it never flickers through the surface
+          if (capIt === 'inner') { const dx = qx - r[0], dy = qy - r[1], dz = qz - r[2], L = Math.hypot(dx, dy, dz), k = L > 1e-9 ? Math.min(.5, .0005 / L) : 0; r[0] += dx * k; r[1] += dy * k; r[2] += dz * k; }
+          if (S >= 6) { r[3] = nx * cn; r[4] = ny * cn; r[5] = nz * cn; } if (S >= 10) r[9] = 1; if (S >= 11) r[10] = CUT_T; return r; });
         for (let i = 1; i + 1 < cv.length; i++) { pushA(o, cv[0]); if (cn > 0) { pushA(o, cv[i]); pushA(o, cv[i + 1]); } else { pushA(o, cv[i + 1]); pushA(o, cv[i]); } }
       }
     } else if (poly.length < 3) poly = null;
@@ -2024,6 +2034,10 @@ function hullInfo(phys) {
     _a1.set(phys[i + 3] - phys[i], phys[i + 4] - phys[i + 1], phys[i + 5] - phys[i + 2]); _a2.set(phys[i + 6] - phys[i], phys[i + 7] - phys[i + 1], phys[i + 8] - phys[i + 2]);
     _a3.crossVectors(_a1, _a2); const L = _a3.length(); if (L < 1e-9) continue; _a3.multiplyScalar(1 / L);
     const d = _a3.x * phys[i] + _a3.y * phys[i + 1] + _a3.z * phys[i + 2];
+    // a sliver triangle's normal can point anywhere: keep only planes the whole part really sits behind,
+    // or the blade test thinks the piece is somewhere it isn't and it can't be cut again
+    let ok = true; for (let j = 0; j < pts.length; j += 3) if (_a3.x * pts[j] + _a3.y * pts[j + 1] + _a3.z * pts[j + 2] - d > 2e-4) { ok = false; break; }
+    if (!ok) continue;
     if (!planes.some(p => p[0] * _a3.x + p[1] * _a3.y + p[2] * _a3.z > .9999 && Math.abs(p[3] - d) < 1e-4)) planes.push([_a3.x, _a3.y, _a3.z, d]);
   }
   return { hull: new Float32Array(pts), planes, rad };
@@ -2035,8 +2049,7 @@ function splitPart(p, n, d, polys, inner) {
   withHull(p); let lo = 1e9, hi = -1e9; const h = p.hull;
   for (let i = 0; i < h.length; i += 3) { const s = n.x * h[i] + n.y * h[i + 1] + n.z * h[i + 2] - d; if (s < lo) lo = s; if (s > hi) hi = s; }
   if (hi <= 2e-5) return [p, null]; if (lo >= -2e-5) return [null, p];
-  // a split between slabs stays inside the piece: physics still needs the face, but drawing it would only flicker along the seam
-  const ph = splitSoup(p.phys, 3, n, d), vh = splitSoup(p.vis, VS, n, d, !inner);
+  const ph = splitSoup(p.phys, 3, n, d), vh = splitSoup(p.vis, VS, n, d, inner ? 'inner' : true);
   if (polys && ph[2]) polys.push([ph[2], n]);
   return [ph[0].length ? { vis: vh[0], phys: ph[0] } : null, ph[1].length ? { vis: vh[1], phys: ph[1] } : null];
 }
@@ -2069,7 +2082,7 @@ function makePiece(kind, parts, vol, pos, quat, lv, av, pop) {
   const R = AR.R, body = AR.world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y, pos.z).setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w })
     .setLinvel(lv.x, lv.y, lv.z).setAngvel({ x: av.x, y: av.y, z: av.z }).setCcdEnabled(lv.length() > 3).setAngularDamping(.4).setLinearDamping(.05));
   let ok = 0, rad = 0, nh = 0;
-  for (const p of parts) { const cd = R.ColliderDesc.convexHull(p.hull); if (cd) { cd.setFriction(.5).setRestitution(.06).setDensity(700); AR.world.createCollider(cd, body); ok++; } rad = Math.max(rad, p.rad); nh += p.hull.length; }
+  for (const p of parts) { const cd = R.ColliderDesc.convexHull(p.hull); if (cd) { const rub = KINDS[kind].rub; cd.setFriction(rub ? .9 : .5).setRestitution(rub ? .82 : .06).setDensity(rub ? 450 : 700); if (rub) cd.setRestitutionCombineRule(R.CoefficientCombineRule.Max); AR.world.createCollider(cd, body); ok++; } rad = Math.max(rad, p.rad); nh += p.hull.length; }
   if (!ok) { AR.world.removeRigidBody(body); return null; }
   const hull = new Float32Array(nh); nh = 0; for (const p of parts) { hull.set(p.hull, nh); nh += p.hull.length; }
   const pc = { kind, parts, vol, body, hull, rad, cool: .06, trk: null, held: null, dying: 0, born: tAll, pop: pop ? 0 : 1, sc: pop ? .01 : 1, frz: 0, frzH: null, slot: -1 };
@@ -2142,6 +2155,7 @@ function bladeSlice(dt) {
         const k = pc.trk;
         k.lm.lerpVectors(_bl, _tl, k.f).sub(_a3.lerpVectors(_blp, _tlp, k.f));   // how the blade moved at the contact this sub-step
         const sp = k.lm.length() * subs / Math.max(dt, 1e-3); if (sp > k.spMax) k.spMax = sp;
+        if (sp < FAST) AR.inCut = 1;   // a slow cut sizzles while the blade is in
         // remember the path: where the blade goes in and out of the surface (the hot line) and its middle (for curvy cuts)
         const last = k.path[k.path.length - 1];
         if (!last || last.m.distanceToSquared(_pt) > 9e-6) k.path.push({ m: _pt.clone(), a: V().lerpVectors(_bl, _tl, hit[0]), b: V().lerpVectors(_bl, _tl, hit[1]), ax: V().subVectors(_tl, _bl).normalize() });
@@ -2216,14 +2230,14 @@ function cutPiece2(pc, cut) {
     for (let i = 0; i < h.length; i += 3) { const s = n.x * h[i] + n.y * h[i + 1] + n.z * h[i + 2]; if (s < lo) lo = s; if (s > hi) hi = s; }
     if (d - lo < MIN_THICK || hi - d < MIN_THICK) { pc.cool = .04; return false; }
   }
-  CUT_T = tAll;
+  CUT_T = cut.bite ? -1e4 : tAll;   // a bite is a bite, not a hot cut
   const [Ap, Bp, polys] = chainSplit(pc.parts, lines, bis), ch = [childOf(Ap), childOf(Bp)];
   CUT_T = -1e4;
   if (ch[0].vol < MIN_VOL || ch[1].vol < MIN_VOL) { pc.cool = .05; return false; }
   // the outline of the cut (minus the hidden joins between slabs): it glows round the rim of both halves
   const seg = [];
   const onBis = p => bis.some(([bn, bd]) => Math.abs(bn.x * p[0] + bn.y * p[1] + bn.z * p[2] - bd) < 2e-4);
-  for (const [poly, n] of polys) for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; if (onBis(a) && onBis(b)) continue; seg.push(a[0], a[1], a[2], b[0], b[1], b[2], n.x, n.y, n.z); }
+  if (!cut.bite) for (const [poly, n] of polys) for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; if (onBis(a) && onBis(b)) continue; seg.push(a[0], a[1], a[2], b[0], b[1], b[2], n.x, n.y, n.z); }
   const t = pc.body.translation(), r = pc.body.rotation(), lv = pc.body.linvel(), av = pc.body.angvel();
   const q = new THREE.Quaternion(r.x, r.y, r.z, r.w), T = V(t.x, t.y, t.z), LV = V(lv.x, lv.y, lv.z), AV = V(av.x, av.y, av.z);
   const held = pc.held, frzH = pc.frzH, kind = pc.kind;
@@ -2246,6 +2260,7 @@ function cutPiece2(pc, cut) {
     if (held && s === keep) keepHeld(held, child);
     else if (frozen) freezePiece(child, held || frzH, nW.clone().multiplyScalar(s ? 1 : -1));
   }
+  if (cut.bite) return made > 0;
   AR.cuts++; AR.heat = Math.min(1, AR.heat + .5); AR.lastSp = cut.sp;
   const cw = V().copy(cut.e).applyQuaternion(q).add(T);
   sparkBurst(cw, frozen ? 26 : 12, bs); sfxSlice(pc.vol); sfxSizzle(); if (frozen) sfxAnime(); if (sword.held) buzz(sword.held, .65, 28);
@@ -2566,11 +2581,13 @@ function grabAny(h) {
     if (swordNear(h)) { takeSword(h); return; }
     const pc = pieceNear(h); if (pc) { holdPiece(h, pc); return; }
   }
+  if (pipGrab(h)) return;
   grabProp(h);
 }
 function dropAny(h) {
   if (h.sword) { releaseSword(h); return; }
   if (h.piece) { releasePiece(h); return; }
+  if (pip.heldBy === h) { pipDrop(h); return; }
   dropProp(h);
 }
 
@@ -2640,6 +2657,7 @@ function checkButtons(dt) {
 
 /* ======================= portals: walk through to travel ======================= */
 function travel(toArena) {
+  if (toArena) hands.forEach(h => { if (h.holding) { const p = h.holding; dropProp(h); toyToYard(p, true); } });
   headWorld(_a1);
   if (!toArena) { hands.forEach(h => { if (h.sword) { swordToStone(); } if (h.piece) releasePiece(h); }); }
   const dest = toArena ? V().copy(ARENA).add(AR_SPAWN) : V().copy(GROVE_PORTAL).add(V(-GROVE_PORTAL.x, 0, -GROVE_PORTAL.z).normalize().multiplyScalar(1.6));
@@ -3175,6 +3193,205 @@ function stepHorror(dt) {
 }
 window.__kg.horror = { HZ, setHorror, spawnFig, hitFig, startCrash, SWITCH_AT, fig, peek, flashWords, mirNight };
 try { renderer.compile(arena, camera, scene); } catch (e) {}
+/* ======================================================================
+   PLAYTEST EXTRAS: a sizzle while you carve slowly, bites, toys that go through the portal
+   (and turn sliceable, the ball stays rubbery), and Pip: hold it, hear it talk, watch it get scared.
+   ====================================================================== */
+const TOY_KIND = { ball: 7, cone: 8, star: 9 }, TOY_TPL = {};
+function soupOf(geo, S) { const g = geo.index ? geo.toNonIndexed() : geo; g.computeVertexNormals(); const p = g.attributes.position, n = g.attributes.normal, out = new Float32Array(p.count * S);
+  for (let i = 0; i < p.count; i++) out.set(S === 3 ? [p.getX(i), p.getY(i), p.getZ(i)] : [p.getX(i), p.getY(i), p.getZ(i), n.getX(i), n.getY(i), n.getZ(i), p.getX(i), p.getY(i), p.getZ(i), 0, -1e4], i * S); return out; }
+function toyTpl(kind) {
+  if (TOY_TPL[kind]) return TOY_TPL[kind];
+  const k = TOY_KIND[kind]; let vis, phys, vol;
+  if (kind === 'ball') { vis = new THREE.SphereGeometry(.14, 20, 14); phys = new THREE.IcosahedronGeometry(.14, 1); vol = 4 / 3 * Math.PI * .14 ** 3; }
+  else if (kind === 'cone') { vis = new THREE.ConeGeometry(.085, .2, 10); vis.rotateX(Math.PI); phys = vis.clone(); vol = Math.PI * .085 ** 2 * .2 / 3; }
+  else { vis = new THREE.OctahedronGeometry(.11, 0); phys = vis.clone(); vol = .11 ** 3 * 4 / 3; }
+  return (TOY_TPL[kind] = { k, vis: soupOf(vis, VS), phys: soupOf(phys, 3), vol });
+}
+// a toy that goes into the yard leaves the grove and comes out of the yard's portal as a piece you can slice
+function toyToYard(p, carried) {
+  if (!AR.ready) return false;
+  const t = toyTpl(p.kind), sp = Math.min(9, p.vel.length());
+  const pos = V().copy(AR_PORTAL).add(V(0, 1, -.7)), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rnd() * 3, rnd() * 3, rnd() * 3));
+  if (carried) { headWorld(_a1); pos.set(AR_SPAWN.x + .25, 1.2, AR_SPAWN.z - .7); }
+  const lv = carried ? V(0, .5, 0) : V(0, 1 + sp * .15, -Math.max(1.5, sp * .8));
+  const pc = makePiece(t.k, [{ vis: Float32Array.from(t.vis), phys: Float32Array.from(t.phys) }], t.vol, pos, q, lv, V(rnd() * 4 - 2, rnd() * 4 - 2, rnd() * 4 - 2), true);
+  if (!pc) return false;
+  // the grove gets its toy back a moment later
+  p.g.position.copy(p.home); p.vel.set(0, 0, 0); p.w.set(0, 0, 0); p.rest = false; p.g.scale.setScalar(.01); p.regrow = 1;
+  confetti(V().copy(pos).add(ARENA), 20, [0x3fe0bd, 0x8b6bff, 0xffffff]);
+  if (!carried) { sfxWhoosh(); if (state.area === 'grove') toast(`✨ Your ${p.kind === 'cone' ? 'pinecone' : p.kind} zoomed to the Slicing Yard!`, 3); }
+  else toast(`🎒 Your ${p.kind === 'cone' ? 'pinecone' : p.kind} came with you. Slice it!`, 3.5);
+  return true;
+}
+function stepToyPortal(dt) {
+  if (!AR.ready) return;
+  for (const p of props) {
+    if (p.regrow > 0) { p.regrow = Math.max(0, p.regrow - dt * 1.5); p.g.scale.setScalar(1 - p.regrow); }
+    if (p.held || p.vel.lengthSq() < .25) continue;
+    portalGrove.g.worldToLocal(_a2.copy(p.g.position));
+    if (Math.abs(_a2.z) < .3 && Math.hypot(_a2.x, _a2.y - 1) < .8) toyToYard(p, false);
+  }
+}
+
+/* ---------- a sizzle while a slow cut is going through ---------- */
+let SZ = null;
+function stepSizzleLoop(dt) {
+  const on = AR.inCut > 0; AR.inCut = Math.max(0, (AR.inCut || 0) - dt * 8);
+  if (!ac) return;
+  if (!SZ) {
+    if (!on) return;
+    const n = noiseLoop(), hp = ac.createBiquadFilter(), bp = ac.createBiquadFilter(), g = ac.createGain();
+    hp.type = 'highpass'; hp.frequency.value = 2600; bp.type = 'peaking'; bp.frequency.value = 5200; bp.gain.value = 8; g.gain.value = 0;
+    n.connect(hp); hp.connect(bp); bp.connect(g); g.connect(master); n.start(); SZ = { n, g, pop: 0 };
+  }
+  const t = ac.currentTime;
+  // a steady hiss with little crackles in it, like something hot on a pan
+  const target = on ? .07 + (rnd() < .25 ? rnd() * .12 : 0) : 0;
+  SZ.g.gain.setTargetAtTime(target, t, on ? .015 : .08);
+  if (on && (SZ.pop -= dt) < 0) { SZ.pop = .04 + rnd() * .1; sfxPlip(); if (sword.held && rnd() < .5) buzz(sword.held, .12, 12); }
+}
+
+/* ---------- bites ---------- */
+let biteCool = 0;
+function sfxChomp(big) { if (!ac) return; const t = ac.currentTime; for (let i = 0; i < (big ? 3 : 2); i++) { const n = noise(), f = ac.createBiquadFilter(), g = ac.createGain(), k = t + i * .14; f.type = 'lowpass'; f.frequency.value = 1400 + rnd() * 900; g.gain.setValueAtTime(.0001, k); g.gain.exponentialRampToValueAtTime(.45, k + .012); g.gain.exponentialRampToValueAtTime(.001, k + .1); n.connect(f); f.connect(g); g.connect(master); n.start(k); n.stop(k + .12); tone('sine', 220, 120, .08, .2, i * .14); }
+  if (big) tone('triangle', 520, 780, .18, .12, .4); }
+const BITE_R = .05, ONE_BITE = 3.4e-4;   // bite radius, and anything smaller than ~7 cm across goes down in one
+function mouthWorld(out) { headWorld(out); camera.getWorldQuaternion(_aq); return out.add(_a1.set(0, -.07, -.03).applyQuaternion(_aq)); }
+function eatWhole(pc) {
+  const t = pc.body.translation(), w = V(t.x, t.y, t.z).add(ARENA); removePiece(pc); crumbs(w, pc.kind, 10); sfxChomp(true);
+  if (!AR.toldEat) { AR.toldEat = true; toast('😋 Gulp! Down in one bite.', 2.5); }
+}
+function takeBite(pc) {
+  if (!pc || !pc.body || pc.dying) return;
+  biteCool = .55;
+  if (pc.vol < ONE_BITE) return eatWhole(pc);
+  // a round bite: a chain of cuts in a bowl shape, then the bit on the mouth side gets eaten
+  mouthWorld(_a4).sub(ARENA); const t = pc.body.translation(); _a5.set(t.x, t.y, t.z);
+  const f = V().subVectors(_a5, _a4).normalize();                      // from the mouth into the piece
+  camera.getWorldQuaternion(_aq); const up = V(0, 1, 0).applyQuaternion(_aq), side = V().crossVectors(f, up).normalize();
+  if (side.lengthSq() < .5) side.set(1, 0, 0);
+  const fl = toLocal(pc, _a1.copy(_a5).add(f), V()).sub(toLocal(pc, _a5, V())).normalize(), sl = toLocal(pc, _a1.copy(_a5).add(side), V()).sub(toLocal(pc, _a5, V())).normalize();
+  const ax = V().crossVectors(fl, sl).normalize(), ml = toLocal(pc, _a4, V());
+  let front = 1e9; const h = pc.hull; for (let i = 0; i < h.length; i += 3) front = Math.min(front, h[i] * fl.x + h[i + 1] * fl.y + h[i + 2] * fl.z);   // the near surface, along f
+  const base = V().copy(ml).addScaledVector(fl, front - ml.dot(fl));
+  const pts = [];
+  for (let i = 0; i <= 6; i++) { const u = (i / 6 * 2 - 1) * 1.7, dep = BITE_R * (1 - u * u) * .95; pts.push(V().copy(base).addScaledVector(sl, u * BITE_R).addScaledVector(fl, dep)); }
+  const lines = [], bis = [], dirs = [];
+  for (let j = 0; j + 1 < pts.length; j++) { const d = V().subVectors(pts[j + 1], pts[j]).normalize(); dirs.push(d); const n = V().crossVectors(ax, d).normalize(); lines.push([n, n.dot(pts[j])]); }
+  for (let j = 1; j + 1 < pts.length; j++) { const tt = V().addVectors(dirs[j - 1], dirs[j]).normalize(); bis.push([tt, tt.dot(pts[j])]); }
+  const before = new Set(AR.pieces), kind = pc.kind, holder = pc.held;
+  if (!cutPiece2(pc, { pc, lines, bis, nMain: lines[3][0], e: base, sp: 0, extreme: false, bite: true })) { if (pc.vol < ONE_BITE * 3) eatWhole(pc); return; }
+  const kids = AR.pieces.filter(c => !before.has(c)).sort((a, b) => a.vol - b.vol), bite = kids.length > 1 ? kids[0] : null, rest = kids[kids.length - 1];
+  if (bite) { const u = bite.body.translation(); crumbs(V(u.x, u.y, u.z).add(ARENA), kind, 6); removePiece(bite); }
+  if (holder && !holder.piece && rest && rest.body && !rest.held) holdPiece(holder, rest);   // you keep holding what's left
+  sfxChomp(false);
+  if (!AR.toldBite) { AR.toldBite = true; toast('😋 Nom! Little pieces go down in one bite.', 3); }
+}
+function stepBites(dt) {
+  biteCool = Math.max(0, biteCool - dt);
+  if (state.area !== 'arena' || !AR.ready || biteCool > 0) return;
+  mouthWorld(_a4).sub(ARENA);
+  for (const h of hands) {   // bring a piece you're holding up to your mouth
+    const pc = h.piece; if (!pc || !pc.body) continue;
+    const t = pc.body.translation();
+    if ((t.x - _a4.x) ** 2 + (t.y - _a4.y) ** 2 + (t.z - _a4.z) ** 2 > (pc.rad + .1) ** 2) continue;
+    toLocal(pc, _a4, _a5); if (outside(pc.parts, _a5) < .025) { takeBite(pc); return; }
+  }
+}
+addEventListener('keydown', e => {   // desktop: F bites what you're holding
+  if (e.code !== 'KeyF' || state.mode !== 'play' || state.xr || state.area !== 'arena' || biteCool > 0) return;
+  const h = hands.find(x => x.piece); if (h) takeBite(h.piece);
+});
+
+/* ---------- Pip: pick it up, it talks, it gets scared ---------- */
+pip.home = pip.g.position.clone(); pip.vel = V(); pip.heldBy = null; pip.talkT = 6; pip.scare = 0; pip.resting = true; pip.info = { nrm: V(), ground: false, bounce: null, col: null };
+const bubble = textPanel(512, 160, () => {});
+const bubbleS = new THREE.Sprite(new THREE.SpriteMaterial({ map: bubble.t, depthTest: false, transparent: true })); bubbleS.scale.set(.75, .234, 1); bubbleS.renderOrder = 9; bubbleS.visible = false; scene.add(bubbleS);
+let bubbleT = 0;
+const PIP_SAY = {
+  idle: ['Hi friend! 👋', 'Boop me!', 'Found all the berries yet?', 'I like your paws!', 'Pick me up! Pleeease', 'The yard has cubes! 🧊', 'Wheee, nice jump!'],
+  held: ['Wheee! 🎈', 'Higher! Higher!', 'This is the best!', "Don't drop me! 😆", 'I can see my stump from here!'],
+  dark: ["I-it's so dark... 😨", 'Did you hear that?!', 'I want the sun back 😢', "Don't leave me!", 'Something is watching...', 'Hold my paw?'],
+  sword: ['EEK! The pointy thing!', 'Put that AWAY! 😱', 'Not the sword!!', 'Keep it away from me!'],
+  thrown: ['WAAAAH!', 'Again! Again!', 'Ooof!'],
+};
+function pipSay(kind) {
+  const L = PIP_SAY[kind], msg = L[Math.floor(rnd() * L.length)], g = bubble.g; g.clearRect(0, 0, 512, 160);
+  g.fillStyle = kind === 'dark' || kind === 'sword' ? '#2a1f3a' : '#ffffff'; g.beginPath(); g.roundRect(8, 8, 496, 118, 36); g.fill();
+  g.beginPath(); g.moveTo(230, 124); g.lineTo(256, 154); g.lineTo(282, 124); g.fill();
+  g.fillStyle = kind === 'dark' || kind === 'sword' ? '#ffd6f0' : '#5a2d0c'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  let fs = 44; do { g.font = `600 ${fs}px Fredoka, sans-serif`; fs -= 2; } while (g.measureText(msg).width > 470 && fs > 20); g.fillText(msg, 256, 68);
+  bubble.t.needsUpdate = true; bubbleS.visible = true; bubbleT = Math.max(2.2, msg.split(' ').length / 2.3 + 1.2);
+  if (ac) for (let i = 0; i < 3; i++) tone('sine', (kind === 'dark' || kind === 'sword' ? 700 : 900) + rnd() * 500, 600 + rnd() * 600, .07, .07, i * .09);   // chirpy critter talk
+}
+function pipCenter(out) { return out.copy(pip.g.position).add(_a3.set(0, .3, 0)); }
+function pipGrab(h) {
+  if (pip.heldBy || !h.tracked || pipCenter(_a1).distanceTo(h.pos) > .42) return false;
+  pip.heldBy = h; pip.vel.set(0, 0, 0); buzz(h, .5, 40); sfxSqueak(); pipSay('held'); return true;
+}
+function pipDrop(h) { if (pip.heldBy !== h) return; pip.heldBy = null; pip.vel.copy(h.vel || V()).multiplyScalar(1.1); if (pip.vel.length() > 10) pip.vel.setLength(10); pip.flying = pip.vel.length() > 2.5; }
+function pipDeskGrab() {
+  const h = hands[1];
+  if (pip.heldBy) { const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_aq)); pip.heldBy = null; pip.vel.copy(f).multiplyScalar(4).add(V(0, 2, 0)); pip.flying = true; return true; }
+  if (h.holding || h.piece || h.sword) return false;
+  const hit = aimAt(2.6, f => f(pip, pipCenter(V()), .32)); if (!hit) return false;
+  pip.heldBy = h; sfxSqueak(); pipSay('held'); return true;
+}
+const _pw = V();
+function stepPip(dt) {
+  const g = pip.g.position, inYard = g.x > 200, floorY = inYard ? ARENA.y : -1e9;
+  if (pip.heldBy) {
+    const h = pip.heldBy;
+    if ((state.xr || sim.on) && h.tracked) g.copy(h.pos).add(_a1.set(0, -.3, 0));
+    else { h.paw.updateMatrixWorld(); h.paw.localToWorld(g.set(0, -.25, -.45)); }
+    pip.body.rotation.z = Math.sin(tAll * 9) * .15;
+  } else {
+    // falls, bounces off whatever it hits, and settles wherever it lands
+    pip.body.rotation.z *= Math.exp(-dt * 6);
+    if (!pip.resting) {
+      pip.vel.y -= 9.8 * dt; g.addScaledVector(pip.vel, dt);
+      pipCenter(_pw); const before = _a1.copy(_pw); pip.info.nrm.set(0, 0, 0); pip.info.ground = false;
+      if (!inYard && pushOut(_pw, .3, pip.info)) { g.add(_a2.subVectors(_pw, before)); const n = pip.info.nrm.normalize(), vn = pip.vel.dot(n); if (vn < 0) pip.vel.addScaledVector(n, -vn * (pip.flying ? 1.5 : 1)); }
+      if (g.y < floorY) { g.y = floorY; if (pip.vel.y < 0) pip.vel.y *= -.4; pip.info.ground = true; }
+      if (pip.info.ground) { pip.vel.x *= Math.exp(-dt * 8); pip.vel.z *= Math.exp(-dt * 8); if (pip.flying && pip.vel.length() < 2) { pip.flying = false; pipSay('thrown'); } if (pip.vel.lengthSq() < .01) { pip.resting = true; pip.vel.set(0, 0, 0); } }
+    }
+    if (g.y < -10 || (!inYard && Math.hypot(g.x, g.z) > 45)) { g.copy(pip.home); pip.vel.set(0, 0, 0); pip.resting = true; }
+    if (inYard && state.area === 'grove' && (pip.away = (pip.away || 0) + dt) > 12) { g.copy(pip.home); pip.resting = true; pip.away = 0; }
+  }
+  if (pip.heldBy || pip.vel.lengthSq() > .01) pip.resting = false;
+  // into the grove's portal? off to the yard (and back through the yard's portal)
+  if (!pip.heldBy && pip.vel.lengthSq() > .3) {
+    const P = inYard ? portalYard : portalGrove; P.g.worldToLocal(_a2.copy(g).add(_a3.set(0, .3, 0)));
+    if (Math.abs(_a2.z) < .3 && Math.hypot(_a2.x, _a2.y - 1) < .8) {
+      if (inYard) g.copy(GROVE_PORTAL).add(V(-GROVE_PORTAL.x, 0, -GROVE_PORTAL.z).normalize().multiplyScalar(1.4));
+      else g.copy(ARENA).add(AR_PORTAL).add(V(0, .4, -.9));
+      pip.vel.set(0, 1.5, inYard ? 0 : -2); sfxWhoosh(); pipSay('thrown');
+    }
+  }
+  // scared: in the dark, or with a sword near
+  let swordNear = false;
+  if (inYard && typeof sword !== 'undefined') { _a1.copy(sword.g.position).add(ARENA); swordNear = _a1.distanceTo(pipCenter(_a2)) < 1.7; }
+  const dark = HZ.on;
+  pip.scare = clamp(pip.scare + ((swordNear || dark) ? dt * 4 : -dt * 2), 0, 1);
+  const sc = pip.scare;
+  if (sc > .05) {
+    pip.body.position.x = Math.sin(tAll * 60) * .012 * sc * (swordNear ? 2 : 1);   // shivering
+    pip.eyes.forEach(e => { e.children[0].scale.setScalar(1 - .5 * sc); e.scale.setScalar(1 + .25 * sc); });   // eyes wide, pupils tiny
+    pip.arms.forEach((a, i) => { a.rotation.z = (i ? 1 : -1) * (2.6 * sc) + (i ? .2 : -.2) * (1 - sc); a.rotation.x = -.8 * sc; });   // paws up over its face
+  } else { pip.body.position.x = 0; pip.eyes.forEach(e => { e.children[0].scale.setScalar(1); e.scale.x = e.scale.z = 1; }); }
+  if (swordNear && !pip.heldBy && !pip.wasSword) { pipSay('sword'); pip.vel.set(0, 2.6, 0); _a1.subVectors(g, _a2.copy(sword.g.position).add(ARENA)); _a1.y = 0; if (_a1.lengthSq() > 1e-4) pip.vel.addScaledVector(_a1.normalize(), 2.2); pip.resting = false; }
+  pip.wasSword = swordNear;
+  // now and then it says something (only if you're near enough to hear)
+  headWorld(_a1); const near = _a1.distanceTo(g) < 7;
+  if ((pip.talkT -= dt) < 0) { pip.talkT = 11 + rnd() * 14; if (near && bubbleT <= 0) pipSay(swordNear ? 'sword' : dark ? 'dark' : pip.heldBy ? 'held' : 'idle'); }
+  if (bubbleT > 0) { bubbleT -= dt; bubbleS.position.copy(g).add(_a2.set(0, 1.05, 0)); if (bubbleT <= 0) bubbleS.visible = false; }
+}
+function stepExtras(dt) {
+  if (state.mode !== 'play') return;
+  stepSizzleLoop(dt); stepToyPortal(dt); stepBites(dt); stepPip(dt);
+}
+window.__kg.extras = { pip, pipGrab, pipDrop, pipSay, takeBite, toyToYard, toyTpl, stepSizzleLoop };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
 </body>
