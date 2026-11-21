@@ -89,8 +89,9 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
     <li><b>Jump:</b> shove down hard, then let go.</li>
     <li><b>Climb:</b> slap a wall or tree and pull down.</li>
     <li><b>Fit the ground to you:</b> stand up, let your arms hang, press A or X.</li>
+    <li><b>Grab stuff:</b> squeeze the grip button near a ball, pinecone or star, then throw it!</li>
     <li><b>Turn:</b> right stick. <b>Respawn:</b> B or Y button.</li>
-    <li><b>Desktop:</b> WASD, mouse, Space jump, Shift run, V see yourself, R respawn.</li>
+    <li><b>Desktop:</b> WASD, mouse, Space jump, Shift run, E grab/throw, V see yourself, R respawn.</li>
     <li>Grab all 12 glow berries 🫐 as fast as you can!</li>
   </ul>
   <div class="row">Ground height (A or X in VR fits it to you exactly):
@@ -284,7 +285,7 @@ const G = 9.8;              // gravity m/s^2
 const PAW_R = 0.075;        // paw contact radius (a bit generous so the ground is easy to catch)
 const MAX_LAUNCH = 8.5;     // cap on fling speed
 const LAUNCH_MUL = 1.15;    // a little extra oomph when you let go
-const RELEASE = 0.003;      // moving a stuck paw this far away from the surface in one frame lets go
+const RELEASE = 0.02;       // pull a stuck paw this far off the surface (in total) to let go
 const SPAWN = V(0, 0.55, 0);
 const SIZES = [{ name: 'Tiny', h: .5 }, { name: 'Small', h: .6 }, { name: 'Medium', h: .7 }, { name: 'Big', h: .82 }];   // eye height above the ground while resting
 const AVATAR_EYE = .85;   // the Thumpling model's own eye height; it keeps this size no matter where the ground is
@@ -871,6 +872,82 @@ const selfie = (() => {
   };
 })();
 
+/* ======================= grabbable toys: squeeze grip near one to pick it up, let go to throw ======================= */
+const props = [];
+function makeProp(kind, x, y, z) {
+  const g = new THREE.Group(); let r = .13;
+  if (kind === 'ball') {
+    const cols = [0xff4f6d, 0xffd25a, 0x3fe0bd, 0x8b6bff][props.length % 4];
+    for (let k = 0; k < 4; k++) { const seg = new THREE.Mesh(new THREE.SphereGeometry(.14, 16, 12, k * Math.PI / 2, Math.PI / 2), mat(k % 2 ? 0xffffff : cols, { flatShading: false, roughness: .5 })); g.add(seg); }
+    r = .14;
+  } else if (kind === 'cone') {
+    for (let k = 0; k < 5; k++) { const c = new THREE.Mesh(new THREE.ConeGeometry(.085 - k * .012, .07, 8), mat(k % 2 ? 0x8a5a2b : 0x6b4426)); c.position.y = -.07 + k * .04; c.rotation.y = k * .4; g.add(c); }
+    r = .09;
+  } else {   // star: a glowy spiky toy
+    const st = new THREE.Mesh(new THREE.OctahedronGeometry(.11, 0), mat(0xffd25a, { emissive: 0xffb020, emissiveIntensity: .6 })); g.add(st);
+    const st2 = st.clone(); st2.rotation.set(.6, .6, 0); g.add(st2); r = .11;
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  g.position.set(x, y, z); scene.add(g);
+  const p = { kind, g, r, vel: V(), held: null, rest: false, home: V(x, y, z), info: { nrm: V(), ground: false, bounce: null, col: null }, spin: V() };
+  props.push(p); return p;
+}
+[['ball', 1.2, .9, 1.3], ['ball', -1.4, .9, 1.1], ['ball', 6, 3.2, 6], ['ball', -11, 6, -6.5], ['cone', -.6, .9, 1.7], ['cone', 13.5, 5.2, -8.2],
+ ['star', .2, .9, -1.6], ['star', isl.x, isl.top + .4, isl.z - .5], ['cone', 0, 5.6, 18.4], ['ball', -9, .4, 9]].forEach(a => makeProp(...a));
+
+const PAW_HOLD = V(0, -.04, -.1);
+function grabProp(h) {
+  if (h.holding || !h.tracked) return;
+  let best = null, bd = .3;
+  for (const p of props) { const d = p.g.position.distanceTo(h.pos) - p.r; if (d < bd) { bd = d; best = p; } }
+  if (!best) return;
+  if (best.held) best.held.holding = null;
+  best.held = h; best.rest = false; h.holding = best; h.stuck = false;
+  buzz(h, .5, 30); if (ac) tone('sine', 500, 800, .08, .2);
+}
+function dropProp(h) {
+  const p = h.holding; if (!p) return;
+  h.holding = null; p.held = null; p.rest = false;
+  p.vel.copy(h.vel || V()).multiplyScalar(1.35); if (p.vel.length() > 16) p.vel.setLength(16);   // throw with your paw's speed
+  p.spin.set(rnd() * 8 - 4, rnd() * 8 - 4, rnd() * 8 - 4);
+}
+function deskGrab() {
+  const h = hands[1];
+  if (h.holding) { const p = h.holding; dropProp(h); const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_hq)); p.vel.copy(f).multiplyScalar(9).add(V(0, 2, 0)); return; }
+  headWorld(_h); const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_hq));
+  let best = null, bd = 3.5;
+  for (const p of props) { const to = p.g.position.clone().sub(_h), d = to.length(); if (d < bd && to.normalize().dot(f) > .6) { bd = d; best = p; } }
+  if (best) { if (best.held) best.held.holding = null; best.held = h; h.holding = best; best.rest = false; if (ac) tone('sine', 500, 800, .08, .2); }
+}
+const _pp = V();
+function stepProps(dt) {
+  for (const p of props) {
+    if (p.held) {
+      const h = p.held; h.paw.updateMatrixWorld(); h.paw.localToWorld(p.g.position.copy(PAW_HOLD)); p.g.quaternion.copy(h.paw.quaternion);
+      continue;
+    }
+    // free paws can bonk resting toys around
+    for (const h of hands) if (h.tracked && h.vel && !h.holding && h.pos.distanceTo(p.g.position) < p.r + PAW_R && h.vel.length() > .8) { p.vel.copy(h.vel).multiplyScalar(1.1); p.rest = false; p.spin.set(rnd() * 6, rnd() * 6, 0); }
+    if (p.rest) continue;
+    p.vel.y -= G * dt;
+    p.g.position.addScaledVector(p.vel, dt);
+    p.info.nrm.set(0, 0, 0); p.info.ground = false; _pp.copy(p.g.position);
+    if (pushOut(p.g.position, p.r, p.info)) {
+      const n = p.info.nrm.normalize(), vn = p.vel.dot(n);
+      if (vn < 0) {
+        if (vn < -2) sfxTap(p.info.col ? p.info.col.tag : 'grass', -vn / 8);
+        p.vel.addScaledVector(n, -(p.kind === 'ball' ? 1.6 : 1.3) * vn);     // balls are bouncier
+        p.vel.multiplyScalar(p.info.ground ? .9 : .97); p.spin.multiplyScalar(.8);
+      }
+      if (p.info.ground && p.vel.length() < .25) { p.rest = true; p.vel.set(0, 0, 0); }
+    }
+    p.g.rotation.x += p.spin.x * dt; p.g.rotation.y += p.spin.y * dt; p.g.rotation.z += p.spin.z * dt;
+    // bonk Pip!
+    if (pip.hop <= 0 && p.vel.length() > 2 && p.g.position.distanceTo(_pp.copy(pip.g.position).add(V(0, .3, 0))) < .45) { pip.hop = 1; sfxSqueak(); hearts(_pp.clone().add(V(0, .4, 0))); }
+    if (p.g.position.y < -10) { p.g.position.copy(p.home); p.vel.set(0, 0, 0); p.rest = false; }
+  }
+}
+
 /* ======================= audio (all synthesized) ======================= */
 let ac = null, master = null;
 function audioOn() {
@@ -925,6 +1002,7 @@ function launch() {
   if (!state.velBuf.length) return;
   const avg = V(); state.velBuf.forEach(v => avg.add(v)); avg.multiplyScalar(LAUNCH_MUL / state.velBuf.length);
   if (avg.length() > MAX_LAUNCH) avg.setLength(MAX_LAUNCH);
+  if (avg.length() < .6) avg.multiplyScalar(.3);     // a slow let-go is a gentle drop, not a fling
   state.vel.copy(avg); state.velBuf.length = 0;
 }
 
@@ -953,7 +1031,7 @@ function resolveBody(stuck) {
     const n = bodyInfo.nrm.normalize(), vn = state.vel.dot(n);
     if (vn < 0) state.vel.addScaledVector(n, -vn);
   }
-  if (bodyInfo.bounce && !stuck && state.vel.y < 1) bounceOff(bodyInfo.bounce, 1);
+  if (bodyInfo.bounce && state.vel.y < 1 && (!stuck || bodyInfo.nrm.y > .5)) bounceOff(bodyInfo.bounce, 1);
 }
 function bounceOff(c, k) {
   state.vel.y = Math.max(state.vel.y, c.bounce * k);
@@ -965,21 +1043,41 @@ function bounceOff(c, k) {
 /* ---------- reading paws from XR (or from the test simulator) ---------- */
 const PAW_OFF = V(0, -.01, -.06);
 const _q = new THREE.Quaternion(), _eul = new THREE.Euler();
-function readHands() {
+const _raw = V(), _rq = new THREE.Quaternion();
+// Read each paw once per frame. Shaky tracking (hands out of view, controllers seen only by their motion sensors)
+// is smoothed with a speed-aware filter: still paws stay steady, fast swings stay snappy. If tracking drops for a
+// moment the paw holds its last spot for up to 0.35 s instead of letting go.
+function sampleHands(dt) {
   for (const h of hands) {
-    h.tracked = false;
-    if (sim.on) { h.tracked = true; h.local.copy(sim.local[h.i]); h.q.identity(); }
+    let ok = false;
+    if (sim.on) { _raw.copy(sim.local[h.i]); _rq.identity(); ok = true; }
     else if (state.xr && h.src) {
       if (h.src.hand) {
         const j = h.xhand && h.xhand.joints && h.xhand.joints['middle-finger-metacarpal'];
-        if (j && j.visible) { h.tracked = true; h.local.copy(j.position); h.q.copy(j.quaternion); }
-      } else if (h.grip && h.grip.visible) {
-        h.tracked = true; h.q.copy(h.grip.quaternion); h.local.copy(PAW_OFF).applyQuaternion(h.q).add(h.grip.position);
-      }
+        if (j && j.visible) { _raw.copy(j.position); _rq.copy(j.quaternion); ok = true; }
+      } else if (h.grip && h.grip.visible) { _rq.copy(h.grip.quaternion); _raw.copy(PAW_OFF).applyQuaternion(_rq).add(h.grip.position); ok = true; }
+      else if (h.ctl && h.ctl.visible) { _rq.copy(h.ctl.quaternion); _raw.copy(PAW_OFF).applyQuaternion(_rq).add(h.ctl.position); ok = true; }
     }
-    if (h.tracked) rig.localToWorld(h.target.copy(h.local));
-    if (h.tracked && !h.ready) { h.prev.copy(h.target); h.pos.copy(h.target); h.ready = true; }
-    if (!h.tracked) { h.ready = false; h.stuck = false; }
+    if (ok) {
+      h.lost = 0;
+      if (!h.ready || sim.on) { h.local.copy(_raw); h.q.copy(_rq); }
+      else {
+        const speed = _raw.distanceTo(h.local) / Math.max(dt, 1e-3), cutoff = 5 + speed * 3;   // Hz
+        h.local.lerp(_raw, 1 - Math.exp(-2 * Math.PI * cutoff * dt)); h.q.slerp(_rq, 1 - Math.exp(-dt * 40));
+      }
+      h.tracked = true;
+    } else {
+      h.lost = (h.lost || 0) + dt;
+      h.tracked = h.ready && h.lost < .35;
+    }
+    if (!h.tracked) { h.ready = false; h.stuck = false; if (h.holding) dropProp(h); }
+  }
+}
+function readHands() {
+  for (const h of hands) {
+    if (!h.tracked) continue;
+    rig.localToWorld(h.target.copy(h.local));
+    if (!h.ready) { h.prev.copy(h.target); h.pos.copy(h.target); h.ready = true; }
   }
 }
 function buzz(h, v, ms) { const gp = h.src && h.src.gamepad; if (gp && gp.hapticActuators && gp.hapticActuators[0]) try { gp.hapticActuators[0].pulse(v, ms); } catch (e) {} }
@@ -987,14 +1085,16 @@ function buzz(h, v, ms) { const gp = h.src && h.src.gamepad; if (gp && gp.haptic
 /* ---------- the arm-swing step ---------- */
 const _d = V(), _mv = V(), _tmp = V();
 function stepArms(dt) {
-  rig.updateMatrixWorld(); readHands();
+  sampleHands(dt); rig.updateMatrixWorld(); readHands();
   // 1) paws that are stuck drag the body
   _mv.set(0, 0, 0); let ns = 0;
   for (const h of hands) {
     if (!h.stuck) continue;
-    _d.subVectors(h.target, h.sp);
-    if (_d.dot(h.n) > RELEASE || _d.length() > .7) { h.stuck = false; h.cool = .1; continue; }
-    _mv.add(_tmp.subVectors(h.sp, h.target)); ns++;
+    _d.subVectors(h.target, h.sp); const sep = _d.dot(h.n);
+    if (sep > RELEASE || _d.length() > .7 || h.holding) { h.stuck = false; h.cool = .12; continue; }
+    // pushing into or along the surface moves you; pulling away doesn't drag you back, it just counts toward letting go
+    if (sep > 0) _d.addScaledVector(h.n, -sep);
+    _mv.sub(_d); ns++;
   }
   if (ns) {
     _mv.multiplyScalar(1 / ns); if (_mv.length() > .35) _mv.setLength(.35);
@@ -1013,13 +1113,13 @@ function stepArms(dt) {
     if (!h.tracked) continue;
     h.cool -= dt;
     if (h.stuck) { h.pos.copy(h.sp); h.prev.copy(h.pos); continue; }
+    if (h.holding) { h.pos.copy(h.target); h.prev.copy(h.pos); continue; }   // a paw carrying something doesn't grab the world
     let hit = null;
     for (let k = 1; k <= 4 && !hit; k++) { _p.lerpVectors(h.prev, h.target, k / 4); hit = pawHit(_p); }
     if (hit) {
       _p.addScaledVector(hit.n, PAW_R - hit.d);
       const speed = h.prev.distanceTo(h.target) / dt;
-      if (hit.c.bounce && h.cool <= 0) { state.vel.copy(hit.n).multiplyScalar(hit.c.bounce * .85); bounceOff(hit.c, .85); h.pos.copy(_p); h.cool = .3; }
-      else if (h.cool <= 0) {
+      if (h.cool <= 0) {
         h.stuck = true; h.sp.copy(_p); h.n.copy(hit.n); h.col = hit.c; h.pos.copy(_p);
         if (!hands.some(o => o !== h && o.stuck)) state.velBuf.length = 0;
         if (speed > .3) { sfxTap(hit.c.tag, speed / 3); buzz(h, clamp(speed / 4, .15, 1), 25); }
@@ -1029,8 +1129,9 @@ function stepArms(dt) {
     } else h.pos.copy(h.target);
     h.prev.copy(h.pos);
   }
-  // 3) paw visuals
+  // 3) paw visuals + paw speed (for throwing)
   for (const h of hands) {
+    if (h.tracked) { if (!h.vel) { h.vel = V(); h.last = h.pos.clone(); } _tmp.subVectors(h.pos, h.last).multiplyScalar(1 / dt); h.vel.lerp(_tmp, .35); h.last.copy(h.pos); }
     h.paw.visible = h.tracked;
     if (!h.tracked) continue;
     h.paw.position.copy(h.pos); h.paw.quaternion.copy(rig.quaternion).multiply(h.q);
@@ -1171,6 +1272,7 @@ function animateWorld(dt, t) {
 addEventListener('keydown', e => {
   state.keys[e.code] = true;
   if (e.code === 'KeyR' && state.mode === 'play') respawn();
+  if (e.code === 'KeyE' && state.mode === 'play' && !state.xr) deskGrab();
   if (e.code === 'KeyV' && state.mode === 'play' && !state.xr) { state.third = !state.third; camera.layers[state.third ? 'enable' : 'disable'](SELF_LAYER); camera.layers[state.third ? 'disable' : 'enable'](FP_LAYER); }
   if (e.code === 'Escape' && state.mode === 'play' && !state.xr) openMenu();
   if (e.key && e.key.length === 1) { state.typed = (state.typed + e.key.toLowerCase()).slice(-4); if (state.typed === 'bonk' && state.mode === 'play') clapParty(); }
@@ -1202,7 +1304,7 @@ function startDesktop() {
   camera.position.set(0, state.bodyH, 0);
   if (state.done || (!state.running && state.got === 0)) { resetRun(); respawn(); }
   try { const r = canvas.requestPointerLock && canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
-  toast('🐾 WASD to run, Space to jump, V to see yourself. Find the glow berries!', 4);
+  toast('🐾 WASD to run, Space to jump, E to grab, V to see yourself!', 4);
 }
 $('btnDesk').onclick = startDesktop;
 function setSize(i) { state.size = (i + SIZES.length) % SIZES.length; state.bodyH = SIZES[state.size].h; $('btnSize').textContent = SIZES[state.size].name; store.set('kg-size2', state.size); if (!state.xr && state.mode === 'play') camera.position.y = state.bodyH; }
@@ -1215,7 +1317,9 @@ for (let i = 0; i < 2; i++) {
   const grip = renderer.xr.getControllerGrip(i); rig.add(grip);
   const ctl = renderer.xr.getController(i); rig.add(ctl);
   const xh = renderer.xr.getHand(i); rig.add(xh);
-  const h = hands[i]; h.grip = grip; h.xhand = xh;
+  const h = hands[i]; h.grip = grip; h.xhand = xh; h.ctl = ctl;
+  ctl.addEventListener('squeezestart', () => grabProp(h)); ctl.addEventListener('squeezeend', () => dropProp(h));
+  ctl.addEventListener('selectstart', () => { if (h.src && h.src.hand) grabProp(h); }); ctl.addEventListener('selectend', () => { if (h.src && h.src.hand) dropProp(h); });
   ctl.addEventListener('connected', e => { h.src = e.data; h.side = e.data.handedness === 'left' ? 'left' : 'right'; setSide(h); if (h.side === 'left') hands[i].paw.add(wrist.mesh); });
   ctl.addEventListener('disconnected', () => { h.src = null; h.stuck = false; h.paw.visible = false; });
 }
@@ -1289,6 +1393,7 @@ function update(dt) {
   if (state.mode === 'play') {
     if (state.xr || sim.on) { pollGamepads(); stepArms(dt); } else stepDesktop(dt);
     if (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45) respawn();
+    stepProps(dt);
     poseAvatar(dt);
     collectCheck();
     if (state.running) { state.time += dt; $('hudT').textContent = fmtTime(state.time); const s = Math.floor(state.time); if (state.xr && s !== lastWristSec) { lastWristSec = s; drawWrist(); } }
@@ -1305,7 +1410,7 @@ function update(dt) {
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
 window.__kg.start = () => { state.mode = 'play'; $('menu').hidden = true; resetRun(); respawn(); };
-window.__kg.respawn = respawn; window.__kg.pawHit = pawHit; window.__kg.tris = tris;
+window.__kg.respawn = respawn; window.__kg.props = props; window.__kg.grab = grabProp; window.__kg.drop = dropProp; window.__kg.pawHit = pawHit; window.__kg.tris = tris;
 updateHud();
 renderer.setAnimationLoop(() => { if (window.__kg.paused) return; update(Math.min(.05, clock.getDelta())); selfie.update(); renderer.render(scene, camera); });
 </script>
