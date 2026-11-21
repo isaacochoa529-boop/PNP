@@ -723,7 +723,9 @@ scene.add(AV.root); AV.root.visible = false;
 const avSc = () => state.bodyH / .85;                         // the model is built with its eyes 0.85 m up
 const SHOULDER = [V(-.235, .585, .02), V(.235, .585, .02)];   // torso space (model faces -Z)
 const L_UP = .3, L_FORE = .3;
-new GLTFLoader().load('models/thumpling.glb', gltf => {
+// the preview page ships the model as base64 (window.THUMPLING_B64); the real site loads the .glb file
+(window.THUMPLING_B64 ? (cb, _p, eb) => new GLTFLoader().parse(Uint8Array.from(atob(window.THUMPLING_B64), c => c.charCodeAt(0)).buffer, '', cb, eb)
+  : (cb, p, eb) => new GLTFLoader().load('models/thumpling.glb', cb, p, eb))(gltf => {
   const get = n => gltf.scene.getObjectByName(n);
   const furOf = o => { let m = null; o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') m = c.material; }); return m; };
   const prep = (o, layer) => { o.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; if (layer) c.layers.set(layer); } }); return o; };
