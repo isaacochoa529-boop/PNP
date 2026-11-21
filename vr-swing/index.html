@@ -1055,9 +1055,14 @@ function resetRun() {
 }
 
 /* ---------- velocity buffer for flings ---------- */
-function pushVel(v) { state.velBuf.push(v.clone()); if (state.velBuf.length > 6) state.velBuf.shift(); }
+function pushVel(v) { const c = v.clone(); c.t = tAll; state.velBuf.push(c); if (state.velBuf.length > 6) state.velBuf.shift(); }
 function launch() {
-  if (!state.velBuf.length) return;
+  // only the last moment of the shove counts: old pushes, and the tiny wobbles of a paw just resting there, never fling you
+  const buf = state.velBuf.filter(v => tAll - v.t < .12); state.velBuf.length = 0;
+  if (!buf.length) return;
+  const plain = V(); for (const v of buf) plain.add(v); plain.multiplyScalar(1 / buf.length);
+  if (plain.length() < .45) { state.vel.copy(plain).multiplyScalar(.3); if (state.vel.y > .1) state.vel.y = .1; return; }   // a let-go, not a jump
+  state.velBuf.push(...buf);
   // speed-weighted average: the quick part of your shove counts most, so even a light one-paw hop keeps its pop
   const avg = V(); let w = 0;
   for (const v of state.velBuf) { const sp = v.length(); avg.addScaledVector(v, sp); w += sp; }
