@@ -1912,6 +1912,7 @@ const KINDS = [
 // toys that come through the portal become sliceable too: 7 beach ball (bouncy rubber, even in pieces), 8 pinecone, 9 star
 KINDS.push({ out: 0xff4f6d, ins: 0xffb3c0, size: .28, rub: true }, { out: 0x7a4d2b, ins: 0xe2c08f, size: .2 }, { out: 0xffc93a, ins: 0xfff1b8, size: .22 },
   { out: 0xffc4e1, ins: 0xf6d59a, size: .22 });   // 10: cake (pink frosting, sprinkles, sponge + cream + jam inside)
+KINDS.push({ out: 0xcdefff, ins: 0x9fe8d0, size: .3, glass: true }, { out: 0xffffff, ins: 0xffffff, size: .3, glass: true, rainbow: true });   // 11 glass, 12 rainbow glass
 KINDS.forEach(k => { k.size = k.size || CUBE; });
 const VS = 11;   // vis soup stride: [px py pz nx ny nz ox oy oz cap hot] per vertex; phys soups are a sharp box, [px py pz]
 let CUT_T = -1e4;   // cap faces made by the cut happening right now remember this time, so they glow hot and cool down
@@ -1924,6 +1925,8 @@ mat4 kgSlot(float s) { int j = int(s + .5) * 4, sz = int(uMatSize); ivec2 c = iv
 const U_MAT = { value: null }, U_MATSZ = { value: 4 }, U_TIME = { value: 0 };
 const PILE_ATTR = [['position', 3], ['normal', 3], ['orig', 4], ['hot', 1], ['slot', 1], ['kind', 1]];
 const PILE = { cap: 0, used: 0, dead: 0, mesh: null, slots: 1, free: [], maxSlots: 0, data: null, adds: 0, repacks: 0 };   // slot 0 = a zero matrix for dead vertices
+const GPILE = { cap: 0, used: 0, dead: 0, mesh: null, repacks: 0 };   // glass pieces: same matrices, their own see-through mesh
+const pileOf = pc => KINDS[pc.kind].glass ? GPILE : PILE;
 function pileTexture(n) {
   const size = Math.max(4, Math.ceil(Math.sqrt(n * 4) / 4) * 4), data = new Float32Array(size * size * 4);
   if (PILE.data) data.set(PILE.data.subarray(0, Math.min(PILE.data.length, data.length)));   // texel i sits at float i * 4 whatever the width
@@ -2000,29 +2003,31 @@ function pileGeo(cap) {
   g.boundingSphere = new THREE.Sphere(V(), 80); g.setDrawRange(0, 0); return g;
 }
 // pack the live pieces to the front of a fresh buffer (and grow it if needed). Rare, so a full upload is fine.
-function pileRepack(cap) {
-  const old = PILE.mesh ? PILE.mesh.geometry : null, g = pileGeo(cap); let at = 0;
+function pileRepack(cap, pl = PILE) {
+  const old = pl.mesh ? pl.mesh.geometry : null, g = pileGeo(cap); let at = 0;
   for (const pc of AR.pieces) {
-    if (!(pc.slot > 0)) continue;
+    if (!(pc.slot > 0) || pileOf(pc) !== pl) continue;
     if (old) for (const [name, n] of PILE_ATTR) g.attributes[name].array.set(old.attributes[name].array.subarray(pc.start * n, (pc.start + pc.count) * n), at * n);
     pc.start = at; at += pc.count;
   }
-  PILE.used = at; PILE.dead = 0; PILE.cap = cap; PILE.repacks++; g.setDrawRange(0, at);
-  if (PILE.mesh) { PILE.mesh.geometry = g; old.dispose(); }
-  else { const m = PILE.mesh = new THREE.Mesh(g, pileMat); m.frustumCulled = false; m.castShadow = m.receiveShadow = true; m.customDepthMaterial = pileDepth; arena.add(m); }
+  pl.used = at; pl.dead = 0; pl.cap = cap; pl.repacks++; g.setDrawRange(0, at);
+  if (pl.mesh) { pl.mesh.geometry = g; old.dispose(); }
+  else if (pl === GPILE) { const m = pl.mesh = new THREE.Mesh(g, glassMat); m.frustumCulled = false; m.renderOrder = 1; arena.add(m); }
+  else { const m = pl.mesh = new THREE.Mesh(g, pileMat); m.frustumCulled = false; m.castShadow = m.receiveShadow = true; m.customDepthMaterial = pileDepth; arena.add(m); }
 }
 const pileCapFor = live => { let c = 65536; while (c < live * 1.6) c *= 2; return c; };
 pileRepack(65536);
 function pileTidy() {   // dead vertices still cost the GPU a little each frame: squeeze them out once there are lots
-  if (PILE.dead > 30000 && PILE.dead > (PILE.used - PILE.dead) * .6) pileRepack(pileCapFor(PILE.used - PILE.dead));
+  for (const pl of [PILE, GPILE]) if (pl.dead > 30000 && pl.dead > (pl.used - pl.dead) * .6) pileRepack(pileCapFor(pl.used - pl.dead), pl);
 }
 function pileAdd(pc) {
   let count = 0; for (const p of pc.parts) count += p.vis.length / VS;
-  if (PILE.used + count > PILE.cap) pileRepack(pileCapFor(PILE.used - PILE.dead + count));
+  const pl = pileOf(pc);
+  if (pl.used + count > pl.cap) pileRepack(pileCapFor(pl.used - pl.dead + count), pl);
   const slot = PILE.free.length ? PILE.free.pop() : PILE.slots++;
   if (slot >= PILE.maxSlots) pileTexture(PILE.maxSlots * 2);
-  pc.slot = slot; pc.start = PILE.used; pc.count = count;
-  const A = PILE.mesh.geometry.attributes, P = A.position.array, N = A.normal.array, O = A.orig.array, H = A.hot.array, S = A.slot.array, K = A.kind.array;
+  pc.slot = slot; pc.start = pl.used; pc.count = count;
+  const A = pl.mesh.geometry.attributes, P = A.position.array, N = A.normal.array, O = A.orig.array, H = A.hot.array, S = A.slot.array, K = A.kind.array;
   let at = pc.start;
   for (const p of pc.parts) {
     const v = p.vis;
@@ -2034,13 +2039,13 @@ function pileAdd(pc) {
     }
   }
   for (const [name, n] of PILE_ATTR) { const a = A[name]; a.addUpdateRange(pc.start * n, count * n); a.needsUpdate = true; }
-  PILE.used += count; PILE.adds++; PILE.mesh.geometry.setDrawRange(0, PILE.used);
+  pl.used += count; PILE.adds++; pl.mesh.geometry.setDrawRange(0, pl.used);
   pileMatrix(pc);
 }
 function pileRemove(pc) {
   if (!(pc.slot > 0)) return;
-  const a = PILE.mesh.geometry.attributes.slot; a.array.fill(0, pc.start, pc.start + pc.count); a.addUpdateRange(pc.start, pc.count); a.needsUpdate = true;
-  PILE.dead += pc.count; PILE.free.push(pc.slot); pc.slot = -1;
+  const pl = pileOf(pc), a = pl.mesh.geometry.attributes.slot; a.array.fill(0, pc.start, pc.start + pc.count); a.addUpdateRange(pc.start, pc.count); a.needsUpdate = true;
+  pl.dead += pc.count; PILE.free.push(pc.slot); pc.slot = -1;
 }
 const _m4 = new THREE.Matrix4(), _pmP = V(), _pmS = V(), _pmQ = new THREE.Quaternion();
 function pileMatrix(pc) {
@@ -2181,7 +2186,7 @@ function makePiece(kind, parts, vol, pos, quat, lv, av, pop) {
   const R = AR.R, body = AR.world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y, pos.z).setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w })
     .setLinvel(lv.x, lv.y, lv.z).setAngvel({ x: av.x, y: av.y, z: av.z }).setCcdEnabled(lv.length() > 3).setAngularDamping(.4).setLinearDamping(.05));
   let ok = 0, rad = 0, nh = 0;
-  for (const p of parts) { const cd = R.ColliderDesc.convexHull(p.hull); if (cd) { const rub = KINDS[kind].rub; cd.setFriction(rub ? .9 : .5).setRestitution(rub ? .82 : .06).setDensity(rub ? 450 : 700); if (rub) cd.setRestitutionCombineRule(R.CoefficientCombineRule.Max); AR.world.createCollider(cd, body); ok++; } rad = Math.max(rad, p.rad); nh += p.hull.length; }
+  for (const p of parts) { const cd = R.ColliderDesc.convexHull(p.hull); if (cd) { const rub = KINDS[kind].rub, gl = KINDS[kind].glass; cd.setFriction(rub ? .9 : gl ? .4 : .5).setRestitution(rub ? .82 : gl ? .12 : .06).setDensity(rub ? 450 : gl ? 2500 : 700); if (rub) cd.setRestitutionCombineRule(R.CoefficientCombineRule.Max); AR.world.createCollider(cd, body); ok++; } rad = Math.max(rad, p.rad); nh += p.hull.length; }
   if (!ok) { AR.world.removeRigidBody(body); return null; }
   const hull = new Float32Array(nh); nh = 0; for (const p of parts) { hull.set(p.hull, nh); nh += p.hull.length; }
   const pc = { kind, parts, vol, body, hull, rad, cool: .06, trk: null, held: null, dying: 0, born: tAll, pop: pop ? 0 : 1, sc: pop ? .01 : 1, frz: 0, frzH: null, slot: -1 };
@@ -2244,8 +2249,9 @@ function bladeSlice(dt) {
   const mnx = Math.min(b0.x, t0.x, b1.x, t1.x), mxx = Math.max(b0.x, t0.x, b1.x, t1.x), mny = Math.min(b0.y, t0.y, b1.y, t1.y), mxy = Math.max(b0.y, t0.y, b1.y, t1.y), mnz = Math.min(b0.z, t0.z, b1.z, t1.z), mxz = Math.max(b0.z, t0.z, b1.z, t1.z);
   const cuts = [];
   for (const pc of AR.pieces) {
-    if (pc.dying || !pc.body || pc.pop < 1) continue;
+    if (pc.dying || !pc.body || pc.pop < 1 || pc.pane) continue;
     if (pc.cool > 0) { pc.cool -= dt; continue; }
+    const glass = KINDS[pc.kind].glass;
     const c = pc.body.translation(), r = pc.rad;
     if (c.x < mnx - r || c.x > mxx + r || c.y < mny - r || c.y > mxy + r || c.z < mnz - r || c.z > mxz + r) { pc.trk = null; continue; }
     const travel = clamp(.3 * r, .003, .012), subs = clamp(Math.ceil(move / Math.max(.003, .3 * r)), 1, 24);
@@ -2256,6 +2262,14 @@ function bladeSlice(dt) {
       const hit = clipPiece(pc, _bl, _tl);
       if (hit) {
         const fm = (hit[0] + hit[1]) / 2; _pt.lerpVectors(_bl, _tl, fm);
+        if (glass) {   // glass won't carve slowly: a gentle blade tinks it (and nudges it), only a big swing slices it
+          _a1.subVectors(_pt, _a3.lerpVectors(_blp, _tlp, fm)); let sp = _a1.length() * subs / Math.max(dt, 1e-3);
+          if (!(state.xr || sim.on)) sp = AR.swing.fast && AR.swing.t < 1 ? 9 : Math.min(sp, 3.6);
+          if (sp >= GL_CARVE && _a1.lengthSq() > 1e-10) { cuts.push(planeCut(pc, _a2.subVectors(_tl, _bl).normalize(), _a1, _pt, sp)); pc.trk = null; break; }
+          if (!(tAll - (pc.glTk || -9) < .25)) { pc.glTk = tAll; sfxTink(TINK_NOTES[4 + Math.floor(Math.random() * 3)], clamp(.05 + sp * .04, .05, .18));
+            if (mine(pc) && !pc.held) { const bv = AR.bladeV; pc.body.wakeUp(); pc.body.setLinvel({ x: bv.x * .6, y: bv.y * .6 + .4, z: bv.z * .6 }, true); } }
+          break;
+        }
         if (!pc.trk) pc.trk = { e: _pt.clone(), ax: V().subVectors(_tl, _bl).normalize(), f: fm, lm: V(), path: [], spMax: 0 };
         const k = pc.trk;
         k.lm.lerpVectors(_bl, _tl, k.f).sub(_a3.lerpVectors(_blp, _tlp, k.f));   // how the blade moved at the contact this sub-step
@@ -2354,7 +2368,7 @@ function cutPiece2(pc, cut) {
   if (held) { toLocal(pc, _a1.copy(held.pos).sub(ARENA), _pl); keep = outside(ch[0].parts, _a2.subVectors(_pl, ch[0].c)) <= outside(ch[1].parts, _a3.subVectors(_pl, ch[1].c)) ? 0 : 1; }
   const frozen = cut.fz !== undefined ? cut.fz : cut.extreme && (held || frzH || LV.length() < 1.5);   // anime cut: it looks fine... for a second
   removePiece(pc);
-  const cake = cut.cake !== undefined ? cut.cake : !cut.bite && kind !== 10 && (AR.forceCake || rnd() < .005); AR.forceCake = false;   // 1 in 200: it was CAKE all along
+  const cake = cut.cake !== undefined ? cut.cake : !cut.bite && kind !== 10 && !KINDS[kind].glass && (AR.forceCake || rnd() < .005); AR.forceCake = false;   // 1 in 200: it was CAKE all along
   const nW = cut.nMain.clone().applyQuaternion(q); let made = 0;
   const bs = AR.bladeV.length(), carry = AR.bladeV.clone().multiplyScalar(.14); if (carry.length() > 1.4) carry.setLength(1.4);
   for (let s = 0; s < 2; s++) {
@@ -2364,7 +2378,7 @@ function cutPiece2(pc, cut) {
     AR.forceId = pc.id + (s ? 'b' : 'a'); const child = makePiece(cake ? 10 : kind, c.parts, c.vol, P, q, v, frozen ? V() : AV, false); AR.forceId = null;
     if (!child) continue;
     child.cool = .07; made++;
-    addSeam(child, seg, c.c, frozen ? FREEZE_T : 0);
+    if (!KINDS[kind].glass) addSeam(child, seg, c.c, frozen ? FREEZE_T : 0);
     if (held && s === keep) { keepHeld(held, child); if (cut.remote) claim(child, 'pc', child.id); }
     else if (frozen) freezePiece(child, held || frzH, nW.clone().multiplyScalar(s ? 1 : -1));
   }
@@ -2373,7 +2387,7 @@ function cutPiece2(pc, cut) {
   if (cake) itsCake(V().copy(cut.e).applyQuaternion(q).add(T));
   AR.cuts++; AR.heat = Math.min(1, AR.heat + .5); AR.lastSp = cut.sp;
   const cw = V().copy(cut.e).applyQuaternion(q).add(T);
-  sparkBurst(cw, frozen ? 26 : 12, bs); sfxSlice(pc.vol); sfxSizzle(); if (frozen) sfxAnime(); if (sword.held) buzz(sword.held, .65, 28);
+  if (KINDS[kind].glass) { glitBurst(cw.clone(), 18, AR.bladeV); sfxGlassCarve(); } else { sparkBurst(cw, frozen ? 26 : 12, bs); sfxSlice(pc.vol); sfxSizzle(); } if (frozen) sfxAnime(); if (sword.held) buzz(sword.held, .65, 28);
   if (kind === 6) megaSign();
   return made > 0;
 }
@@ -2571,6 +2585,506 @@ const sfxShing = () => { if (!ac) return; tone('triangle', 1800, 2600, .35, .12)
 const sfxPress = good => { if (!ac) return; tone('square', good ? 520 : 300, good ? 880 : 180, .12, .14); tone('sine', 140, 90, .08, .3); };
 const sfxWhoosh = () => { if (!ac) return; const t = ac.currentTime, n = noise(), f = ac.createBiquadFilter(), g = ac.createGain(); f.type = 'lowpass'; f.frequency.setValueAtTime(400, t); f.frequency.exponentialRampToValueAtTime(3000, t + .35); g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.001, t + .5); n.connect(f); f.connect(g); g.connect(master); n.start(t); n.stop(t + .5); tone('sine', 200, 900, .45, .2); };
 
+/* ======================= GLASS: tink it, crack it, smash it, carve it ======================= */
+// Each pane is a fixed piece made of convex slabs (one to start). A hit shatters only the bit round it:
+// a Voronoi pattern of seeds packed round the hit turns into unique shards (real grabbable pieces), and
+// the ring of seeds round that becomes the radial cracks you see in what is left. Anything that ends up
+// cut off from the stand falls. A gentle tap just tinks, a firmer one cracks, cracks build up and give way.
+const GL_T = .012, GL_TINK = 1.3, GL_BREAK = 3.0, GL_CARVE = 4.2, GL_MAX = 120;
+const GL = { panes: [], epoch: 0, glit: null, tkT: 0, bodyP: null, bodyV: V(), told: false };
+const GLASS_DEFS = [   // x, z, yaw, width, height: a glass run on the left, a big target pane on the right
+  [-2.75, 3.55, Math.PI / 2, 1.0, 1.5], [-3.95, 3.55, Math.PI / 2, 1.0, 1.5], [-5.15, 3.55, Math.PI / 2, 1.0, 1.5], [3.35, 2.3, -.94, 1.4, 1.7]];
+const _gq = new THREE.Quaternion(), _g1 = V(), _g2 = V(), _g3 = V(), _g4 = V();
+const glassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .04, metalness: .1, envMap: ENV, envMapIntensity: 1.9, transparent: true, depthWrite: false });
+glassMat.onBeforeCompile = sh => {
+  Object.assign(sh.uniforms, { uMat: U_MAT, uMatSize: U_MATSZ, uTime: U_TIME });
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\n' + SLOT_GLSL + '\nattribute vec4 orig; attribute float kind; varying vec4 vOrig; varying float vKind;')
+    .replace('#include <beginnormal_vertex>', 'mat4 kgM = kgSlot(slot);\n#include <beginnormal_vertex>\nobjectNormal = mat3(kgM) * objectNormal;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = (kgM * vec4(transformed, 1.)).xyz; vOrig = orig; vKind = kind;');
+  // faint blue-white sheet with soft diagonal shine streaks, brighter at grazing angles; broken edges are thick sea-green
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform float uTime; varying vec4 vOrig; varying float vKind;')
+    .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `vec4 diffuseColor = vec4(.72, .9, 1., .2);
+      bool kgRb = vKind > 11.5;
+      if (kgRb) diffuseColor.rgb = .62 + .38 * cos(6.2832 * (vec3(0., .33, .67) + vOrig.x * 1.4 + vOrig.y * .9 + uTime * .15));
+      float kgB = abs(fract(vOrig.x * .55 + vOrig.y * .8 + .2) - .5), kgSt = vOrig.w > .5 ? 0. : smoothstep(.07, .0, kgB) * .7 + smoothstep(.018, .0, abs(kgB - .13)) * .5;
+      if (vOrig.w > .5) diffuseColor = vec4(kgRb ? diffuseColor.rgb : vec3(.42, .82, .7), .62);`)
+    .replace('#include <opaque_fragment>', `{ float kgFr = pow(1. - clamp(abs(dot(normalize(vViewPosition), normal)), 0., 1.), 3.);
+      outgoingLight += vec3(.9, .97, 1.) * kgSt * .22 + kgFr * .12; diffuseColor.a = clamp(diffuseColor.a + kgFr * .5 + kgSt * .1 + (kgRb ? .12 : 0.), 0., .92); }
+      #include <opaque_fragment>`);
+};
+glassMat.customProgramCacheKey = () => 'kgGlass';
+
+/* ---------- little 2D helpers (pane-local: x across, y up from the stand, z out of the face) ---------- */
+const pArea = P => { let a = 0; for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; };
+const pCen = P => { let x = 0, y = 0; for (const p of P) { x += p[0]; y += p[1]; } return [x / P.length, y / P.length]; };
+function clipHalf(P, ax, ay, c) {   // keep ax*x + ay*y <= c
+  const out = [];
+  for (let i = 0; i < P.length; i++) {
+    const p = P[i], q = P[(i + 1) % P.length], dp = ax * p[0] + ay * p[1] - c, dq = ax * q[0] + ay * q[1] - c;
+    if (dp <= 0) out.push(p);
+    if ((dp < 0 && dq > 0) || (dp > 0 && dq < 0)) { const t = dp / (dp - dq); out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); }
+  }
+  return out;
+}
+function cleanPoly(P) {
+  const o = [];
+  for (const p of P) { const q = o[o.length - 1]; if (!q || Math.hypot(p[0] - q[0], p[1] - q[1]) > 2e-5) o.push(p); }
+  while (o.length > 2 && Math.hypot(o[0][0] - o[o.length - 1][0], o[0][1] - o[o.length - 1][1]) <= 2e-5) o.pop();
+  return o.length >= 3 && pArea(o) > 2e-6 ? o : null;
+}
+function segD(px, py, ax, ay, bx, by) { const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy, t = L > 0 ? clamp(((px - ax) * dx + (py - ay) * dy) / L, 0, 1) : 0; return Math.hypot(px - ax - dx * t, py - ay - dy * t); }
+function inPoly(P, x, y) { for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; if ((q[0] - p[0]) * (y - p[1]) - (q[1] - p[1]) * (x - p[0]) < 0) return false; } return true; }
+function polyDist(P, x, y) { if (inPoly(P, x, y)) return 0; let d = 1e9; for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; d = Math.min(d, segD(x, y, p[0], p[1], q[0], q[1])); } return d; }
+const glassAt = (pane, x, y, m = 0) => pane.polys.some(P => polyDist(P, x, y) <= m);
+// a convex outline → a glass slab: faces show the sheet, sides show as edges
+function prismPart(poly) {
+  const h = GL_T / 2, n = poly.length, vis = [], phys = [];
+  const put = (x, y, z, nx, ny, nz, cap) => { vis.push(x, y, z, nx, ny, nz, x, y, z, cap, -1e4); phys.push(x, y, z); };
+  for (let i = 1; i + 1 < n; i++) {
+    const a = poly[0], b = poly[i], c = poly[i + 1];
+    put(a[0], a[1], h, 0, 0, 1, 0); put(b[0], b[1], h, 0, 0, 1, 0); put(c[0], c[1], h, 0, 0, 1, 0);
+    put(a[0], a[1], -h, 0, 0, -1, 0); put(c[0], c[1], -h, 0, 0, -1, 0); put(b[0], b[1], -h, 0, 0, -1, 0);
+  }
+  for (let i = 0; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n]; let nx = b[1] - a[1], ny = a[0] - b[0]; const L = Math.hypot(nx, ny) || 1; nx /= L; ny /= L;
+    put(a[0], a[1], -h, nx, ny, 0, 1); put(b[0], b[1], -h, nx, ny, 0, 1); put(b[0], b[1], h, nx, ny, 0, 1);
+    put(a[0], a[1], -h, nx, ny, 0, 1); put(b[0], b[1], h, nx, ny, 0, 1); put(a[0], a[1], h, nx, ny, 0, 1);
+  }
+  return { vis: new Float32Array(vis), phys: new Float32Array(phys) };
+}
+
+/* ---------- the panes: a steel stand with a glass sheet in it ---------- */
+const GLASS_K = KINDS.findIndex(k => k.glass && !k.rainbow), RAINBOW_K = KINDS.findIndex(k => k.rainbow);
+const glassLineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .8, depthWrite: false });
+GLASS_DEFS.forEach(([x, z, yaw, W, H], i) => {
+  const pane = { i, id: 'gp' + i, W, H, pos: V(x, .05, z), q: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)), yaw, kind: GLASS_K,
+    polys: [], pc: null, gen: 0, crk: [], shown: 0, dmg: [], seq: [], hitT: -9, tinkT: -9, carveT: -9, side: 0, bTouch: false };
+  pane.qi = pane.q.clone().invert(); pane.n = V(0, 0, 1).applyQuaternion(pane.q);
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = yaw; arena.add(g);
+  const steel = smat(0x8a95a3, { metalness: .8, roughness: .3, envMap: ENV, envMapIntensity: 1 }), rubber = smat(0x23272d, { roughness: .9 });
+  part(new THREE.BoxGeometry(W + .08, .07, .1), steel, 0, .035, 0, g);
+  part(new THREE.BoxGeometry(W + .04, .012, .03), rubber, 0, .076, 0, g);
+  [-1, 1].forEach(s => { part(new THREE.BoxGeometry(.05, .02, .32), steel, s * (W / 2 + .01), .01, 0, g); part(new THREE.CylinderGeometry(.018, .018, .05, 10), rubber, s * (W / 2 + .01), .02, s * .13, g); });
+  mergeStatic(g);
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3000 * 6), 3).setUsage(THREE.DynamicDrawUsage)); geo.setDrawRange(0, 0);
+  pane.lines = new THREE.LineSegments(geo, glassLineMat); pane.lines.position.copy(pane.pos); pane.lines.quaternion.copy(pane.q); pane.lines.frustumCulled = false; pane.lines.renderOrder = 2; arena.add(pane.lines);
+  GL.panes.push(pane);
+});
+{ // a little sign at the start of the run
+  const sg = new THREE.Group(); sg.position.set(-2.05, 0, 2.75); sg.rotation.y = .5; arena.add(sg);
+  const tex = labelTex(512, 200, (g, w, h) => signText(g, w, h, [['🪟 GLASS RUN', 64, '#bfefff', 72], ['tap it · smash it · run through it', 30, '#ffffff', 144]], 'rgba(22,30,44,.92)', '#7fd8ff'));
+  const b = new THREE.Mesh(new THREE.PlaneGeometry(.62, .24), new THREE.MeshBasicMaterial({ map: tex, transparent: true })); b.position.set(0, 1.12, .02); sg.add(b);
+  part(new THREE.BoxGeometry(.66, .28, .03), smat(0x2b3446, { roughness: .5 }), 0, 1.12, 0, sg);
+  part(new THREE.CylinderGeometry(.018, .022, 1, 8), smat(0x8c96a4, { metalness: .6, roughness: .35 }), 0, .5, -.02, sg);
+  mergeStatic(sg);
+}
+pileRepack(16384, GPILE);
+function paneBuild(pane) {   // (re)make the pane's fixed piece from its outlines
+  if (pane.pc && pane.pc.body) removePiece(pane.pc);
+  pane.pc = null; if (!pane.polys.length) return;
+  const keepOwn = AR.makeOwn; AR.makeOwn = 'host'; AR.forceId = `${pane.id}.${GL.epoch}.${pane.gen}`;
+  const pc = makePiece(pane.kind, pane.polys.map(prismPart), 0, pane.pos, pane.q, V(), V(), false);
+  AR.forceId = null; AR.makeOwn = keepOwn;
+  if (!pc) return;
+  pc.body.setBodyType(AR.R.RigidBodyType.Fixed, true); pc.pane = pane; pane.pc = pc; pileMatrix(pc);
+}
+function glassReset() {   // fresh panes (the yard's RESET button, or a new room)
+  GL.epoch++;
+  for (const pane of GL.panes) { pane.polys = [[[-pane.W / 2, 0], [pane.W / 2, 0], [pane.W / 2, pane.H], [-pane.W / 2, pane.H]]]; pane.gen = 0; pane.kind = GLASS_K; pane.crk = []; pane.shown = 0; pane.dmg = []; pane.seq = []; crackGeo(pane); paneBuild(pane); }
+}
+const toPane = (pane, arenaP, out) => out.copy(arenaP).sub(pane.pos).applyQuaternion(pane.qi);
+
+/* ---------- cracks: thin bright lines that race out from the hit ---------- */
+function crackGeo(pane) {
+  const a = pane.lines.geometry.attributes.position, P = a.array, C = pane.crk, n = Math.min(C.length / 4, 3000);
+  for (let i = 0; i < n; i++) P.set([C[i * 4], C[i * 4 + 1], 0, C[i * 4 + 2], C[i * 4 + 3], 0], i * 6);
+  a.needsUpdate = true; pane.shown = Math.min(pane.shown, n); pane.lines.geometry.setDrawRange(0, Math.floor(pane.shown) * 2);
+}
+function addCracks(pane, segs) {
+  pane.crk.push(...segs);
+  if (pane.crk.length > 3000 * 4) { const cut = pane.crk.length - 3000 * 4; pane.crk.splice(0, cut); pane.shown = Math.max(0, pane.shown - cut / 4); }
+  crackGeo(pane);
+}
+function makeCracks(pane, hx, hy, s) {   // s 0..1: how hard
+  const out = [], W = pane.W / 2, H = pane.H, R = Math.random;
+  const grow = (x, y, a, L, depth) => {
+    let d = 0;
+    while (d < L) {
+      const st = .015 + R() * .02; a += (R() - .5) * .55;
+      const nx = x + Math.cos(a) * st, ny = y + Math.sin(a) * st;
+      if (nx < -W || nx > W || ny < 0 || ny > H) break;
+      out.push(x, y, nx, ny); x = nx; y = ny; d += st;
+      if (depth < 1 && R() < .1) grow(x, y, a + (R() < .5 ? -1 : 1) * (.5 + R() * .5), (L - d) * .55, depth + 1);
+    }
+  };
+  const n = 3 + Math.floor(s * 4 + R() * 2), a0 = R() * 6.28;
+  for (let k = 0; k < n; k++) grow(hx, hy, a0 + (k + (R() - .5) * .7) * 6.2832 / n, (.05 + .3 * s) * (.6 + .6 * R()), 0);
+  if (s > .4) {   // a little spider-web ring round the middle
+    const r0 = .02 + .035 * s, m = 9 + Math.floor(R() * 4);
+    for (let k = 0; k < m; k++) { if (R() < .3) continue; const a = a0 + k / m * 6.2832, b = a0 + (k + 1) / m * 6.2832, r1 = r0 * (.85 + R() * .3), r2 = r0 * (.85 + R() * .3);
+      out.push(hx + Math.cos(a) * r1, hy + Math.sin(a) * r1, hx + Math.cos(b) * r2, hy + Math.sin(b) * r2); }
+  }
+  // closest first, so they visibly race outward as they draw in
+  const idx = []; for (let i = 0; i < out.length; i += 4) idx.push(i);
+  idx.sort((i, j) => Math.hypot(out[i] - hx, out[i + 1] - hy) - Math.hypot(out[j] - hx, out[j + 1] - hy));
+  const sorted = []; for (const i of idx) sorted.push(out[i], out[i + 1], out[i + 2], out[i + 3]);
+  return sorted.map(v => Math.round(v * 1e4) / 1e4);
+}
+
+/* ---------- breaking ---------- */
+function glassSeeds(x, y, R, sy = 1) {
+  const R0 = Math.random, s = [x + (R0() - .5) * R * .15, y + (R0() - .5) * R * .15 * sy, 1];
+  const N = clamp(Math.round(5 + R * 40 * Math.sqrt(sy)), 5, 22), minD = R * .95 / Math.sqrt(N);
+  for (let t = 0; t < 500 && s.length / 3 < N; t++) {
+    const r = R * Math.pow(R0(), .7), a = R0() * 6.2832, px = x + Math.cos(a) * r, py = y + Math.sin(a) * r * sy, need = minD * (.45 + .8 * r / R);
+    let ok = true; for (let i = 0; i < s.length; i += 3) if (Math.hypot(s[i] - px, (s[i + 1] - py) / sy) < need) { ok = false; break; }
+    if (ok) s.push(px, py, 1);
+  }
+  const M = clamp(Math.round(6 + R * 12), 6, 11), a0 = R0() * 6.2832;   // the ring round the hole: its cells stay up, split by radial cracks
+  for (let k = 0; k < M; k++) { const a = a0 + (k + (R0() - .5) * .6) * 6.2832 / M, r = R * (1.45 + R0() * .4); s.push(x + Math.cos(a) * r, y + Math.sin(a) * r * sy, 0); }
+  return s.map(v => Math.round(v * 1e5) / 1e5);
+}
+function voronoi(P, seeds, i) {
+  let cell = P; const sx = seeds[i], sy = seeds[i + 1], s2 = sx * sx + sy * sy;
+  for (let j = 0; j < seeds.length && cell.length >= 3; j += 3) { if (j === i) continue; const tx = seeds[j], ty = seeds[j + 1]; cell = clipHalf(cell, tx - sx, ty - sy, (tx * tx + ty * ty - s2) / 2); }
+  return cell.length >= 3 ? cleanPoly(cell) : null;
+}
+function glassPiece(pane, poly, id, vW, avW) {   // a loose bit of glass (one outline or several joined ones)
+  const polys = Array.isArray(poly[0][0]) ? poly : [poly];
+  const c = childOf(polys.map(prismPart)); if (!c.parts.length || c.vol < 2e-7) return null;
+  for (const p of c.parts) { shiftSoup(p.phys, 3, c.c); shiftSoup(p.vis, VS, c.c); p.hull = null; }
+  const pos = c.c.clone().applyQuaternion(pane.q).add(pane.pos);
+  AR.forceId = id; const pc = makePiece(pane.kind, c.parts, c.vol, pos, pane.q.clone(), vW, avW, false); AR.forceId = null;
+  if (pc) pc.cool = .12;
+  return pc;
+}
+function touching(A, B) {   // do two outlines share a stretch of edge (not just a corner)?
+  const pts = [], on = (p, Q) => { for (let i = 0; i < Q.length; i++) { const q = Q[i], r = Q[(i + 1) % Q.length]; if (segD(p[0], p[1], q[0], q[1], r[0], r[1]) < 4e-5) return true; } return false; };
+  for (const p of A) if (on(p, B)) pts.push(p);
+  for (const p of B) if (on(p, A)) pts.push(p);
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) if (Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]) > 1e-3) return true;
+  return false;
+}
+// whatever no longer reaches the stand (through other glass) falls off as a loose chunk
+function paneSettle(pane, polys, vW, push, sep) {
+  const n = polys.length, box = polys.map(P => { let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const p of P) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); } return [x0, y0, x1, y1]; });
+  const adj = polys.map(() => []);
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    const a = box[i], b = box[j]; if (a[0] > b[2] + 1e-4 || b[0] > a[2] + 1e-4 || a[1] > b[3] + 1e-4 || b[1] > a[3] + 1e-4) continue;
+    if (sep) { const ci = pCen(polys[i]), cj = pCen(polys[j]); if ((sep[0] * ci[0] + sep[1] * ci[1] - sep[2]) * (sep[0] * cj[0] + sep[1] * cj[1] - sep[2]) < 0) continue; }   // a carve cuts right through: no holding on across it
+    if (touching(polys[i], polys[j])) { adj[i].push(j); adj[j].push(i); }
+  }
+  const grp = new Int32Array(n).fill(-1), q = [];
+  for (let i = 0; i < n; i++) if (box[i][1] < 1e-4) { grp[i] = 0; q.push(i); }
+  while (q.length) { const i = q.pop(); for (const j of adj[i]) if (grp[j] < 0) { grp[j] = 0; q.push(j); } }
+  let g = 0;
+  for (let i = 0; i < n; i++) if (grp[i] < 0) { g++; grp[i] = g; q.push(i); while (q.length) { const k = q.pop(); for (const j of adj[k]) if (grp[j] < 0) { grp[j] = g; q.push(j); } } }
+  pane.polys = polys.filter((_, i) => grp[i] === 0);
+  const loose = [];
+  for (let k = 1; k <= g; k++) loose.push(polys.filter((_, i) => grp[i] === k));
+  pane.gen++; paneBuild(pane);
+  // tidy the cracks: only where glass is still standing
+  const C = pane.crk, keep = [];
+  for (let i = 0; i < C.length; i += 4) { const mx = (C[i] + C[i + 2]) / 2, my = (C[i + 1] + C[i + 3]) / 2; if (pane.polys.some(P => polyDist(P, mx, my) < 1e-4)) keep.push(C[i], C[i + 1], C[i + 2], C[i + 3]); }
+  pane.crk = keep; pane.shown = Math.min(pane.shown, keep.length / 4); crackGeo(pane);
+  loose.forEach((ps, k) => { const v = V().copy(vW).multiplyScalar(.3).addScaledVector(pane.n, push * .25); glassPiece(pane, ps, `${pane.id}.${GL.epoch}.${pane.gen}c${k}`, v, V((Math.random() - .5) * .6, (Math.random() - .5) * .6, (Math.random() - .5) * .6)); });
+  return loose.length;
+}
+function paneShatter(pane, hx, hy, R, seeds, vW, sy = 1) {
+  const keep = [], shards = [], seamSegs = [], reach = R * Math.max(1, sy) * 2;
+  for (const P of pane.polys) {
+    if (polyDist(P, hx, hy) > reach) { keep.push(P); continue; }
+    for (let i = 0; i < seeds.length; i += 3) {
+      const cell = voronoi(P, seeds, i); if (!cell) continue;
+      if (seeds[i + 2]) shards.push(cell);
+      else {
+        keep.push(cell);
+        for (let e = 0; e < cell.length; e++) { const a = cell[e], b = cell[(e + 1) % cell.length], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;   // new edges inside the old glass = cracks
+          let inner = true; for (let k = 0; k < P.length; k++) { const p = P[k], q = P[(k + 1) % P.length]; if (segD(mx, my, p[0], p[1], q[0], q[1]) < 1e-4) { inner = false; break; } }
+          if (inner) seamSegs.push(a[0], a[1], b[0], b[1]); }
+      }
+    }
+  }
+  // long shards split along a radial line through the hit: glass breaks into pointy slivers
+  const bits = [];
+  for (const S of shards) {
+    const c = pCen(S), dx = c[0] - hx, dy = c[1] - hy, d = Math.hypot(dx, dy), A = Math.abs(pArea(S));
+    if (A > .0035 && d > 1e-3) {
+      const ang = Math.atan2(dy, dx) + hsh(c[0], c[1], 0, 7) * .5, nx = -Math.sin(ang), ny = Math.cos(ang), cc = nx * hx + ny * hy;
+      const a = cleanPoly(clipHalf(S, nx, ny, cc)), b = cleanPoly(clipHalf(S, -nx, -ny, -cc));
+      if (a && b) { bits.push(a, b); continue; }
+    }
+    bits.push(S);
+  }
+  const idx = []; for (let i = 0; i < seamSegs.length; i += 4) idx.push(i);
+  idx.sort((i, j) => Math.hypot(seamSegs[i] - hx, seamSegs[i + 1] - hy) - Math.hypot(seamSegs[j] - hx, seamSegs[j + 1] - hy));
+  const segs = []; for (const i of idx) segs.push(seamSegs[i], seamSegs[i + 1], seamSegs[i + 2], seamSegs[i + 3]);
+  const push = Math.sign(vW.dot(pane.n)) || 1;
+  pane.crk.push(...segs);
+  const loose = paneSettle(pane, keep, vW, push);
+  // the shards fly: carried along by whatever hit, spraying out from the middle
+  const sp = vW.length(); let made = 0, glit = 0;
+  bits.forEach((S, k) => {
+    const c = pCen(S), A = Math.abs(pArea(S)), w = _g1.set(c[0] - hx, c[1] - hy, 0), r = w.length(); if (r > 1e-4) w.multiplyScalar(1 / r);
+    const wp = pane.pos.clone().add(_g2.set(c[0], c[1], 0).applyQuaternion(pane.q));
+    if (A < 1.6e-4) { glit++; glitBurst(wp, 2, vW); return; }   // crumbs too small to hold: just glitter
+    w.applyQuaternion(pane.q);
+    const v = V().copy(vW).multiplyScalar(.25 + .45 * Math.random() * Math.max(0, 1 - r / (R * 2)))
+      .addScaledVector(w, (.25 + Math.random() * .9) * Math.min(1, .4 + sp * .12)).addScaledVector(pane.n, push * (.15 + Math.random() * .5)); v.y += Math.random() * .6;
+    if (glassPiece(pane, S, `${pane.id}.${GL.epoch}.${pane.gen}s${k}`, v, V((Math.random() - .5) * 14, (Math.random() - .5) * 14, (Math.random() - .5) * 14))) made++;
+  });
+  const hw = pane.pos.clone().add(_g2.set(hx, hy, 0).applyQuaternion(pane.q));
+  glitBurst(hw, 26 + Math.min(40, made * 2), vW);
+  sfxShatter(clamp(R / .35 + .3, .35, 1)); if (loose) sfxCrack(.8);
+  pane.dmg = pane.dmg.filter(d => Math.hypot(d[0] - hx, d[1] - hy) > R * 1.4);
+  glassCap();
+  return made;
+}
+function paneCarve(pane, nx, ny, d, vW) {   // the sword scores right across: the glass snaps along the line
+  const out = []; let hit = false;
+  for (const P of pane.polys) {
+    const a = cleanPoly(clipHalf(P, nx, ny, d)), b = cleanPoly(clipHalf(P, -nx, -ny, -d));
+    if (a && b) { hit = true; out.push(a, b); } else out.push(P);
+  }
+  if (!hit) return 0;
+  // a bright scratch along the cut
+  let x0 = 1e9, x1 = -1e9; const tx = -ny, ty = nx, ox = nx * d, oy = ny * d;
+  for (const P of pane.polys) for (const p of P) { const t = (p[0] - ox) * tx + (p[1] - oy) * ty; x0 = Math.min(x0, t); x1 = Math.max(x1, t); }
+  const segs = []; for (let t = x0; t < x1; t += .03) { const u = Math.min(x1, t + .03); segs.push(ox + tx * t, oy + ty * t, ox + tx * u, oy + ty * u); }
+  pane.crk.push(...segs);
+  const push = Math.sign(vW.dot(pane.n)) || 1;
+  const loose = paneSettle(pane, out, vW, push, [nx, ny, d]);
+  const mid = pane.pos.clone().add(_g2.set(ox + tx * (x0 + x1) / 2, oy + ty * (x0 + x1) / 2, 0).applyQuaternion(pane.q));
+  glitBurst(mid, 30, vW); sfxGlassCarve(); if (loose) sfxCrack(1);
+  glassCap();
+  return 1;
+}
+function glassCap() {   // keep it smooth: past GL_MAX loose bits, the oldest of yours quietly vanish
+  const mineG = AR.pieces.filter(p => KINDS[p.kind].glass && !p.pane && !p.dying && !p.held && mine(p));
+  if (mineG.length <= GL_MAX) return;
+  mineG.sort((a, b) => a.born - b.born); const gone = mineG.slice(0, mineG.length - GL_MAX);
+  gone.forEach(p => { p.dying = .3; }); sendKill(gone);
+}
+
+/* ---------- one hit on the glass: tink, crack or smash ---------- */
+const TINK_NOTES = [1568, 1760, 2093, 2349, 2637, 3136, 3520];
+function glassHit(pane, x, y, s, vW, opt = {}) {
+  if (!glassAt(pane, x, y, .01)) return 'miss';
+  x = clamp(x, -pane.W / 2, pane.W / 2); y = clamp(y, 0, pane.H);
+  if (s < GL_TINK && !opt.through) {
+    if (tAll - pane.tinkT < .09) return 'tink'; pane.tinkT = tAll;
+    const z = clamp(Math.floor(y / pane.H * 7), 0, 6); sfxTink(TINK_NOTES[z], clamp(.08 + s * .12, .08, .25));
+    glitBurst(pane.pos.clone().add(_g2.set(x, y, 0).applyQuaternion(pane.q)), 2, V());
+    // secret: tink five notes going up the pane, low to high
+    pane.seq = pane.seq.filter(e => tAll - e[1] < 3); pane.seq.push([z, tAll]);
+    if (pane.kind !== RAINBOW_K && pane.seq.length >= 5) { const t = pane.seq.slice(-5); if (t.every((e, i) => !i || e[0] > t[i - 1][0])) { pane.seq = []; paneRainbow(pane); netSend({ t: 'gl', op: 'rb', i: pane.i }); } }
+    return 'tink';
+  }
+  if (tAll - pane.hitT < .12 && !opt.through) return 'cool'; pane.hitT = tAll;
+  let near = 0; for (const d of pane.dmg) if (Math.hypot(d[0] - x, d[1] - y) < .14) near += d[2];
+  const k = clamp((s - GL_TINK) / (GL_BREAK - GL_TINK), 0, 1);
+  if (s >= GL_BREAK || near + k > 1.3 || opt.through) {
+    const R = opt.R || clamp(.07 + (s - GL_TINK) * .04 + (opt.size || 0), .07, .4), sy = opt.sy || 1;
+    const seeds = glassSeeds(x, y, R, sy);
+    paneShatter(pane, x, y, R, seeds, vW, sy);
+    netSend({ t: 'gl', op: 'brk', i: pane.i, x, y, R, sy, s: seeds, v: va(vW) });
+    if (!GL.told) { GL.told = true; toast('💥 SMASH! Grab the shards, they are real pieces. Tap gently to just tink.', 6); }
+    return 'break';
+  }
+  const segs = makeCracks(pane, x, y, k);
+  pane.dmg.push([x, y, .35 + k * .6]); addCracks(pane, segs); sfxCrack(.4 + k * .6);
+  glitBurst(pane.pos.clone().add(_g2.set(x, y, 0).applyQuaternion(pane.q)), 4, vW);
+  netSend({ t: 'gl', op: 'crk', i: pane.i, x, y, d: .35 + k * .6, c: segs });
+  return 'crack';
+}
+function paneRainbow(pane) {
+  pane.kind = RAINBOW_K; pane.gen++; paneBuild(pane);
+  const p = pane.pos.clone().add(V(0, pane.H / 2, 0)); confetti(V().copy(p).add(ARENA), 40, [0xff4f6d, 0xffd84f, 0x5fd94a, 0x3fb2ff, 0x9a6bff]);
+  if (ac) [1568, 1976, 2349, 3136, 3951].forEach((f, i) => tone('sine', f, f, .5, .12, i * .07));
+}
+function glassNet(d) {
+  const pane = GL.panes[d.i]; if (!pane || !AR.ready) return;
+  const keep = AR.makeOwn; AR.makeOwn = d.from;
+  quietIfAway(() => {
+    if (d.op === 'brk') paneShatter(pane, d.x, d.y, d.R, d.s, V(...d.v), d.sy || 1);
+    else if (d.op === 'crk') { addCracks(pane, d.c); pane.dmg.push([d.x, d.y, d.d]); sfxCrack(.6); }
+    else if (d.op === 'cut') paneCarve(pane, d.n[0], d.n[1], d.d, V(...d.v));
+    else if (d.op === 'rb') paneRainbow(pane);
+  });
+  AR.makeOwn = keep;
+}
+function glassSnap() { return { t: 'gls', ep: GL.epoch, panes: GL.panes.map(p => ({ k: p.kind, g: p.gen, polys: p.polys, c: p.crk, dm: p.dmg })) }; }
+function glassFromSnap(d) {
+  GL.epoch = d.ep;
+  d.panes.forEach((s, i) => { const p = GL.panes[i]; if (!p) return; p.kind = s.k; p.gen = s.g; p.polys = s.polys; p.crk = s.c || []; p.dmg = s.dm || []; p.shown = p.crk.length / 4; crackGeo(p); paneBuild(p); });
+}
+
+/* ---------- every frame: paws, bodies, thrown things and the sword against the glass ---------- */
+function stepGlassPre(dt) {
+  if (!GL.panes.some(p => p.pc)) return;
+  // you: run through a pane and it bursts round you
+  headWorld(_g3); _g3.sub(ARENA); _g3.y -= .45;
+  if (GL.bodyP && state.area === 'arena') {
+    GL.bodyV.subVectors(_g3, GL.bodyP).multiplyScalar(1 / Math.max(dt, 1e-3));
+    if (GL.bodyV.length() < 12) for (const pane of GL.panes) {
+      toPane(pane, GL.bodyP, _g1); toPane(pane, _g3, _g2);
+      if (_g1.z * _g2.z < 0 && Math.abs(_g2.x) < pane.W / 2 + .18 && _g2.y > -.4 && _g2.y < pane.H + .3) {
+        const t = _g1.z / (_g1.z - _g2.z), x = _g1.x + (_g2.x - _g1.x) * t, y = clamp(_g1.y + (_g2.y - _g1.y) * t, .35, pane.H - .25);
+        if (glassAt(pane, x, y, .25)) glassHit(pane, clamp(x, -pane.W / 2 + .02, pane.W / 2 - .02), y, 5, GL.bodyV.clone().add(V(0, .2, 0)), { through: true, R: .23, sy: 1.8 });
+      }
+    }
+  }
+  GL.bodyP = (GL.bodyP || V()).copy(_g3);
+  if (state.area !== 'arena') GL.bodyP = null;
+  // your paws: tap = tink, smack = crack or smash, and pushing right through breaks it too
+  if (state.area === 'arena' && (state.xr || sim.on)) for (const h of hands) {
+    if (!h.tracked || h.sword) continue;
+    h.glC = h.glC || [];
+    _g4.copy(h.pos).sub(ARENA);
+    for (const pane of GL.panes) {
+      toPane(pane, _g4, _g1); const reach = PAW_R * .8 + GL_T / 2;
+      const inside = Math.abs(_g1.x) < pane.W / 2 + .03 && _g1.y > -.02 && _g1.y < pane.H + .03;
+      if (inside && Math.abs(_g1.z) < reach) {
+        if (!h.glC[pane.i]) { h.glC[pane.i] = Math.sign(_g1.z) || 1; const sp = h.vel ? h.vel.length() : 0; const r = glassHit(pane, _g1.x, _g1.y, sp, h.vel ? h.vel.clone() : V()); if (r !== 'miss') buzz(h, r === 'break' ? 1 : r === 'crack' ? .7 : .25, r === 'break' ? 60 : 20); }
+      } else if (h.glC[pane.i]) {
+        if (inside && Math.sign(_g1.z) !== h.glC[pane.i] && Math.abs(_g1.z) >= reach && glassAt(pane, _g1.x, _g1.y, .02)) { glassHit(pane, _g1.x, _g1.y, 3.2, h.vel ? h.vel.clone() : V(), { through: true, R: .09 }); buzz(h, 1, 50); }
+        h.glC[pane.i] = 0;
+      }
+    }
+  }
+  // thrown (or swung) things: heavy and fast smashes, light and slow just tinks off
+  for (const pc of AR.pieces) {
+    if (pc.pane || !pc.body || pc.dying || !mine(pc) || pc.pop < 1) continue;
+    const v = pc.held && pc.held.vel ? pc.held.vel : pc.body.linvel(), sp = Math.hypot(v.x, v.y, v.z); if (sp < 1.2) continue;
+    const t = pc.body.translation(); _g4.set(t.x, t.y, t.z);
+    for (const pane of GL.panes) {
+      if (!pane.pc) continue;
+      toPane(pane, _g4, _g1); _g2.set(v.x, v.y, v.z).applyQuaternion(pane.qi);
+      if (Math.abs(_g1.x) > pane.W / 2 + pc.rad || _g1.y < -pc.rad || _g1.y > pane.H + pc.rad) continue;
+      if (_g1.z * _g2.z >= 0 || Math.abs(_g1.z) > pc.rad * .8 + GL_T / 2 + Math.abs(_g2.z) * dt * 1.5 + .01) continue;
+      if (pc.glT && tAll - pc.glT < .25) continue;
+      const tc = clamp(-_g1.z / _g2.z, 0, .2), x = _g1.x + _g2.x * tc, y = _g1.y + _g2.y * tc;
+      if (!glassAt(pane, x, y, pc.rad * .5)) continue;
+      pc.glT = tAll;
+      const m = pc.vol * (KINDS[pc.kind].glass ? 2500 : 700), I = Math.abs(_g2.z) * clamp(Math.pow(m / .8, .25), .45, 1.6) + (sp - Math.abs(_g2.z)) * .15;
+      const r = glassHit(pane, x, y, I, V(v.x, v.y, v.z), { size: pc.rad * .45 });
+      if (r === 'break' && !pc.held) pc.body.setLinvel({ x: v.x * .8, y: v.y * .8, z: v.z * .8 }, true);
+    }
+  }
+  // a thrown sword goes through glass too
+  if (sword.mode === 'free' && sword.body && mine(sword)) {
+    const v = sword.body.linvel(), sp = Math.hypot(v.x, v.y, v.z), t = sword.body.translation();
+    if (sp > 2.5) for (const pane of GL.panes) {
+      toPane(pane, _g4.set(t.x, t.y, t.z), _g1); _g2.set(v.x, v.y, v.z).applyQuaternion(pane.qi);
+      if (Math.abs(_g1.z) < .4 && _g1.z * _g2.z < 0 && Math.abs(_g1.z) < Math.abs(_g2.z) * dt * 2 + .05 && glassAt(pane, _g1.x, _g1.y, .05) && !(tAll - pane.hitT < .3))
+        glassHit(pane, _g1.x, _g1.y, Math.max(GL_BREAK, sp), V(v.x, v.y, v.z), { R: .14 });
+    }
+  }
+}
+// the held sword: swept across a pane this frame?
+function glassBlade(dt) {
+  if (Math.max(AR.b0.distanceTo(AR.b1), AR.t0.distanceTo(AR.t1)) > .9) return;
+  const desk = !(state.xr || sim.on);
+  for (const pane of GL.panes) {
+    if (!pane.pc) continue;
+    let best = -1, bx = 0, by = 0, touch = false; const mv = V(), ax = V();
+    for (let j = 0; j <= 10; j++) {
+      const f = j / 10; _g3.lerpVectors(AR.b0, AR.t0, f); _g4.lerpVectors(AR.b1, AR.t1, f);
+      toPane(pane, _g3, _g1); toPane(pane, _g4, _g2);
+      if (_g1.z * _g2.z < 0) {
+        const t = _g1.z / (_g1.z - _g2.z), x = _g1.x + (_g2.x - _g1.x) * t, y = _g1.y + (_g2.y - _g1.y) * t;
+        if (glassAt(pane, x, y, .005)) { const sp = _g1.distanceTo(_g2) / Math.max(dt, 1e-3); if (sp > best) { best = sp; bx = x; by = y; mv.subVectors(_g2, _g1); } }
+      } else if (Math.abs(_g2.z) < GL_T / 2 + .006 && glassAt(pane, _g2.x, _g2.y, 0)) { touch = true; if (best < 0) { bx = _g2.x; by = _g2.y; } }
+    }
+    if (best < 0) { if (touch && !pane.bTouch) glassHit(pane, bx, by, .5, V()); pane.bTouch = touch; continue; }
+    pane.bTouch = true;
+    let s = best; if (desk) s = AR.swing.fast ? 9 : Math.min(s, 3.6);
+    toPane(pane, AR.t1, _g1); toPane(pane, AR.b1, _g2); ax.subVectors(_g1, _g2).normalize();
+    const n = V().crossVectors(ax, mv); if (n.lengthSq() > 1e-12) n.normalize(); const n2 = Math.hypot(n.x, n.y);
+    const vW = AR.bladeV.clone();
+    if (s >= GL_CARVE && n2 > .35 && tAll - pane.carveT > .3) {
+      pane.carveT = tAll; const nx = n.x / n2, ny = n.y / n2, d = Math.round((nx * bx + ny * by) * 1e5) / 1e5, rx = Math.round(nx * 1e6) / 1e6, ry = Math.round(ny * 1e6) / 1e6;
+      if (paneCarve(pane, rx, ry, d, vW)) { netSend({ t: 'gl', op: 'cut', i: pane.i, n: [rx, ry], d, v: va(vW) }); if (sword.held) buzz(sword.held, 1, 50); AR.heat = Math.min(1, AR.heat + .3); }
+    } else {
+      const r = glassHit(pane, bx, by, Math.max(s, GL_TINK + .4), vW, { size: .02 });
+      if (sword.held && r !== 'miss') buzz(sword.held, r === 'break' ? 1 : .6, 30);
+    }
+  }
+}
+function stepGlassPost(dt) {
+  for (const pane of GL.panes) { const n = pane.crk.length / 4; if (pane.shown < n) { pane.shown = Math.min(n, pane.shown + dt * 700 + 2); pane.lines.geometry.setDrawRange(0, Math.floor(pane.shown) * 2); } }
+  // shards that hit something tinkle
+  for (const pc of AR.pieces) {
+    if (!KINDS[pc.kind].glass || pc.pane || !pc.body || pc.held) continue;
+    const v = pc.body.linvel(), sp = Math.hypot(v.x, v.y, v.z);
+    if ((pc.gsp || 0) > 1.1 && sp < pc.gsp * .55 && tAll - GL.tkT > .04) { GL.tkT = tAll; sfxTinkle(clamp(pc.gsp * .03, .02, .1)); }
+    pc.gsp = sp;
+  }
+  stepGlit(dt);
+}
+
+/* ---------- glitter: tiny glints of glass dust ---------- */
+const GLIT_N = 320;
+GL.glit = (() => {
+  const pos = new Float32Array(GLIT_N * 3).fill(-500), col = new Float32Array(GLIT_N * 3);
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+  geo.boundingSphere = new THREE.Sphere(V(), 80);
+  const dot = document.createElement('canvas'); dot.width = dot.height = 32; { const g = dot.getContext('2d'), gr = g.createRadialGradient(16, 16, 0, 16, 16, 16); gr.addColorStop(0, '#fff'); gr.addColorStop(.3, 'rgba(255,255,255,.85)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 32, 32); }
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: .012, vertexColors: true, transparent: true, depthWrite: false, map: new THREE.CanvasTexture(dot), fog: false, blending: THREE.AdditiveBlending }));
+  pts.frustumCulled = false; arena.add(pts);
+  return { pos, col, geo, v: new Float32Array(GLIT_N * 3), life: new Float32Array(GLIT_N), i: 0, alive: 0 };
+})();
+function glitBurst(p, n, vW) {
+  const G = GL.glit;
+  for (let j = 0; j < n; j++) {
+    const i = G.i = (G.i + 1) % GLIT_N; G.pos.set([p.x + (Math.random() - .5) * .06, p.y + (Math.random() - .5) * .06, p.z + (Math.random() - .5) * .06], i * 3);
+    G.v.set([vW.x * .3 + (Math.random() - .5) * 2.2, vW.y * .3 + Math.random() * 1.6, vW.z * .3 + (Math.random() - .5) * 2.2], i * 3); G.life[i] = .5 + Math.random() * 1.1;
+  }
+  G.alive = 1.8;
+}
+function stepGlit(dt) {
+  const G = GL.glit; if (G.alive <= 0) return; G.alive -= dt;
+  const P = G.pos, Vv = G.v, C = G.col;
+  for (let i = 0; i < GLIT_N; i++) {
+    if (G.life[i] <= 0) { if (P[i * 3 + 1] > -400) P[i * 3 + 1] = -500; continue; }
+    const l = G.life[i] -= dt; Vv[i * 3 + 1] -= 9.8 * dt;
+    P[i * 3] += Vv[i * 3] * dt; P[i * 3 + 1] += Vv[i * 3 + 1] * dt; P[i * 3 + 2] += Vv[i * 3 + 2] * dt;
+    if (P[i * 3 + 1] < .003) { P[i * 3 + 1] = .003; Vv[i * 3 + 1] *= -.25; Vv[i * 3] *= .5; Vv[i * 3 + 2] *= .5; }
+    const tw = .55 + .45 * Math.sin(tAll * 40 + i * 2.7), k = clamp(l / .4, 0, 1) * tw; C[i * 3] = .75 * k; C[i * 3 + 1] = .92 * k; C[i * 3 + 2] = k;
+  }
+  G.geo.attributes.position.needsUpdate = true; G.geo.attributes.color.needsUpdate = true;
+}
+
+/* ---------- glass sounds (all synthesized) ---------- */
+function sfxTink(f, vol) {
+  if (!ac) return;
+  tone('sine', f, f * .997, .7, vol); tone('sine', f * 2.76, f * 2.75, .3, vol * .35); tone('sine', f * 5.4, f * 5.38, .12, vol * .18);
+}
+function noiseHit(t, dur, vol, type, freq, Q = .8) {
+  const n = noiseLoop(), f = ac.createBiquadFilter(), g = ac.createGain();
+  f.type = type; f.frequency.value = freq; f.Q.value = Q; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + .004); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+  n.connect(f); f.connect(g); g.connect(master); n.start(t, Math.random() * 1.5); n.stop(t + dur + .02);
+}
+function sfxCrack(k) {
+  if (!ac) return; const t = ac.currentTime;
+  for (let i = 0; i < 3 + Math.round(k * 3); i++) noiseHit(t + i * (.012 + Math.random() * .02), .035, .25 * k, 'highpass', 2500 + Math.random() * 2500);
+  tone('square', 3400, 1900, .03, .03 * k); tone('sine', 2600 + Math.random() * 800, 2500, .18, .05 * k, .01);
+}
+function sfxShatter(k) {
+  if (!ac) return; const t = ac.currentTime;
+  noiseHit(t, .55 * k + .15, .6 * k, 'highpass', 1700, .5); noiseHit(t, .12, .4 * k, 'bandpass', 900, .9);
+  tone('sine', 150, 55, .18, .35 * k);
+  const n = Math.round(8 + k * 12);
+  for (let i = 0; i < n; i++) { const f = 2400 + Math.random() * 5600, w = .02 + Math.random() * Math.random() * .9 * k; tone('sine', f, f * .995, .1 + Math.random() * .2, (.03 + Math.random() * .07) * k, w); }
+}
+function sfxTinkle(vol) { if (!ac) return; for (let i = 0; i < 2; i++) { const f = 3000 + Math.random() * 5000; tone('sine', f, f * .996, .08 + Math.random() * .1, vol * (1 - i * .4), i * (.02 + Math.random() * .04)); } }
+function sfxGlassCarve() {
+  if (!ac) return; const t = ac.currentTime;
+  noiseHit(t, .22, .35, 'bandpass', 5200, 2.5); tone('sine', 4200, 2900, .25, .08); tone('triangle', 1900, 1890, .6, .06, .03);
+}
+
 /* ======================= physics world ======================= */
 import('rapier').then(async m => {
   const R = m.default || m; await R.init();
@@ -2587,6 +3101,8 @@ import('rapier').then(async m => {
   AR.pawB = hands.map(() => { const b = w.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -50, 0)); w.createCollider(R.ColliderDesc.ball(PAW_R * .9).setFriction(1), b); return b; });
   AR.bodyB = w.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -50, 0)); w.createCollider(R.ColliderDesc.capsule(.17, .2), AR.bodyB);
   spawnSet(false); spawnMega(false);
+  GL.panes.forEach(p => fixed(R.ColliderDesc.cuboid(p.W / 2 + .04, .035, .05), p.pos.x, .035, p.pos.z, { x: p.q.x, y: p.q.y, z: p.q.z, w: p.q.w }));
+  glassReset();
   // warm the cutter up (JIT) so the very first real slice is as quick as the rest
   const tp = tplFor(CUBE);
   for (let i = 0; i < 6; i++) { const nn = V(rnd() - .5, rnd() - .5, rnd() - .5).normalize(); const pp = { vis: tp.vis, phys: tp.phys }; chainSplit([pp], [[nn, .01]], []).slice(0, 2).forEach(h => h.forEach(p => childOf([p]) && withHull(p))); }
@@ -2643,7 +3159,7 @@ function releaseSword(h, throwV) {
 /* ======================= grabbing pieces ======================= */
 function pieceNear(h, maxD = .1) {
   let best = null, bd = 1e9;
-  for (const pc of AR.pieces) { if (pc.dying || pc.held || !pc.body) continue; const t = pc.body.translation(); _a1.set(t.x, t.y, t.z).add(ARENA); const d = _a1.distanceTo(h.pos) - pc.rad * .8; if (d < maxD && d < bd) { bd = d; best = pc; } }
+  for (const pc of AR.pieces) { if (pc.dying || pc.held || !pc.body || pc.pane) continue; const t = pc.body.translation(); _a1.set(t.x, t.y, t.z).add(ARENA); const d = _a1.distanceTo(h.pos) - pc.rad * .8; if (d < maxD && d < bd) { bd = d; best = pc; } }
   return best;
 }
 function pawQuat(h, out) { return (state.xr || sim.on) ? out.copy(rig.quaternion).multiply(h.q) : out.copy(h.paw.quaternion); }
@@ -2719,7 +3235,7 @@ function deskInteract() {
     const holder = h.piece ? h : hl.piece ? hl : null;
     if (holder) { camera.getWorldQuaternion(_aq); releasePiece(holder, V(0, 1.5, -6.5).applyQuaternion(_aq)); return; }
     const b = aimButton(); if (b) { pressButton(b, null); return; }
-    const pc = aimAt(2.6, f => AR.pieces.forEach(p => { if (!p.dying && p.body && !p.held) { const t = p.body.translation(); f(p, V(t.x, t.y, t.z).add(ARENA), p.rad); } }));
+    const pc = aimAt(2.6, f => AR.pieces.forEach(p => { if (!p.dying && p.body && !p.held && !p.pane) { const t = p.body.translation(); f(p, V(t.x, t.y, t.z).add(ARENA), p.rad); } }));
     if (pc) {
       holdPiece(h.sword ? hl : h, pc);
       if (h.sword && !AR.toldLeft) { AR.toldLeft = true; toast('🐾 Your other paw grabbed it! Swing at it: you keep the bit you are holding. E throws it.', 8.5); }
@@ -2748,7 +3264,7 @@ function pressButton(b, h) {
     if (AR.greenTimes.length >= 3) { AR.greenTimes.length = 0; butterBlock(); }   // secret: triple-tap SPAWN
     else spawnSet(true);
   } else {
-    AR.pieces.forEach((p, i) => { if (!p.held) p.dying = .2 + Math.min(i, 150) * .002; });
+    AR.pieces.forEach((p, i) => { if (!p.held && !p.pane) p.dying = .2 + Math.min(i, 150) * .002; }); glassReset();
     if (sword.mode !== 'held' && sword.mode !== 'far' && mine(sword)) swordToStone();
     netSend({ t: 'reset' });
     AR.spawnQ.push([tAll + .45, true]);
@@ -2855,6 +3371,7 @@ function stepArena(dt) {
   for (const h of hands) { const pc = h.piece; if (pc && pc.body) followPaw(h, pc, dt); }
   for (const pc of AR.pieces) if (pc.frz > 0 && pc.frzH && !pc.held) followPaw(pc.frzH, pc, dt);
   AR.snap = false;
+  stepGlassPre(dt);
   w.timestep = clamp(dt, 1 / 144, 1 / 30); w.step();
   // 3) anime cuts let go, the dying shrink, the lost drop out, and every piece's matrix goes to the shared mesh
   for (let i = AR.pieces.length - 1; i >= 0; i--) {
@@ -2869,7 +3386,7 @@ function stepArena(dt) {
       const v = pc.body.linvel(), a = pc.body.angvel();
       if (v.x * v.x + v.y * v.y + v.z * v.z < .0064 && a.x * a.x + a.y * a.y + a.z * a.z < .5) { if ((pc.still = (pc.still || 0) + dt) > .7) { pc.body.sleep(); pc.still = 0; } } else pc.still = 0;
     }
-    if (!asleep || pc.held || pc.frz > 0 || pc.sc !== pc.scW) { pileMatrix(pc); pc.scW = pc.sc; }
+    if ((!asleep && !pc.pane) || pc.held || pc.frz > 0 || pc.sc !== pc.scW) { pileMatrix(pc); pc.scW = pc.sc; }
   }
   if (sword.mode === 'free' && sword.body) {
     const t = sword.body.translation(), r = sword.body.rotation(); sword.g.position.set(t.x, t.y, t.z); sword.g.quaternion.set(r.x, r.y, r.z, r.w);
@@ -2881,11 +3398,11 @@ function stepArena(dt) {
   AR.b1.copy(BLADE_A).applyMatrix4(sword.g.matrix); AR.t1.copy(BLADE_B).applyMatrix4(sword.g.matrix);
   if (sword.mode === 'held') {
     if (!AR.bladeOk) { AR.b0.copy(AR.b1); AR.t0.copy(AR.t1); AR.bladeOk = true; }
-    bladeSlice(dt);
+    bladeSlice(dt); glassBlade(dt);
   } else AR.bladeOk = false;
   AR.b0.copy(AR.b1); AR.t0.copy(AR.t1);
   for (let i = 0; i < 2 && AR.cutQ.length; i++) { const c = AR.cutQ.shift(); cutPiece(c.pc, c); }
-  stepTrail(dt); AR.dt = dt; stepSeams(); stepSparks(dt); stepDrips(dt); pileTidy();
+  stepTrail(dt); AR.dt = dt; stepSeams(); stepSparks(dt); stepDrips(dt); stepGlassPost(dt); pileTidy();
   checkButtons(dt);
   if ((AR.signT = (AR.signT || 0) + dt) > .25) { AR.signT = 0; megaSign(); }
 }
@@ -3399,13 +3916,14 @@ function stepBites(dt) {
   for (const h of hands) {   // bring a piece you're holding up to your mouth
     const pc = h.piece; if (!pc || !pc.body) continue;
     const t = pc.body.translation();
+    if (KINDS[pc.kind].glass) { if ((t.x - _a4.x) ** 2 + (t.y - _a4.y) ** 2 + (t.z - _a4.z) ** 2 < (pc.rad + .08) ** 2 && !(tAll - (GL.noEat || -9) < 4)) { GL.noEat = tAll; toast('🙅 No eating glass, silly! Throw it instead.', 3); } continue; }
     if ((t.x - _a4.x) ** 2 + (t.y - _a4.y) ** 2 + (t.z - _a4.z) ** 2 > (pc.rad + .1) ** 2) continue;
     toLocal(pc, _a4, _a5); if (outside(pc.parts, _a5) < .025) { takeBite(pc); return; }
   }
 }
 addEventListener('keydown', e => {   // desktop: F bites what you're holding
   if (e.code !== 'KeyF' || state.mode !== 'play' || state.xr || state.area !== 'arena' || biteCool > 0) return;
-  const h = hands.find(x => x.piece); if (h) takeBite(h.piece);
+  const h = hands.find(x => x.piece); if (h && KINDS[h.piece.kind].glass) { toast('🙅 No eating glass, silly! Throw it instead.', 3); return; } if (h) takeBite(h.piece);
 });
 
 /* ---------- Pip: pick it up, it talks, it gets scared ---------- */
@@ -4043,7 +4561,7 @@ function claim(o, k, id) {
 }
 function gotOwn(o, k, nowMine) {
   if (k === 'pc') {
-    const pc = o; if (!pc.body) return;
+    const pc = o; if (!pc.body || pc.pane) return;
     if (nowMine) { if (!pc.held && !(pc.frz > 0)) { pc.body.setBodyType(AR.R.RigidBodyType.Dynamic, true); if (pc.nv) pc.body.setLinvel(pc.nv, true); } }
     else { if (pc.held) { pc.held.piece = null; pc.held = null; } pc.frz = 0; pc.frzH = null; pc.body.setBodyType(AR.R.RigidBodyType.KinematicPositionBased, true); netSeed(pc); }
   } else if (k === 'p') { if (!nowMine && o.held) { o.held.holding = null; o.held.reset = true; o.held = null; } }
@@ -4061,7 +4579,7 @@ function netSeed(pc) { const t = pc.body.translation(), r = pc.body.rotation(); 
 function reassertAll() {   // after joining or leaving: every piece's body matches who owns it now
   if (!online()) { [...props, pip, sword, ...AR.pieces].forEach(o => { o.nt = null; o.own = undefined; o.ov = 0; }); FIG.seen = -9; if (sword.mode === 'far') swordToStone(); }
   if (!AR.ready) return;
-  for (const pc of AR.pieces) { if (!pc.body) continue; if (mine(pc)) { if (!pc.held && !(pc.frz > 0) && pc.body.bodyType() !== 0) pc.body.setBodyType(AR.R.RigidBodyType.Dynamic, true); } else gotOwn(pc, 'pc', false); }
+  for (const pc of AR.pieces) { if (!pc.body || pc.pane) continue; if (mine(pc)) { if (!pc.held && !(pc.frz > 0) && pc.body.bodyType() !== 0) pc.body.setBodyType(AR.R.RigidBodyType.Dynamic, true); } else gotOwn(pc, 'pc', false); }
 }
 function dropOwner(id) {   // a player left: the host looks after their stuff now
   const take = o => { if (o.own === id) { o.own = 'host'; if (MP.host) gotOwn(o, o === pip ? 'pip' : o === sword ? 'sw' : o.body !== undefined ? 'pc' : 'p', true); } };
@@ -4083,7 +4601,7 @@ function netTick(dt) {
   if (AR.ready) {
     let n = 0;
     for (const pc of AR.pieces) {
-      if (!pc.body || pc.dying || !mine(pc)) continue;
+      if (!pc.body || pc.dying || !mine(pc) || pc.pane) continue;
       const still = !pc.held && !(pc.frz > 0) && pc.body.isSleeping();
       if (still && pc.sentRest) continue;
       const t = pc.body.translation(), r = pc.body.rotation(), v = pc.body.linvel();
@@ -4126,14 +4644,15 @@ function netGot(d) {
   } else if (d.t === 'kill') {
     for (const id of d.ids || []) { const pc = AR.byId.get(id); if (!pc) continue; if (d.eat && pc.body) { const t = pc.body.translation(); crumbs(V(t.x, t.y, t.z).add(ARENA), pc.kind, 8); } removePiece(pc); }
   } else if (d.t === 'reset') {
-    AR.pieces.forEach((p, i) => { if (p.held) { p.held.piece = null; p.held = null; } p.dying = .2 + Math.min(i, 150) * .002; });
+    AR.pieces.forEach((p, i) => { if (p.pane) return; if (p.held) { p.held.piece = null; p.held = null; } p.dying = .2 + Math.min(i, 150) * .002; }); glassReset();
   } else if (d.t === 'hz') { HZ.fromNet = true; setHorror(!!d.on, d.quiet); HZ.fromNet = false; }
   else if (d.t === 'fig') {
     if (d.ev === 'spawn' && d.to === MP.me) { if (HZ.on && HZ.phase === 'none' && !HZ.crash) spawnFig(); }
     else if (d.ev === 'hit' && HZ.phase === 'tpose') { HZ.phase = 'none'; fig.g.visible = false; }   // someone else smacked it: it's after THEM now
   } else if (d.t === 'say') { if (!mine(pip)) pipSay(d.kind, d.m); }
   else if (d.t === 'snap') gotSnap(d);
-  else if (d.t === 'pcs') { if (!AR.ready) { (MP.snapQ = MP.snapQ || []).push(d); return; } d.list.forEach(addSnapPiece); }
+  else if (d.t === 'pcs' || d.t === 'gls') { if (!AR.ready || MP.clearOnReady) { (MP.snapQ = MP.snapQ || []).push(d); return; } if (d.t === 'gls') glassFromSnap(d); else d.list.forEach(addSnapPiece); }
+  else if (d.t === 'gl') glassNet(d);
 }
 function quietIfAway(f) { const keep = ac; if (state.area !== 'arena') ac = null; try { return f(); } finally { ac = keep; } }
 function packCut(c) {
@@ -4159,12 +4678,13 @@ function sendSnap(conn) {
     pip: [...va(pip.g.position), ownerOf(pip), pip.ov || 0],
     sword: [sword.mode === 'stone' ? 0 : sword.mode === 'held' || sword.mode === 'far' ? 1 : 2, ...va(sword.g.position), ...qa(sword.g.quaternion), ownerOf(sword), sword.ov || 0], cnt: AR.pieces.length });
   if (!AR.ready) return;
-  const list = AR.pieces.filter(p => p.body && !p.dying).map(pc => {
+  const list = AR.pieces.filter(p => p.body && !p.dying && !p.pane).map(pc => {
     const t = pc.body.translation(), r = pc.body.rotation();
     return { id: pc.id, k: pc.kind, vol: pc.vol, p: [t.x, t.y, t.z], q: [r.x, r.y, r.z, r.w], o: ownerOf(pc), ov: pc.ov || 0,
       parts: pc.parts.map(pt => [pt.vis.buffer.slice(pt.vis.byteOffset, pt.vis.byteOffset + pt.vis.byteLength), pt.phys.buffer.slice(pt.phys.byteOffset, pt.phys.byteOffset + pt.phys.byteLength)]) };
   });
   for (let i = 0; i < list.length; i += 6) conn.send({ t: 'pcs', list: list.slice(i, i + 6) });
+  conn.send(glassSnap());
 }
 function gotSnap(d) {
   (d.props || []).forEach((a, i) => { const p = props[i]; if (!p) return; if (p.held) { p.held.holding = null; p.held = null; } p.g.position.set(a[0], a[1], a[2]); p.g.quaternion.set(a[3], a[4], a[5], a[6]); p.rest = !!a[7]; p.vel.set(0, 0, 0); p.own = a[8]; p.ov = a[9]; p.nt = null; });
@@ -4189,7 +4709,7 @@ const _sv1 = V();
 function stepShared(dt) {
   if (!online()) return;
   if (AR.ready && MP.clearOnReady) { MP.clearOnReady = false; for (const pc of [...AR.pieces]) removePiece(pc); }
-  if (AR.ready && MP.snapQ && MP.snapQ.length) { const q = MP.snapQ; MP.snapQ = []; q.forEach(d => d.list.forEach(addSnapPiece)); }
+  if (AR.ready && MP.snapQ && MP.snapQ.length) { const q = MP.snapQ; MP.snapQ = []; q.forEach(d => d.t === 'gls' ? glassFromSnap(d) : d.list.forEach(addSnapPiece)); }
   const k = 1 - Math.exp(-dt * 14);
   for (const p of props) if (!mine(p) && p.nt) { p.g.position.lerp(p.nt.p, k); p.g.quaternion.slerp(p.nt.q, k); p.vel.copy(p.nt.v); p.rest = !!p.nt.rest; }
   if (!mine(pip) && pip.nt) { pip.g.position.lerp(pip.nt.p, k); pip.vel.copy(pip.nt.v); pip.resting = !!pip.nt.rest; pip.body.rotation.z = pip.nt.held ? Math.sin(tAll * 9) * .15 : pip.body.rotation.z * .9; }
@@ -4200,7 +4720,7 @@ function stepShared(dt) {
   }
   if (AR.ready) {
     for (const pc of AR.pieces) {
-      if (!pc.body || mine(pc) || !pc.nt) continue;
+      if (!pc.body || mine(pc) || !pc.nt || pc.pane) continue;
       if (!pc.np) netSeed(pc);
       pc.np.lerp(pc.nt.p, k); pc.nq.slerp(pc.nt.q, k);
       pc.body.setNextKinematicTranslation(pc.np); pc.body.setNextKinematicRotation({ x: pc.nq.x, y: pc.nq.y, z: pc.nq.z, w: pc.nq.w });
@@ -4373,6 +4893,7 @@ function stepVoice(dt) {
 }
 { const b = $('btnMute'); if (b) b.onclick = () => { if (!VC.mic) { VC.asked = false; micOn(); } else setMute(!VC.muted); }; setMute(VC.muted); }
 window.__kg.voice = { VC, micOn, setMute, voiceMeet, micLevel };
+window.__kg.glass = { GL, glassHit, paneCarve, blade: glassBlade, glassReset, glassSeeds, paneShatter, GPILE, stepGlassPre };
 window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
 </body>
