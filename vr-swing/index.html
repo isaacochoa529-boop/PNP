@@ -889,7 +889,7 @@ function makeProp(kind, x, y, z) {
   }
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   g.position.set(x, y, z); scene.add(g);
-  const p = { kind, g, r, vel: V(), held: null, rest: false, home: V(x, y, z), info: { nrm: V(), ground: false, bounce: null, col: null }, spin: V() };
+  const p = { kind, g, r, vel: V(), held: null, rest: false, home: V(x, y, z), info: { nrm: V(), ground: false, bounce: null, col: null }, w: V() };
   props.push(p); return p;
 }
 [['ball', 1.2, .9, 1.3], ['ball', -1.4, .9, 1.1], ['ball', 6, 3.2, 6], ['ball', -11, 6, -6.5], ['cone', -.6, .9, 1.7], ['cone', 13.5, 5.2, -8.2],
@@ -905,22 +905,31 @@ function grabProp(h) {
   best.held = h; best.rest = false; h.holding = best; h.stuck = false; h.reset = true;
   buzz(h, .5, 30); if (ac) tone('sine', 500, 800, .08, .2);
 }
+const PROP_UP = V(0, 1, 0);
+function throwSpin(p) { p.w.crossVectors(PROP_UP, p.vel).multiplyScalar(1 / p.r); }
 function dropProp(h) {
   const p = h.holding; if (!p) return;
   h.holding = null; p.held = null; p.rest = false; h.reset = true; h.stuck = false;
   p.vel.copy(h.vel || V()).multiplyScalar(1.35); if (p.vel.length() > 16) p.vel.setLength(16);   // throw with your paw's speed
-  p.spin.set(rnd() * 8 - 4, rnd() * 8 - 4, rnd() * 8 - 4);
+  if (p.kind === 'ball') throwSpin(p);   // thrown balls already spin the way they fly, so they land rolling instead of skidding or veering
+  else p.w.set(rnd() * 6 - 3, rnd() * 6 - 3, rnd() * 6 - 3);                     // pinecones and stars tumble
 }
 function deskGrab() {
   const h = hands[1];
-  if (h.holding) { const p = h.holding; dropProp(h); const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_hq)); p.vel.copy(f).multiplyScalar(9).add(V(0, 2, 0)); return; }
+  if (h.holding) { const p = h.holding; dropProp(h); const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_hq)); p.vel.copy(f).multiplyScalar(9).add(V(0, 2, 0)); if (p.kind === 'ball') throwSpin(p); return; }
   headWorld(_h); const f = V(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_hq));
   let best = null, bd = 3.5;
   for (const p of props) { const to = p.g.position.clone().sub(_h), d = to.length(); if (d < bd && to.normalize().dot(f) > .6) { bd = d; best = p; } }
   if (best) { if (best.held) best.held.holding = null; best.held = h; h.holding = best; best.rest = false; if (ac) tone('sine', 500, 800, .08, .2); }
 }
-const _pp = V();
+const _pp = V(), _rw = V(), _ut = V(), _spinQ = new THREE.Quaternion(), _bh = V(), _bhPrev = V(), _bv = V();
+let _bhInit = false;
 function stepProps(dt) {
+  // your body is solid to toys: roll into a ball and it gets shoved along
+  headWorld(_bh); if (!_bhInit) { _bhPrev.copy(_bh); _bhInit = true; }
+  _bv.subVectors(_bh, _bhPrev).multiplyScalar(1 / Math.max(dt, 1e-3)); _bhPrev.copy(_bh);
+  if (_bv.length() > 20) _bv.set(0, 0, 0);   // teleports / respawns aren't shoves
+  const feetY = _bh.y - state.bodyH + .25;
   for (const p of props) {
     if (p.held) {
       const h = p.held;
@@ -930,7 +939,18 @@ function stepProps(dt) {
       continue;
     }
     // free paws can bonk resting toys around
-    for (const h of hands) if (h.tracked && h.vel && !h.holding && h.pos.distanceTo(p.g.position) < p.r + PAW_R && h.vel.length() > .8) { p.vel.copy(h.vel).multiplyScalar(1.1); p.rest = false; p.spin.set(rnd() * 6, rnd() * 6, 0); }
+    for (const h of hands) if (h.tracked && h.vel && !h.holding && h.pos.distanceTo(p.g.position) < p.r + PAW_R && h.vel.length() > .8) { p.vel.copy(h.vel).multiplyScalar(1.1); p.rest = false; }
+    {
+      const by = Math.min(Math.max(p.g.position.y, feetY), _bh.y);   // closest point on your body's centre line
+      _pp.set(_bh.x, by, _bh.z).sub(p.g.position).multiplyScalar(-1);
+      const d = _pp.length(), min = p.r + (by === _bh.y ? .17 : .25);
+      if (d < min && d > 1e-4) {
+        _pp.multiplyScalar(1 / d); p.g.position.addScaledVector(_pp, min - d);
+        const rel = _bv.dot(_pp) - p.vel.dot(_pp);
+        if (rel > 0) p.vel.addScaledVector(_pp, rel * 1.3);
+        p.rest = false;
+      }
+    }
     if (p.rest) continue;
     p.vel.y -= G * dt;
     p.g.position.addScaledVector(p.vel, dt);
@@ -940,12 +960,25 @@ function stepProps(dt) {
       if (vn < 0) {
         if (vn < -2) sfxTap(p.info.col ? p.info.col.tag : 'grass', -vn / 8);
         const bounce = vn < -.8 ? (p.kind === 'ball' ? .6 : .3) : 0;          // balls are bouncier; tiny contacts just stop
-        p.vel.addScaledVector(n, -(1 + bounce) * vn); if (bounce) p.spin.multiplyScalar(.8);
+        p.vel.addScaledVector(n, -(1 + bounce) * vn);
       }
-      if (p.info.ground) p.vel.multiplyScalar(Math.exp(-dt * (p.kind === 'ball' ? 1.2 : 4)));   // balls roll, pinecones skid to a stop
-      if (p.info.ground && p.vel.length() < .12) { p.rest = true; p.vel.set(0, 0, 0); }
+      if (p.info.ground) {
+        if (p.kind === 'ball') {
+          // grippy rubber: friction at the contact point cancels any skid, so it truly rolls (spin = n x v / r).
+          // solid-ball maths: a sliding ball keeps 5/7 of its speed as it starts rolling; a spinning one kicks off sideways
+          _ut.crossVectors(p.w, n).multiplyScalar(-p.r).add(p.vel); _ut.addScaledVector(n, -_ut.dot(n));
+          p.vel.addScaledVector(_ut, -2 / 7);
+          p.w.add(_rw.crossVectors(n, _ut).multiplyScalar(5 / (7 * p.r)));
+          p.vel.multiplyScalar(Math.exp(-dt * .55)); p.w.multiplyScalar(Math.exp(-dt * .55));                // gentle rolling resistance; slopes still roll it downhill
+          if (n.y > .99 && p.vel.length() < .05) { p.rest = true; p.vel.set(0, 0, 0); p.w.set(0, 0, 0); }
+        } else {
+          p.vel.multiplyScalar(Math.exp(-dt * 4)); p.w.multiplyScalar(Math.exp(-dt * 6));   // pinecones and stars skid to a stop
+          if (p.vel.length() < .12) { p.rest = true; p.vel.set(0, 0, 0); p.w.set(0, 0, 0); }
+        }
+      }
     }
-    p.g.rotation.x += p.spin.x * dt; p.g.rotation.y += p.spin.y * dt; p.g.rotation.z += p.spin.z * dt;
+    const wl = p.w.length();
+    if (wl > 1e-3) { _spinQ.setFromAxisAngle(_rw.copy(p.w).multiplyScalar(1 / wl), wl * dt); p.g.quaternion.premultiply(_spinQ); }
     // bonk Pip!
     if (pip.hop <= 0 && p.vel.length() > 2 && p.g.position.distanceTo(_pp.copy(pip.g.position).add(V(0, .3, 0))) < .45) { pip.hop = 1; sfxSqueak(); hearts(_pp.clone().add(V(0, .4, 0))); }
     if (p.g.position.y < -10) { p.g.position.copy(p.home); p.vel.set(0, 0, 0); p.rest = false; }
@@ -1021,10 +1054,15 @@ function resetRun() {
 function pushVel(v) { state.velBuf.push(v.clone()); if (state.velBuf.length > 6) state.velBuf.shift(); }
 function launch() {
   if (!state.velBuf.length) return;
-  const avg = V(); state.velBuf.forEach(v => avg.add(v)); avg.multiplyScalar(LAUNCH_MUL / state.velBuf.length);
+  // speed-weighted average: the quick part of your shove counts most, so even a light one-paw hop keeps its pop
+  const avg = V(); let w = 0;
+  for (const v of state.velBuf) { const sp = v.length(); avg.addScaledVector(v, sp); w += sp; }
+  state.velBuf.length = 0;
+  if (w < 1e-4) return;
+  avg.multiplyScalar(LAUNCH_MUL / w);
   if (avg.length() > MAX_LAUNCH) avg.setLength(MAX_LAUNCH);
-  if (avg.length() < .6) avg.multiplyScalar(.3);     // a slow let-go is a gentle drop, not a fling
-  state.vel.copy(avg); state.velBuf.length = 0;
+  if (avg.length() < .25) avg.multiplyScalar(.3);     // only a really slow let-go turns into a gentle drop
+  state.vel.copy(avg);
 }
 
 /* ---------- body collision: feet, middle and head spheres ---------- */
@@ -1114,10 +1152,11 @@ const _d = V(), _mv = V(), _tmp = V();
 function stepArms(dt) {
   sampleHands(dt); rig.updateMatrixWorld(); readHands();
   // 1) paws that are stuck drag the body
-  _mv.set(0, 0, 0); let ns = 0;
+  _mv.set(0, 0, 0); let ns = 0, pushing = false;
   for (const h of hands) {
     if (!h.stuck) continue;
     _d.subVectors(h.target, h.sp); const sep = _d.dot(h.n);
+    if (sep < .004) pushing = true;
     if (sep > RELEASE || _d.length() > .7) { h.stuck = false; h.cool = .12; continue; }
     // pushing into or along the surface moves you; pulling away doesn't drag you back, it just counts toward letting go
     if (sep > 0) _d.addScaledVector(h.n, -sep);
@@ -1125,7 +1164,8 @@ function stepArms(dt) {
   }
   if (ns) {
     _mv.multiplyScalar(1 / ns); if (_mv.length() > .35) _mv.setLength(.35);
-    rig.position.add(_mv); pushVel(_tmp.copy(_mv).multiplyScalar(1 / dt)); state.vel.set(0, 0, 0);
+    rig.position.add(_mv); state.vel.set(0, 0, 0);
+    if (pushing) pushVel(_tmp.copy(_mv).multiplyScalar(1 / dt));   // frames where you're just peeling the paw off don't water down your jump
   } else {
     if (state.wasStuck) launch();
     state.vel.y -= G * dt;
