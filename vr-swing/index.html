@@ -841,7 +841,9 @@ const L_UP = .3, L_FORE = .3;
   AV.torso.position.set(0, -.12, 0); AV.head.position.set(0, 0, 0); AV.head.visible = false;   // -.12: the bean's bottom sits on the floor
   AV.root.add(AV.torso); scene.add(AV.head);
   const fp = prep(get('Torso').clone(), FP_LAYER); fp.position.set(0, -.12, 0); AV.fpRoot.add(fp);
-  AV.armFur = furOf(get('Paw')).clone();
+  AV.armFur = furOf(get('Paw')).clone(); AV.pawFur = AV.armFur.clone(); AV.bodyFur = furOf(get('Torso')).clone();
+  [AV.torso, AV.head, fp].forEach(o => o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') c.material = AV.bodyFur; }));
+  AV.tpl = { torso: get('Torso'), head: get('Head'), arm: get('ArmSeg'), elbow: get('Elbow'), fur: furOf(get('Torso')) };   // friends are built from the same model
   const withArmFur = o => { o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') c.material = AV.armFur; }); return o; };
   for (let i = 0; i < 2; i++) {
     const arm = { up: withArmFur(prep(get('ArmSeg').clone())), fore: withArmFur(prep(get('ArmSeg').clone())), elbow: withArmFur(prep(get('Elbow').clone())) };
@@ -849,10 +851,10 @@ const L_UP = .3, L_FORE = .3;
     arm.up.visible = arm.fore.visible = arm.elbow.visible = false;
     scene.add(arm.up, arm.fore, arm.elbow); AV.arms.push(arm);
     const h = hands[i], oldFur = h.paw.userData.fur;   // the paw keeps its three fingers, it just wears the model's fur
-    h.paw.traverse(c => { if (c.isMesh && c.material === oldFur) { c.material = AV.armFur; c.castShadow = true; } }); h.paw.userData.fur = AV.armFur;
+    h.paw.traverse(c => { if (c.isMesh && c.material === oldFur) { c.material = AV.pawFur; c.castShadow = true; } }); h.paw.userData.fur = AV.pawFur;
     if (state.golden) { AV.armFur.color.set(0xffc83a); AV.armFur.emissive.set(0x553300); AV.armFur.metalness = .5; }
   }
-  AV.ready = true;
+  AV.ready = true; applyMyColors();
 }, undefined, e => console.warn('Thumpling model did not load, using the simple paws', e));
 
 const _S = V(), _E = V(), _W = V(), _dir = V(), _pole = V(), _fw = V(), _up = V(0, 1, 0), _hq = new THREE.Quaternion();
@@ -1567,7 +1569,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi();
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors();
 
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
@@ -3629,7 +3631,7 @@ async function mpJoin(code) {
     conn.on('open', () => { MP.hostConn = conn; });
     conn.on('data', d => {
       if (!d) return;
-      if (d.t === 'hi') { clearTimeout(timer); MP.status = 'joined'; MP.code = code; MP.myColor = d.c; MP.me = peer.id; reassertAll(); mpNote(`🎉 You're in room ${code}!`); mpUi(); toast(`🎉 Joined room ${code}!`, 4); }
+      if (d.t === 'hi') { clearTimeout(timer); MP.status = 'joined'; MP.code = code; MP.myColor = d.c; MP.me = peer.id; reassertAll(); applyMyColors(); mpNote(`🎉 You're in room ${code}!`); mpUi(); toast(`🎉 Joined room ${code}!`, 4); }
       else if (d.t === 'full') { clearTimeout(timer); fail('😕 That room is full (4 players max).'); }
       else if (d.t === 's') gotState(d);
       else if (d.t === 'bye') byeOther(d.id);
@@ -3663,22 +3665,58 @@ function mpSend(dt) {
 /* ---------- friends: a fuzzy head, a bean body, two paws and a name tag ---------- */
 function makeFriend(color, pawC, name) {
   const g = new THREE.Group(), fur = new THREE.MeshStandardMaterial({ color: color < 0 ? 0xffffff : color, roughness: .85, flatShading: true });
-  const head = new THREE.Group(); g.add(head);
+  const paws = [makePaw(pawC < 0 ? 0xffffff : pawC), makePaw(pawC < 0 ? 0xffffff : pawC)]; paws[0].scale.x = -1; paws.forEach(p => g.add(p));
+  let head, body, root = null, torso = null, arms = null;
+  if (AV.tpl) {   // the same Thumpling you see in the mirror, in their colors
+    const T = AV.tpl, f2 = T.fur.clone(); f2.color.set(color < 0 ? 0xffffff : color);
+    const dress = o => { o.traverse(c => { if (c.isMesh) { c.userData.keep = true; c.castShadow = true; if (c.material.name === 'Fur') c.material = f2; } }); return o; };
+    root = new THREE.Group(); g.add(root); torso = dress(T.torso.clone()); torso.position.set(0, -.12, 0); root.add(torso);
+    head = dress(T.head.clone()); g.add(head); body = root;
+    arms = [0, 1].map(() => { const a = { up: dress(T.arm.clone()), fore: dress(T.arm.clone()), elbow: dress(T.elbow.clone()) }; g.add(a.up, a.fore, a.elbow); return a; });
+    fur.dispose(); return finishFriend({ g, head, body, root, torso, arms, paws, name, color, pawC, fur: f2, thump: true });
+  }
+  head = new THREE.Group(); g.add(head);
   const skull = new THREE.Mesh(new THREE.IcosahedronGeometry(.17, 2), fur); skull.scale.set(1, .92, .95); head.add(skull);
   const white = new THREE.MeshBasicMaterial({ color: 0xffffff }), dark = new THREE.MeshBasicMaterial({ color: 0x1a1a22 });
-  [-1, 1].forEach(s => {
-    const e = new THREE.Mesh(new THREE.SphereGeometry(.045, 10, 8), white); e.position.set(s * .065, .03, -.14); head.add(e);
-    const pu = new THREE.Mesh(new THREE.SphereGeometry(.024, 8, 6), dark); pu.position.z = -.03; e.add(pu);
-    const ear = new THREE.Mesh(new THREE.ConeGeometry(.05, .12, 7), fur); ear.position.set(s * .1, .15, 0); ear.rotation.z = -s * .35; head.add(ear);
-  });
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.17, .2, 4, 10), fur); g.add(body);
-  const paws = [makePaw(pawC < 0 ? 0xffffff : pawC), makePaw(pawC < 0 ? 0xffffff : pawC)]; paws[0].scale.x = -1; paws.forEach(p => g.add(p));
+  [-1, 1].forEach(sd => { const e = new THREE.Mesh(new THREE.SphereGeometry(.045, 10, 8), white); e.position.set(sd * .065, .03, -.14); head.add(e); const pu = new THREE.Mesh(new THREE.SphereGeometry(.024, 8, 6), dark); pu.position.z = -.03; e.add(pu); });
+  body = new THREE.Mesh(new THREE.CapsuleGeometry(.17, .2, 4, 10), fur); g.add(body);
+  return finishFriend({ g, head, body, paws, name, color, pawC, fur, thump: false });
+}
+function finishFriend(f) {
   const tag = textPanel(512, 128, () => {});
   const tg = tag.g; tg.fillStyle = 'rgba(16,40,34,.85)'; tg.beginPath(); tg.roundRect(6, 14, 500, 100, 50); tg.fill();
-  tg.fillStyle = color < 0 ? '#ffd25a' : '#' + new THREE.Color(color).getHexString(); tg.font = '600 58px Fredoka, sans-serif'; tg.textAlign = 'center'; tg.textBaseline = 'middle'; tg.fillText(name, 256, 66); tag.t.needsUpdate = true;
-  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tag.t, depthTest: false, transparent: true })); label.scale.set(.6, .15, 1); label.renderOrder = 8; g.add(label);
-  g.traverse(o => { if (o.isMesh) o.castShadow = true; }); scene.add(g);
-  return { g, head, body, paws, label, name, color, pawC, fur, cur: null, tgt: null, seen: 0 };
+  tg.fillStyle = f.color < 0 ? '#ffd25a' : '#' + new THREE.Color(f.color).getHexString(); tg.font = '600 58px Fredoka, sans-serif'; tg.textAlign = 'center'; tg.textBaseline = 'middle'; tg.fillText(f.name, 256, 66); tag.t.needsUpdate = true;
+  f.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tag.t, depthTest: false, transparent: true })); f.label.scale.set(.6, .15, 1); f.label.renderOrder = 8; f.g.add(f.label);
+  f.g.traverse(o => { if (o.isMesh) o.castShadow = true; }); scene.add(f.g);
+  return Object.assign(f, { cur: null, tgt: null, seen: 0 });
+}
+// your own body wears the colors you picked on the computer too
+function applyMyColors() {
+  if (!AV.ready) return; const fc = myFur(), pc = myPawCol();
+  if (fc >= 0) { AV.bodyFur.color.set(fc); if (!state.golden) AV.armFur.color.set(fc); }
+  if (pc >= 0 && !state.golden) AV.pawFur.color.set(pc);
+}
+function stepMyColors() {
+  if (!AV.ready) return; const fc = myFur(), pc = myPawCol();
+  if (fc < 0) { AV.bodyFur.color.setHSL((tAll * .25) % 1, .8, .6); if (!state.golden) AV.armFur.color.copy(AV.bodyFur.color); }
+  if (pc < 0 && !state.golden) AV.pawFur.color.setHSL((tAll * .25 + .33) % 1, .8, .6);
+}
+const _fS = V(), _fE = V(), _fW = V(), _fD = V(), _fP = V(), _fF = V();
+function poseFriendArms(f, sc, yaw) {
+  f.root.updateMatrixWorld(true);
+  for (let side = 0; side < 2; side++) {
+    const arm = f.arms[side], p = f.paws[side];
+    f.torso.localToWorld(_fS.copy(SHOULDER[side]));
+    p.updateMatrixWorld(); p.localToWorld(_fW.set(0, 0, .07));
+    const l1 = L_UP * sc, l2 = L_FORE * sc;
+    _fD.subVectors(_fW, _fS); let d = _fD.length(); _fD.multiplyScalar(1 / Math.max(d, 1e-5));
+    let a1 = l1, a2 = l2; if (d > l1 + l2) { const k = d / (l1 + l2); a1 *= k; a2 *= k; }
+    d = Math.max(d, 1e-3);
+    const a = (a1 * a1 - a2 * a2 + d * d) / (2 * d), hgt = Math.sqrt(Math.max(0, a1 * a1 - a * a));
+    _fP.set(side ? 1 : -1, -.7, .5).applyAxisAngle(_up, yaw); _fP.addScaledVector(_fD, -_fP.dot(_fD)).normalize();
+    _fE.copy(_fS).addScaledVector(_fD, a).addScaledVector(_fP, hgt);
+    placeSeg(arm.up, _fS, _fE, sc); placeSeg(arm.fore, _fE, _fW, sc * .95); arm.elbow.position.copy(_fE); arm.elbow.scale.setScalar(sc);
+  }
 }
 const _fq = new THREE.Quaternion();
 function gotState(d) {
@@ -3696,25 +3734,31 @@ function gotState(d) {
   f.tgt = d; f.seen = tAll; if (!f.cur) f.cur = JSON.parse(JSON.stringify(d));
 }
 function byeOther(id) { const f = MP.others.get(id); if (f) toast(`👋 ${f.name} left.`, 2.5); dropOther(id); dropOwner(id); }
-function dropOther(id, quiet) { const f = MP.others.get(id); if (!f) return; if (f.rb && AR.world) f.rb.forEach(b => AR.world.removeRigidBody(b)); scene.remove(f.g); f.g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); MP.others.delete(id); if (!quiet) mpUi(); }
+function dropOther(id, quiet) { const f = MP.others.get(id); if (!f) return; if (f.rb && AR.world) f.rb.forEach(b => AR.world.removeRigidBody(b)); scene.remove(f.g); f.g.traverse(o => { if (o.geometry && !o.userData.keep) o.geometry.dispose(); }); MP.others.delete(id); if (!quiet) mpUi(); }
 function lerpPose(a, b, k) { if (!b) return a; if (!a) return b.slice(); for (let i = 0; i < 3; i++) a[i] += (b[i] - a[i]) * k; _fq.set(a[3], a[4], a[5], a[6]).slerp(_mq.set(b[3], b[4], b[5], b[6]), k); a[3] = _fq.x; a[4] = _fq.y; a[5] = _fq.z; a[6] = _fq.w; return a; }
 function stepFriends(dt) {
   const k = 1 - Math.exp(-dt * 14);   // smooth between the 20-a-second updates
   for (const [id, f] of MP.others) {
     if (tAll - f.seen > 6) { byeOther(id); continue; }   // gone quiet: they probably lost connection
     const c = f.cur, t = f.tgt;
+    if (!f.thump && AV.tpl) { f.color = null; continue; }   // the model just finished loading: rebuild them as a Thumpling
     if (f.color < 0) f.fur.color.setHSL((tAll * .25) % 1, .8, .6);   // rainbow fur!
     if (f.pawC < 0) f.paws.forEach(p => p.userData.fur.color.setHSL((tAll * .25 + .33) % 1, .8, .6));
     lerpPose(c.h, t.h, k); c.b = t.b;
     f.head.position.set(c.h[0], c.h[1], c.h[2]); f.head.quaternion.set(c.h[3], c.h[4], c.h[5], c.h[6]);
-    const bh = clamp(c.b || .6, .35, 1.1); f.body.position.set(c.h[0], c.h[1] - bh * .55, c.h[2]); f.body.scale.setScalar(clamp(bh / .7, .6, 1.3));
-    f.label.position.set(c.h[0], c.h[1] + .32, c.h[2]);
+    const bh = clamp(c.b || .6, .35, 1.1);
+    if (f.thump) {
+      _fF.set(0, 0, -1).applyQuaternion(f.head.quaternion); const yaw = Math.atan2(-_fF.x, -_fF.z), sc = clamp(bh / AVATAR_EYE, .75, 1.1);
+      f.root.position.set(c.h[0] - _fF.x * .03, c.h[1] - bh, c.h[2] - _fF.z * .03); f.root.rotation.set(0, yaw, 0); f.root.scale.setScalar(sc); f.head.scale.setScalar(sc);
+      f.label.position.set(c.h[0], c.h[1] + .38 * sc, c.h[2]);
+    } else { f.body.position.set(c.h[0], c.h[1] - bh * .55, c.h[2]); f.body.scale.setScalar(clamp(bh / .7, .6, 1.3)); f.label.position.set(c.h[0], c.h[1] + .32, c.h[2]); }
     for (let i = 0; i < 2; i++) {
       const p = f.paws[i];
       if (t.f && t.f[i] && p.userData.curl) { const cc = p.userData.curl; for (let j = 0; j < 3; j++) cc[j] += ((+t.f[i][j] || 0) - cc[j]) * k; setCurl(p, cc); }
       if (t.p && t.p[i]) { c.p = c.p || [0, 0]; c.p[i] = lerpPose(c.p[i] || null, t.p[i], k); p.visible = true; p.position.set(c.p[i][0], c.p[i][1], c.p[i][2]); p.quaternion.set(c.p[i][3], c.p[i][4], c.p[i][5], c.p[i][6]); }
       else { p.visible = true; _mpv.set(i ? .2 : -.2, -.3, -.25).applyQuaternion(_fq.set(0, f.head.quaternion.y, 0, f.head.quaternion.w).normalize()); p.position.copy(f.head.position).add(_mpv); p.quaternion.copy(_fq); }
     }
+    if (f.thump) poseFriendArms(f, clamp(bh / AVATAR_EYE, .75, 1.1), f.root.rotation.y);
   }
 }
 
@@ -3868,7 +3912,7 @@ function compDraw() {
         g.fillStyle = on ? '#fff' : 'rgba(0,0,0,.4)'; g.beginPath(); g.roundRect(x - 4, y - 4, 60, 76, 14); g.fill();
         if (c === -1) { const rg = g.createLinearGradient(x, y, x + 52, y + 68); ['#ff4057', '#ffd25a', '#5dd35d', '#3fb2ff', '#8b6bff'].forEach((s, j) => rg.addColorStop(j / 4, s)); g.fillStyle = rg; } else g.fillStyle = css(c);
         g.beginPath(); g.roundRect(x, y, 52, 68, 10); g.fill();
-        CP.hits.push({ x: x - 4, y: y - 4, w: 60, h: 76, fn: () => { store.set(key, c === -1 ? 'rainbow' : String(c)); if (ac) tone('sine', 500 + i * 40, 700 + i * 40, .08, .1); compDraw(); } });
+        CP.hits.push({ x: x - 4, y: y - 4, w: 60, h: 76, fn: () => { store.set(key, c === -1 ? 'rainbow' : String(c)); applyMyColors(); if (ac) tone('sine', 500 + i * 40, 700 + i * 40, .08, .1); compDraw(); } });
       });
     });
     // a little preview critter
