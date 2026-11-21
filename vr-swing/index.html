@@ -89,10 +89,10 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
     <li><b>Jump:</b> shove down hard, then let go.</li>
     <li><b>Climb:</b> slap a wall or tree and pull down.</li>
     <li><b>Turn:</b> right stick. <b>Respawn:</b> B or Y button.</li>
-    <li><b>Desktop:</b> WASD, mouse, Space jump, Shift run, R respawn.</li>
+    <li><b>Desktop:</b> WASD, mouse, Space jump, Shift run, V see yourself, R respawn.</li>
     <li>Grab all 12 glow berries 🫐 as fast as you can!</li>
   </ul>
-  <div class="row">Critter size:
+  <div class="row">Critter size (pick one where your paws reach the ground without crouching):
     <button class="alt" id="btnSize">Small</button>
   </div>
   <div class="best" id="best"></div>
@@ -107,10 +107,12 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
 <div class="toast" id="toast" style="opacity:0" aria-live="polite"></div>
 
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
 </script>
 <script type="module">
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { Reflector } from 'three/addons/objects/Reflector.js';
 // TreeKit: finished low-poly trees for Three.js. Safe on r128 and newer (no CapsuleGeometry, no newer-only APIs).
 // Every tree is ONE merged BufferGeometry with vertex colors and flat (per-face) normals, so it can be
 // instanced (hundreds of trees = one draw call) and needs no textures.
@@ -284,6 +286,7 @@ const MAX_LAUNCH = 8.5;     // cap on fling speed
 const LAUNCH_MUL = 1.15;    // a little extra oomph when you let go
 const RELEASE = 0.003;      // moving a stuck paw this far away from the surface in one frame lets go
 const SPAWN = V(0, 0.55, 0);
+const SIZES = [{ name: 'Small', h: .72 }, { name: 'Medium', h: .85 }, { name: 'Big', h: 1.0 }];   // eye height above the ground while resting
 const BERRIES_TOTAL = 12;
 
 /* ---------------- renderer / scene ---------------- */
@@ -301,7 +304,7 @@ scene.background = new THREE.Color(0x8fd3ff);
 scene.fog = new THREE.Fog(0xa6dcff, 34, 95);
 const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.03, 220);
 const rig = new THREE.Group(); rig.add(camera); scene.add(rig);
-camera.position.set(0, 1.45, 0);
+camera.position.set(0, .85, 0);
 
 scene.add(new THREE.HemisphereLight(0xdff4ff, 0x4a7a3a, 1.15));
 const sun = new THREE.DirectionalLight(0xfff1d6, 1.9);
@@ -700,17 +703,96 @@ const hands = [0, 1].map(i => {
 const setSide = h => { h.paw.scale.x = h.side === 'left' ? -1 : 1; };
 hands.forEach(setSide);
 // desktop paws, attached to the camera for a bit of personality
-const deskPaws = [-1, 1].map(s => { const p = makePaw(PAW_COLOR); p.scale.set(s < 0 ? -1.1 : 1.1, 1.1, 1.1); p.position.set(s * .2, -.2, -.42); p.rotation.set(.5, 0, 0); camera.add(p); p.visible = false; return p; });
+const deskPaws = [];
 
 // wrist panel on the left paw
 const wrist = textPanel(256, 128, () => {});
 { const pm = new THREE.Mesh(new THREE.PlaneGeometry(.12, .06), new THREE.MeshBasicMaterial({ map: wrist.t, transparent: true }));
-  pm.position.set(0, .075, .07); pm.rotation.x = -1.0; hands[0].paw.add(pm); wrist.mesh = pm; }
+  pm.position.set(0, .075, .07); pm.rotation.x = -1.0; pm.scale.x = -1; hands[0].paw.add(pm); wrist.mesh = pm; }
 function drawWrist() {
   const g = wrist.g; g.clearRect(0, 0, 256, 128); g.fillStyle = 'rgba(16,52,38,.85)'; g.beginPath(); g.roundRect(4, 4, 248, 120, 24); g.fill();
   g.textAlign = 'center'; g.fillStyle = '#ff7fd0'; g.font = '50px "Lilita One", Impact, sans-serif'; g.fillText(`🫐 ${state.got}/${BERRIES_TOTAL}`, 128, 60);
   g.fillStyle = '#fff'; g.font = '34px Fredoka, sans-serif'; g.fillText(fmtTime(state.time), 128, 106); wrist.t.needsUpdate = true;
 }
+
+/* ======================= the Thumpling (modelled in Blender: models/thumpling.glb) ======================= */
+// Torso + head live on SELF_LAYER: the mirror and the desktop third-person camera see them, your own eyes don't.
+const SELF_LAYER = 5;
+const AV = { ready: false, root: new THREE.Group(), torso: null, head: null, arms: [], armFur: null };
+scene.add(AV.root); AV.root.visible = false;
+const avSc = () => state.bodyH / .85;                         // the model is built with its eyes 0.85 m up
+const SHOULDER = [V(-.235, .585, .02), V(.235, .585, .02)];   // torso space (model faces -Z)
+const L_UP = .3, L_FORE = .3;
+new GLTFLoader().load('models/thumpling.glb', gltf => {
+  const get = n => gltf.scene.getObjectByName(n);
+  const furOf = o => { let m = null; o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') m = c.material; }); return m; };
+  const prep = (o, layer) => { o.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; if (layer) c.layers.set(layer); } }); return o; };
+  AV.torso = prep(get('Torso').clone(), SELF_LAYER); AV.head = prep(get('Head').clone(), SELF_LAYER);
+  AV.torso.position.set(0, 0, 0); AV.head.position.set(0, 0, 0); AV.head.visible = false;
+  AV.root.add(AV.torso); scene.add(AV.head);
+  AV.armFur = furOf(get('Paw')).clone();
+  const withArmFur = o => { o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') c.material = AV.armFur; }); return o; };
+  for (let i = 0; i < 2; i++) {
+    const arm = { up: withArmFur(prep(get('ArmSeg').clone())), fore: withArmFur(prep(get('ArmSeg').clone())), elbow: withArmFur(prep(get('Elbow').clone())) };
+    arm.up.position.set(0, 0, 0); arm.fore.position.set(0, 0, 0); arm.elbow.position.set(0, 0, 0);
+    arm.up.visible = arm.fore.visible = arm.elbow.visible = false;
+    scene.add(arm.up, arm.fore, arm.elbow); AV.arms.push(arm);
+    const h = hands[i], paw = withArmFur(prep(get('Paw').clone())); paw.position.set(0, 0, 0); paw.scale.setScalar(1.15);
+    h.paw.children.forEach(c => { if (c !== wrist.mesh) c.visible = false; });
+    h.paw.add(paw); h.paw.userData.fur = AV.armFur;
+    if (state.golden) { AV.armFur.color.set(0xffc83a); AV.armFur.emissive.set(0x553300); AV.armFur.metalness = .5; }
+  }
+  AV.ready = true;
+}, undefined, e => console.warn('Thumpling model did not load, using the simple paws', e));
+
+const _S = V(), _E = V(), _W = V(), _dir = V(), _pole = V(), _fw = V(), _up = V(0, 1, 0), _hq = new THREE.Quaternion();
+function placeSeg(m, a, b, sc) { _dir.subVectors(b, a); const L = _dir.length(); m.position.copy(a); m.quaternion.setFromUnitVectors(_up, _dir.multiplyScalar(1 / Math.max(L, 1e-5))); m.scale.set(sc, L, sc); }
+function poseAvatar(dt) {
+  if (!AV.ready) return;
+  const sc = avSc();
+  rig.updateMatrixWorld(); camera.updateMatrixWorld();
+  headWorld(_h);
+  // facing: where your head looks, flattened
+  if (state.xr || sim.on) camera.getWorldQuaternion(_hq); else _hq.copy(rig.quaternion).multiply(_q.setFromEuler(_eul.set(state.pitch, 0, 0)));
+  _fw.set(0, 0, -1).applyQuaternion(_hq); const yaw = Math.atan2(-_fw.x, -_fw.z);
+  AV.root.visible = true; AV.head.visible = true;
+  AV.root.position.set(_h.x - _fw.x * .03, _h.y - .85 * sc, _h.z - _fw.z * .03);
+  AV.root.rotation.set(0, yaw, 0); AV.root.scale.setScalar(sc);
+  // lean forward a little while you're in the air
+  const air = state.grounded ? 0 : 1; AV.torso.rotation.x += ((air ? -.15 : 0) - AV.torso.rotation.x) * Math.min(1, dt * 6);
+  AV.head.position.copy(_h); AV.head.quaternion.copy(_hq); AV.head.scale.setScalar(sc);
+  AV.root.updateMatrixWorld(true);
+  hands.forEach((h, i) => {
+    const arm = AV.arms[i]; if (!arm) return;
+    const show = h.paw.visible; arm.up.visible = arm.fore.visible = arm.elbow.visible = show; if (!show) return;
+    const side = h.side === 'left' ? 0 : 1;
+    AV.torso.localToWorld(_S.copy(SHOULDER[side]));
+    h.paw.updateMatrixWorld(); h.paw.localToWorld(_W.set(0, 0, .07));       // the wrist, just behind the cuff
+    const l1 = L_UP * sc, l2 = L_FORE * sc;
+    _dir.subVectors(_W, _S); let d = _dir.length(); _dir.multiplyScalar(1 / Math.max(d, 1e-5));
+    let a1 = l1, a2 = l2;
+    if (d > l1 + l2) { const k = d / (l1 + l2); a1 *= k; a2 *= k; }                 // cartoon stretch when you reach far
+    d = Math.max(d, 1e-3);
+    const a = (a1 * a1 - a2 * a2 + d * d) / (2 * d), hgt = Math.sqrt(Math.max(0, a1 * a1 - a * a));
+    // elbows point outward, down and back, like a real arm
+    _pole.set(side ? 1 : -1, -.7, .5).applyAxisAngle(_up, yaw); _pole.addScaledVector(_dir, -_pole.dot(_dir)).normalize();
+    _E.copy(_S).addScaledVector(_dir, a).addScaledVector(_pole, hgt);
+    placeSeg(arm.up, _S, _E, sc); placeSeg(arm.fore, _E, _W, sc * .95);
+    arm.elbow.position.copy(_E); arm.elbow.scale.setScalar(sc);
+  });
+}
+
+/* ======================= selfie mirror at spawn ======================= */
+const mirror = (() => {
+  const g = new THREE.Group(); g.position.set(-3.4, 0, -3.0); g.rotation.y = Math.atan2(3.4, 3.0); scene.add(g);
+  const r = new Reflector(new THREE.PlaneGeometry(1.5, 2.1), { textureWidth: 512, textureHeight: 720, color: 0xc8e6dd });
+  r.position.set(0, 1.35, .06); g.add(r); r.camera.layers.enable(SELF_LAYER);
+  const fm = mat(0x8a5a32);
+  [[0, 2.45, 1.8, .16], [0, .25, 1.8, .16], [-.83, 1.35, .16, 2.3], [.83, 1.35, .16, 2.3]].forEach(([x, y, w, h]) => { const b = shadowy(new THREE.Mesh(new THREE.BoxGeometry(w, h, .14), fm)); b.position.set(x, y, 0); g.add(b); });
+  const leaf = mat(0x4fd65a); for (let k = 0; k < 6; k++) { const l = new THREE.Mesh(new THREE.SphereGeometry(.12, 8, 6), leaf); l.scale.set(1, .4, .6); l.position.set(-.8 + k * .32, 2.58, .05); l.rotation.z = k % 2 ? .4 : -.4; g.add(l); }
+  addCol({ t: 0, x: g.position.x, y: 1.3, z: g.position.z, hx: .92, hy: 1.3, hz: .1, yaw: g.rotation.y, tag: 'wood' });
+  return r;
+})();
 
 /* ======================= audio (all synthesized) ======================= */
 let ac = null, master = null;
@@ -739,7 +821,7 @@ const sfxWin = () => { if (!ac) return; [523, 659, 784, 1046, 1318].forEach((f, 
 const sfxSqueak = () => { if (!ac) return; tone('sine', 900, 1500, .12, .25); tone('sine', 1300, 1900, .1, .2, .12); };
 
 /* ======================= game state ======================= */
-const state = { mode: 'menu', xr: false, got: 0, time: 0, running: false, done: false, lift: .35, vel: V(), grounded: false, wasStuck: false, velBuf: [], golden: false, claps: [], yaw: 0, pitch: 0, keys: {}, typed: '' };
+const state = { mode: 'menu', xr: false, got: 0, time: 0, running: false, done: false, size: 1, bodyH: .85, third: false, vel: V(), grounded: false, wasStuck: false, velBuf: [], golden: false, claps: [], yaw: 0, pitch: 0, keys: {}, typed: '' };
 window.__kg = { state, hands, rig, camera, colliders, berries, sim: { on: false, local: [V(-.25, 1, -.3), V(.25, 1, -.3)] }, step: null };
 const sim = window.__kg.sim;
 
@@ -749,7 +831,7 @@ function toast(msg, secs = 3) { const el = $('toast'); el.textContent = msg; el.
 function updateHud() { $('hudB').textContent = `🫐 ${state.got} / ${BERRIES_TOTAL}`; drawWrist(); }
 
 function respawn() {
-  rig.position.copy(SPAWN); rig.position.y -= (state.xr || sim.on) ? state.lift : 0;
+  rig.position.copy(SPAWN); rig.position.y += state.bodyH - eyeLocal(_e).y + .05;
   state.vel.set(0, 0, 0); state.velBuf.length = 0; state.wasStuck = false;
   hands.forEach(h => { h.stuck = false; h.ready = false; });
   if (!state.xr) { state.yaw = 0; state.pitch = 0; rig.rotation.y = 0; }
@@ -772,16 +854,18 @@ function launch() {
 /* ---------- body collision: feet, middle and head spheres ---------- */
 const bodyInfo = { nrm: V(), ground: false, bounce: null, col: null };
 const _h = V(), _p = V(), _p0 = V();
-function headWorld(out) { return rig.localToWorld(out.copy(camera.position)); }
+const _e = V();
+// where the critter's eyes are, in rig space (the desktop third-person camera floats behind them)
+function eyeLocal(out) { return (!state.xr && !sim.on && state.third) ? out.set(0, state.bodyH, 0) : out.copy(camera.position); }
+function headWorld(out) { return rig.localToWorld(eyeLocal(out)); }
 function resolveBody(stuck) {
   bodyInfo.nrm.set(0, 0, 0); bodyInfo.ground = false; bodyInfo.bounce = null; bodyInfo.col = null;
-  const lift = (state.xr || sim.on) ? state.lift : 0;
   for (let pass = 0; pass < 2; pass++) {
     rig.updateMatrixWorld(); headWorld(_h);
-    const feetY = rig.position.y + lift + .25;
+    const feetY = _h.y - state.bodyH + .25;   // your base hangs below your head, so you rest at critter height wherever your real head is
     const spheres = [[_h.x, feetY, _h.z, .25]];
     if (_h.y - feetY > .55) spheres.push([_h.x, (feetY + _h.y) / 2, _h.z, .24]);
-    spheres.push([_h.x, Math.max(_h.y, feetY), _h.z, .17]);
+    spheres.push([_h.x, _h.y, _h.z, .17]);
     for (const [x, y, z, r] of spheres) {
       _p.set(x, y, z); _p0.copy(_p);
       if (pushOut(_p, r, bodyInfo)) rig.position.add(_p.sub(_p0));
@@ -803,7 +887,7 @@ function bounceOff(c, k) {
 
 /* ---------- reading paws from XR (or from the test simulator) ---------- */
 const PAW_OFF = V(0, -.01, -.06);
-const _q = new THREE.Quaternion();
+const _q = new THREE.Quaternion(), _eul = new THREE.Euler();
 function readHands() {
   for (const h of hands) {
     h.tracked = false;
@@ -891,9 +975,18 @@ function stepDesktop(dt) {
   resolveBody(false);
   if (L > 0 && !state.running && !state.done) state.running = true;
   rig.rotation.y = state.yaw; camera.rotation.set(state.pitch, 0, 0);
-  // bob the desktop paws
+  // third-person camera orbits behind the critter
+  if (state.third) { camera.position.set(0, state.bodyH + .35 - Math.sin(state.pitch) * 2.4, Math.cos(state.pitch) * 2.4); camera.rotation.set(state.pitch, 0, 0); }
+  else camera.position.set(0, state.bodyH, 0);
+  // desktop paws swing as you run
   const t = performance.now() / 1000, moving = L > 0 && state.grounded;
-  deskPaws.forEach((p, i) => { const ph = t * (sp > 5 ? 11 : 8) + i * Math.PI; p.position.y = -.2 + (moving ? Math.sin(ph) * .03 : Math.sin(t * 2 + i) * .006); p.position.z = -.42 + (moving ? Math.cos(ph) * .04 : 0); });
+  rig.updateMatrixWorld(); camera.updateMatrixWorld();
+  hands.forEach((h, i) => {
+    const sd = i ? 1 : -1, ph = t * (sp > 5 ? 11 : 8) + i * Math.PI, sw = moving ? Math.sin(ph) : 0, bob = moving ? Math.cos(ph) * .03 : Math.sin(t * 2 + i) * .006;
+    if (state.third) { h.pos.set(sd * .3 * avSc(), .14 * avSc() + bob + (state.grounded ? 0 : .35), -.1 - sw * .22).applyQuaternion(rig.quaternion); h.pos.add(rig.position); h.paw.quaternion.copy(rig.quaternion); }
+    else { camera.localToWorld(h.pos.set(sd * .2, -.2 + bob, -.42 + sw * .04)); camera.getWorldQuaternion(h.paw.quaternion).multiply(_q.setFromEuler(_eul.set(.5, 0, 0))); }
+    h.paw.position.copy(h.pos); h.paw.visible = true;
+  });
 }
 
 /* ---------- claps (secret #2) ---------- */
@@ -964,7 +1057,7 @@ function collectCheck() {
   });
   if (acorn.visible && (_h.distanceTo(acorn.position) < .7 || hands.some(h => h.tracked && h.pos.distanceTo(acorn.position) < .4))) {
     acorn.visible = false; state.golden = true; state.secrets.add('acorn');
-    [...hands.map(h => h.paw), ...deskPaws].forEach(p => { p.userData.fur.color.set(0xffc83a); p.userData.fur.emissive.set(0x553300); p.userData.fur.metalness = .5; });
+    [...hands.map(h => h.paw.userData.fur), AV.armFur].forEach(m => { if (!m) return; m.color.set(0xffc83a); m.emissive.set(0x553300); m.metalness = .5; });
     confetti(acorn.position, 100, [0xffc83a, 0xffffff, 0xff9a00]); sfxWin(); toast('✨ Secret found: GOLDEN PAWS!', 4);
   }
 }
@@ -1001,6 +1094,7 @@ function animateWorld(dt, t) {
 addEventListener('keydown', e => {
   state.keys[e.code] = true;
   if (e.code === 'KeyR' && state.mode === 'play') respawn();
+  if (e.code === 'KeyV' && state.mode === 'play' && !state.xr) { state.third = !state.third; camera.layers[state.third ? 'enable' : 'disable'](SELF_LAYER); }
   if (e.code === 'Escape' && state.mode === 'play' && !state.xr) openMenu();
   if (e.key && e.key.length === 1) { state.typed = (state.typed + e.key.toLowerCase()).slice(-4); if (state.typed === 'bonk' && state.mode === 'play') clapParty(); }
   if (state.mode === 'play' && ['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
@@ -1025,18 +1119,18 @@ canvas.addEventListener('pointerdown', e => {
 addEventListener('pointerup', () => { dragging = false; });
 document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && state.mode === 'play' && !state.xr && !dragging) openMenu(); });
 
-function openMenu() { state.mode = 'menu'; $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true; deskPaws.forEach(p => p.visible = false); }
+function openMenu() { state.mode = 'menu'; $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true; hands.forEach(h => h.paw.visible = false); }
 function startDesktop() {
   audioOn(); state.mode = 'play'; $('menu').hidden = true; $('hud').hidden = false; $('cross').hidden = false;
-  deskPaws.forEach(p => p.visible = true); hands.forEach(h => h.paw.visible = false);
-  camera.position.set(0, 1.45, 0);
+  camera.position.set(0, state.bodyH, 0);
   if (state.done || (!state.running && state.got === 0)) { resetRun(); respawn(); }
   try { const r = canvas.requestPointerLock && canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
-  toast('🐾 WASD to run, Space to jump. Find the glow berries!', 3.5);
+  toast('🐾 WASD to run, Space to jump, V to see yourself. Find the glow berries!', 4);
 }
 $('btnDesk').onclick = startDesktop;
-$('btnSize').onclick = () => { state.lift = state.lift > .2 ? .1 : .35; $('btnSize').textContent = state.lift > .2 ? 'Small' : 'Tall'; store.set('kg-lift', state.lift); };
-if (store.get('kg-lift')) { state.lift = parseFloat(store.get('kg-lift')) || .35; $('btnSize').textContent = state.lift > .2 ? 'Small' : 'Tall'; }
+function setSize(i) { state.size = (i + SIZES.length) % SIZES.length; state.bodyH = SIZES[state.size].h; $('btnSize').textContent = SIZES[state.size].name; store.set('kg-size', state.size); if (!state.xr && state.mode === 'play') camera.position.y = state.bodyH; }
+$('btnSize').onclick = () => setSize(state.size + 1);
+setSize(store.get('kg-size') !== null ? parseInt(store.get('kg-size')) || 0 : 1);
 showBest();
 
 /* ---------- XR controllers ---------- */
@@ -1085,13 +1179,13 @@ async function setupVR() {
       const s = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] });
       renderer.xr.setFoveation(1);
       await renderer.xr.setSession(s);
-      state.xr = true; state.mode = 'play'; $('menu').hidden = true; deskPaws.forEach(p => p.visible = false);
+      state.xr = true; state.mode = 'play'; $('menu').hidden = true;
       rig.rotation.y = 0; camera.rotation.set(0, 0, 0);
       resetRun(); respawn();
       setTimeout(() => toast('🐾 Slap the ground and push!', 3), 600);
       s.addEventListener('end', () => {
         state.xr = false; hands.forEach(h => { h.paw.visible = false; h.stuck = false; }); vrToastMesh.visible = false;
-        camera.position.set(0, 1.45, 0); camera.quaternion.identity(); openMenu(); respawn();
+        camera.position.set(0, state.bodyH, 0); camera.quaternion.identity(); openMenu(); respawn();
       });
     } catch (e) { note.textContent = 'The headset refused to start VR: ' + e.message; }
   };
@@ -1108,9 +1202,11 @@ function update(dt) {
   if (state.mode === 'play') {
     if (state.xr || sim.on) { pollGamepads(); stepArms(dt); } else stepDesktop(dt);
     if (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45) respawn();
+    poseAvatar(dt);
     collectCheck();
     if (state.running) { state.time += dt; $('hudT').textContent = fmtTime(state.time); const s = Math.floor(state.time); if (state.xr && s !== lastWristSec) { lastWristSec = s; drawWrist(); } }
   } else if (!state.xr) { // menu: slow orbit of the grove
+    AV.root.visible = false; if (AV.head) AV.head.visible = false; AV.arms.forEach(a => a.up.visible = a.fore.visible = a.elbow.visible = false);
     rig.position.set(Math.sin(tAll * .05) * 14, 3, Math.cos(tAll * .05) * 14); rig.rotation.y = tAll * .05; camera.rotation.set(-.12, 0, 0);
   }
   animateWorld(dt, tAll); stepFx(dt);
@@ -1118,6 +1214,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
+  mirror.visible = rig.position.distanceTo(mirror.parent.position) < 14;
 }
 window.__kg.step = (dt, n = 1) => { for (let i = 0; i < n; i++) update(dt); };
 window.__kg.start = () => { state.mode = 'play'; $('menu').hidden = true; resetRun(); respawn(); };
