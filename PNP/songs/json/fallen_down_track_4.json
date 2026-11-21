@@ -1,0 +1,175 @@
+{
+  "format": "pnp-chart",
+  "version": 1,
+  "title": "Fallen Down Track 4",
+  "artist": "Unknown",
+  "difficulty": 1,
+  "bpm": 120,
+  "source": "Fallen Down.mid",
+  "track": 4,
+  "instrument": "Acoustic Grand Piano",
+  "noteCount": 22,
+  "length": 39.375,
+  "range": {
+    "low": "E2",
+    "high": "E4",
+    "lowMidi": 40,
+    "highMidi": 64
+  },
+  "notes": [
+    {
+      "note": "G2",
+      "midi": 43,
+      "time": 0.0,
+      "duration": 3.5,
+      "velocity": 64
+    },
+    {
+      "note": "F#2",
+      "midi": 42,
+      "time": 5.0,
+      "duration": 3.562,
+      "velocity": 64
+    },
+    {
+      "note": "E2",
+      "midi": 40,
+      "time": 10.062,
+      "duration": 1.0,
+      "velocity": 64
+    },
+    {
+      "note": "A2",
+      "midi": 45,
+      "time": 12.562,
+      "duration": 1.0,
+      "velocity": 64
+    },
+    {
+      "note": "C#4",
+      "midi": 61,
+      "time": 14.062,
+      "duration": 0.25,
+      "velocity": 64
+    },
+    {
+      "note": "E4",
+      "midi": 64,
+      "time": 14.062,
+      "duration": 0.75,
+      "velocity": 64
+    },
+    {
+      "note": "A3",
+      "midi": 57,
+      "time": 14.312,
+      "duration": 0.25,
+      "velocity": 64
+    },
+    {
+      "note": "C#4",
+      "midi": 61,
+      "time": 14.562,
+      "duration": 0.25,
+      "velocity": 64
+    },
+    {
+      "note": "A#2",
+      "midi": 46,
+      "time": 15.062,
+      "duration": 1.0,
+      "velocity": 64
+    },
+    {
+      "note": "B2",
+      "midi": 47,
+      "time": 17.562,
+      "duration": 0.5,
+      "velocity": 64
+    },
+    {
+      "note": "A2",
+      "midi": 45,
+      "time": 18.812,
+      "duration": 0.5,
+      "velocity": 64
+    },
+    {
+      "note": "G2",
+      "midi": 43,
+      "time": 20.062,
+      "duration": 3.5,
+      "velocity": 64
+    },
+    {
+      "note": "F#2",
+      "midi": 42,
+      "time": 25.062,
+      "duration": 3.562,
+      "velocity": 64
+    },
+    {
+      "note": "E2",
+      "midi": 40,
+      "time": 30.125,
+      "duration": 1.0,
+      "velocity": 64
+    },
+    {
+      "note": "A2",
+      "midi": 45,
+      "time": 32.625,
+      "duration": 1.0,
+      "velocity": 64
+    },
+    {
+      "note": "C#4",
+      "midi": 61,
+      "time": 34.125,
+      "duration": 0.25,
+      "velocity": 64
+    },
+    {
+      "note": "E4",
+      "midi": 64,
+      "time": 34.125,
+      "duration": 0.75,
+      "velocity": 64
+    },
+    {
+      "note": "A3",
+      "midi": 57,
+      "time": 34.375,
+      "duration": 0.25,
+      "velocity": 64
+    },
+    {
+      "note": "C#4",
+      "midi": 61,
+      "time": 34.625,
+      "duration": 0.25,
+      "velocity": 64
+    },
+    {
+      "note": "A#2",
+      "midi": 46,
+      "time": 35.125,
+      "duration": 1.0,
+      "velocity": 64
+    },
+    {
+      "note": "B2",
+      "midi": 47,
+      "time": 37.625,
+      "duration": 0.5,
+      "velocity": 64
+    },
+    {
+      "note": "A2",
+      "midi": 45,
+      "time": 38.875,
+      "duration": 0.5,
+      "velocity": 64
+    }
+  ]
+}
