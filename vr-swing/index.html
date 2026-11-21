@@ -1838,21 +1838,47 @@ pileMat.onBeforeCompile = sh => {
     .replace('#include <common>', '#include <common>\n' + SLOT_GLSL + '\nattribute vec4 orig; attribute float hot; attribute float kind; varying vec4 vOrig; varying float vHot; varying float vKind;')
     .replace('#include <beginnormal_vertex>', 'mat4 kgM = kgSlot(slot);\n#include <beginnormal_vertex>\nobjectNormal = mat3(kgM) * objectNormal;')
     .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = (kgM * vec4(transformed, 1.)).xyz; vOrig = orig; vHot = hot; vKind = kind;');
-  // cut faces (orig.w = 1) show the inside: a soft swirl with a thin rind of the outer colour round the edge,
-  // and they start out glowing like the blade was red hot: yellow-white, then orange, then cool
+  // cut faces (orig.w = 1) show the inside: a soft swirl with a thin rind of the outer colour round the edge.
+  // Fresh cuts are MELTED, like the blade was red hot: bubbly flowing lava that slowly crusts over into dark rock
+  // with glowing cracks, then cools back to the normal inside. The lava is bumpy too (the light catches the blobs).
+  const NOISE = `float kgHs(vec3 p){ p = fract(p * .3183099 + .1); p *= 17.; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+    float kgN(vec3 x){ vec3 i = floor(x), f = fract(x); f = f * f * (3. - 2. * f);
+      return mix(mix(mix(kgHs(i), kgHs(i + vec3(1., 0., 0.)), f.x), mix(kgHs(i + vec3(0., 1., 0.)), kgHs(i + vec3(1., 1., 0.)), f.x), f.y),
+                 mix(mix(kgHs(i + vec3(0., 0., 1.)), kgHs(i + vec3(1., 0., 1.)), f.x), mix(kgHs(i + vec3(0., 1., 1.)), kgHs(i + vec3(1., 1., 1.)), f.x), f.y), f.z); }
+    float kgF(vec3 p){ return .55 * kgN(p) + .3 * kgN(p * 2.03 + 7.1) + .15 * kgN(p * 4.1 + 3.3); }
+    vec3 kgRamp(float x){ vec3 c = mix(vec3(.3, .02, .01), vec3(.92, .13, .02), smoothstep(0., .4, x)); c = mix(c, vec3(1., .46, .05), smoothstep(.38, .78, x)); return mix(c, vec3(1., .88, .45), smoothstep(.8, 1., x)); }`;
   sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', `#include <common>\nuniform vec3 uOut[${NK}]; uniform vec3 uIns[${NK}]; uniform float uHalf[${NK}]; uniform float uTime; varying vec4 vOrig; varying float vHot; varying float vKind;`)
+    .replace('#include <common>', `#include <common>\nuniform vec3 uOut[${NK}]; uniform vec3 uIns[${NK}]; uniform float uHalf[${NK}]; uniform float uTime; varying vec4 vOrig; varying float vHot; varying float vKind;\n${NOISE}`)
     .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `int kk = int(vKind + .5); vec3 kOut = uOut[kk]; float kHalf = uHalf[kk];
-      vec4 diffuseColor = vec4( kOut, opacity ); vec3 kgHot = vec3(0.);
+      vec4 diffuseColor = vec4( kOut, opacity ); vec3 kgHot = vec3(0.); float kgBump = 0., kgMelt = 0.;
       if (vOrig.w > .5) {
         vec3 o = vOrig.xyz; float mx = max(abs(o.x), max(abs(o.y), abs(o.z)));
         float sw = sin(o.x * 61. + sin(o.y * 47. + o.z * 13.) * 2.4 + o.z * 39.) * .5 + .5;
         float rind = smoothstep(kHalf - .017, kHalf - .008, mx);
         diffuseColor.rgb = mix(uIns[kk] * (.92 + .12 * sw), kOut * .92, rind);
-        float age = uTime - vHot, h = age >= 0. ? exp(-age * .75) : 0.;
-        kgHot = mix(vec3(1., .28, .03), vec3(1., .92, .5), h * h) * h * (.45 + 1.7 * smoothstep(kHalf - .05, kHalf - .004, mx));
+        float age = max(uTime - vHot, 0.), h = exp(-age * .5);
+        if (h > .01) {
+          // the lava flows fast at first, then slows and sets as it cools
+          float tf = 1.6 * (1. - exp(-age * .7)), on = smoothstep(.01, .09, h);
+          vec3 q = o * 24.;
+          vec3 wq = vec3(kgN(q * .6 + vec3(0., tf, 0.)), kgN(q * .6 + vec3(5.2, -tf, 1.3)), kgN(q * .6 + vec3(2.1, 1.7, tf)));
+          float n = kgF(q + wq * 2.4 + vec3(0., -tf * 1.4, 0.)), n2 = kgN(q * 1.3 + wq * 1.8 + 11.);
+          float molten = smoothstep(-.07, .07, n - (1. - h) * .95);                  // crust grows in from the cool spots
+          float crack = (1. - smoothstep(.0, .045, abs(n2 - .5))) * smoothstep(.02, .35, h);   // glowing cracks between crust plates
+          float rim = smoothstep(kHalf - .05, kHalf - .004, mx);                     // where the blade came out is hottest
+          float lava = molten * (.45 + .55 * smoothstep(.25, .8, n));                // bright bubbly blobs, deeper orange between them
+          float heat = max(max(lava, crack * .7), rim * h) * on, temp = clamp(heat * (.25 + .8 * h), 0., 1.);
+          kgHot = kgRamp(temp) * heat * (.3 + .9 * temp);
+          diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(.1, .05, .04), vec3(.25, .04, .01), molten), smoothstep(.02, .45, h) * .92);   // dark scorched rock under the glow
+          kgBump = (n * .0045 + molten * .0015) * smoothstep(.01, .3, h);           // lumpy, not a flat plate
+          kgMelt = h * molten;
+        }
       }`)
-    .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, .72, step(.5, vOrig.w));')
+    .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+      { float bx = dFdx(kgBump), by = dFdy(kgBump);
+        if (bx != 0. || by != 0.) { vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition), r1 = cross(sy, normal), r2 = cross(normal, sx); float det = dot(sx, r1);
+          vec3 g = sign(det) * (bx * r1 + by * r2); vec3 nn = abs(det) * normal - g; if (dot(nn, nn) > 1e-20) normal = normalize(nn); } }`)
+    .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(mix(roughnessFactor, .72, step(.5, vOrig.w)), .3, kgMelt);')
     .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += kgHot;');
 };
 pileMat.customProgramCacheKey = () => 'kgPile';
@@ -2276,7 +2302,7 @@ const seam = (() => {
 function addSeam(pc, seg, c, hold) {
   if (!seg.length) return;
   const s = Float32Array.from(seg); for (let i = 0; i < s.length; i += 9) { s[i] -= c.x; s[i + 1] -= c.y; s[i + 2] -= c.z; s[i + 3] -= c.x; s[i + 4] -= c.y; s[i + 5] -= c.z; }
-  seam.list.push({ pc, s, t0: tAll, hold });
+  seam.list.push({ pc, s, t0: tAll, hold, dripT: .12 + rnd() * .2, drips: 0 });
 }
 const _sa = V(), _sb = V(), _sn = V(), _sd = V(), _sw = V(), _sq = new THREE.Quaternion(), _sT = V();
 function seamQuad(a, b, n, w, k) {   // two crossed strips along a->b, so the line reads from any angle
@@ -2298,7 +2324,10 @@ function stepSeams() {
     const age = tAll - e.t0 - (pc.frz > 0 ? 1e9 : e.hold), k = age < 0 ? 1 : Math.exp(-age * 2.4);
     if (!pc.body || k < .03) { seam.list.splice(i, 1); continue; }
     bodyXf(pc); const w = clamp(pc.rad * .028, .0028, .008), s = e.s;
-    for (let j = 0; j < s.length; j += 9) { xf(pc, _sa, s[j], s[j + 1], s[j + 2]); xf(pc, _sb, s[j + 3], s[j + 4], s[j + 5]); _sn.set(s[j + 6], s[j + 7], s[j + 8]).applyQuaternion(_sq); seamQuad(_sa, _sb, _sn, w, k); }
+    let lowY = 1e9, lowJ = -1; const canDrip = age > 0 && age < 1.5 && e.drips < 3 + pc.rad * 12 && (e.dripT -= AR.dt) <= 0;
+    for (let j = 0; j < s.length; j += 9) { xf(pc, _sa, s[j], s[j + 1], s[j + 2]); xf(pc, _sb, s[j + 3], s[j + 4], s[j + 5]); _sn.set(s[j + 6], s[j + 7], s[j + 8]).applyQuaternion(_sq); seamQuad(_sa, _sb, _sn, w, k);
+      if (canDrip && _sa.y < lowY) { lowY = _sa.y; lowJ = j; } }
+    if (lowJ >= 0) { e.dripT = .22 + rnd() * .35; e.drips++; drip(pc, s[lowJ], s[lowJ + 1], s[lowJ + 2]); }
   }
   // cuts in progress: a hot line where the blade went in and where it comes out
   for (const pc of AR.pieces) {
@@ -2345,6 +2374,59 @@ function stepSparks(dt) {
   sparks.geo.attributes.position.needsUpdate = true; sparks.geo.attributes.color.needsUpdate = true;
 }
 
+/* ---- molten drips: fresh cuts drip little blobs of glowing goo that splat and cool on whatever is below ---- */
+const DRIP_N = 96;
+const drips = (() => {
+  const pos = new Float32Array(DRIP_N * 3).fill(-500), col = new Float32Array(DRIP_N * 3), sz = new Float32Array(DRIP_N);
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage)); geo.setAttribute('sz', new THREE.BufferAttribute(sz, 1).setUsage(THREE.DynamicDrawUsage));
+  geo.boundingSphere = new THREE.Sphere(V(), 80);
+  const m = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, fog: false, vertexColors: true,
+    vertexShader: 'attribute float sz; varying vec3 vC; void main(){ vC = color; vec4 mv = modelViewMatrix * vec4(position, 1.); gl_PointSize = sz * projectionMatrix[1][1] * 600. / -mv.z; gl_Position = projectionMatrix * mv; }',
+    fragmentShader: 'varying vec3 vC; void main(){ vec2 d = gl_PointCoord - .5; float r = length(d) * 2.; if (r > 1.) discard; gl_FragColor = vec4(vC * (1.25 - .45 * r), smoothstep(1., .55, r)); }' });
+  const pts = new THREE.Points(geo, m); pts.frustumCulled = false; pts.renderOrder = 3; arena.add(pts);
+  return { pos, col, sz, geo, v: new Float32Array(DRIP_N), land: new Float32Array(DRIP_N), life: new Float32Array(DRIP_N), hang: new Float32Array(DRIP_N), i: 0, alive: 0 };
+})();
+const _dripRay = { o: { x: 0, y: 0, z: 0 }, d: { x: 0, y: -1, z: 0 } }, _dripQ = new THREE.Quaternion(), _dp = V();
+drips.pc = new Array(DRIP_N).fill(null); drips.loc = new Float32Array(DRIP_N * 3); drips.rare = new Uint8Array(DRIP_N); const _dripC = new THREE.Color();
+function dripAt(pc, i) {   // where a hanging drip is now: stuck to the rim of its piece, which may be moving
+  const t = pc.body.translation(), r = pc.body.rotation();
+  _dp.set(drips.loc[i * 3], drips.loc[i * 3 + 1], drips.loc[i * 3 + 2]).applyQuaternion(_dripQ.set(r.x, r.y, r.z, r.w)).add(_a1.set(t.x, t.y, t.z));
+  drips.pos[i * 3] = _dp.x; drips.pos[i * 3 + 1] = _dp.y - .005; drips.pos[i * 3 + 2] = _dp.z;
+}
+function drip(pc, lx, ly, lz) {
+  const i = drips.i = (drips.i + 1) % DRIP_N;
+  drips.pc[i] = pc; drips.loc.set([lx, ly, lz], i * 3); dripAt(pc, i);
+  drips.v[i] = 0; drips.rare[i] = rnd() < 1 / 30 ? 1 : 0; drips.hang[i] = .18 + rnd() * .27; drips.life[i] = 2.8; drips.land[i] = -1e9; drips.alive = 3.2;
+}
+function dripFall(i) {   // let go of the rim: find where it will land (floor, a pedestal, the other half...)
+  const P = drips.pos, body = drips.pc[i] && drips.pc[i].body; drips.pc[i] = null;
+  let land = 0;
+  if (AR.R && AR.world) { _dripRay.o.x = P[i * 3]; _dripRay.o.y = P[i * 3 + 1]; _dripRay.o.z = P[i * 3 + 2];
+    const hit = AR.world.castRay(new AR.R.Ray(_dripRay.o, _dripRay.d), 6, true, undefined, undefined, undefined, body || undefined);
+    if (hit) land = P[i * 3 + 1] - (hit.timeOfImpact ?? hit.toi ?? 0); }
+  drips.land[i] = Math.min(P[i * 3 + 1], land + .004);
+}
+function stepDrips(dt) {
+  if (drips.alive <= 0) return; drips.alive -= dt;
+  const P = drips.pos, C = drips.col, Z = drips.sz;
+  for (let i = 0; i < DRIP_N; i++) {
+    if (drips.life[i] <= 0) { if (P[i * 3 + 1] > -400) { P[i * 3 + 1] = -500; Z[i] = 0; drips.pc[i] = null; } continue; }
+    const l = drips.life[i] -= dt; let heat = 1;
+    if (drips.hang[i] > 0) {                                     // swells on the rim...
+      drips.hang[i] -= dt; const pc = drips.pc[i];
+      if (pc && pc.body && !pc.dying) dripAt(pc, i); else drips.hang[i] = 0;
+      Z[i] = .008 + .01 * clamp(1 - drips.hang[i] / .45, 0, 1);
+      if (drips.hang[i] <= 0) dripFall(i);
+    } else if (P[i * 3 + 1] > drips.land[i]) {                   // ...falls...
+      drips.v[i] -= 9.8 * dt; P[i * 3 + 1] = Math.max(drips.land[i], P[i * 3 + 1] + drips.v[i] * dt); Z[i] = .016;
+      if (P[i * 3 + 1] <= drips.land[i]) { drips.life[i] = Math.min(l, 1.7); if (drips.rare[i]) { if (ac) { tone('sine', 1320, 1760, .2, .07); tone('sine', 1980, 2640, .25, .05, .08); } } else if (rnd() < .4) sfxPlip(); }
+    } else { heat = clamp(l / 1.7, 0, 1); Z[i] = .025 * (1.25 - .45 * heat); }   // ...splats flat and cools down
+    C[i * 3] = .5 + .5 * heat; C[i * 3 + 1] = .07 + .62 * heat * heat; C[i * 3 + 2] = .02 + .22 * heat * heat * heat;
+    if (drips.rare[i]) { _dripC.setHSL((tAll * .9 + i * .13) % 1, 1, .45 + .2 * heat); C[i * 3] = _dripC.r; C[i * 3 + 1] = _dripC.g; C[i * 3 + 2] = _dripC.b; }
+  }
+  drips.geo.attributes.position.needsUpdate = true; drips.geo.attributes.color.needsUpdate = true; drips.geo.attributes.sz.needsUpdate = true;
+}
+
 /* ---- sounds ---- */
 function sfxSlice(vol) {
   if (!ac) return; const t = ac.currentTime, n = noise(), f = ac.createBiquadFilter(), g = ac.createGain();
@@ -2355,6 +2437,7 @@ function sfxSlice(vol) {
   tone('sine', p * 1.6, p, .07, .16);
 }
 const sfxSizzle = () => { if (!ac) return; const t = ac.currentTime, n = noise(), f = ac.createBiquadFilter(), g = ac.createGain(); f.type = 'highpass'; f.frequency.value = 3800; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.1, t + .03); g.gain.exponentialRampToValueAtTime(.001, t + .5); n.connect(f); f.connect(g); g.connect(master); n.start(t); n.stop(t + .55); };
+const sfxPlip = () => { if (!ac) return; const t = ac.currentTime, n = noise(), f = ac.createBiquadFilter(), g = ac.createGain(); f.type = 'highpass'; f.frequency.value = 5200; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.035, t + .01); g.gain.exponentialRampToValueAtTime(.001, t + .18); n.connect(f); f.connect(g); g.connect(master); n.start(t); n.stop(t + .2); };
 const sfxAnime = () => { if (!ac) return; tone('sine', 2900, 2700, .6, .1); tone('triangle', 4400, 4300, .35, .05, .02); };
 const sfxSlide = () => { if (!ac) return; const t = ac.currentTime, n = noise(), f = ac.createBiquadFilter(), g = ac.createGain(); f.type = 'lowpass'; f.frequency.setValueAtTime(2400, t); f.frequency.exponentialRampToValueAtTime(300, t + .35); g.gain.setValueAtTime(.25, t); g.gain.exponentialRampToValueAtTime(.001, t + .4); n.connect(f); f.connect(g); g.connect(master); n.start(t); n.stop(t + .42); tone('sine', 160, 70, .2, .25, .3); };
 const sfxShing = () => { if (!ac) return; tone('triangle', 1800, 2600, .35, .12); tone('sine', 3200, 3900, .45, .08, .03); sfxTap('rock', .4); };
@@ -2667,7 +2750,7 @@ function stepArena(dt) {
   } else AR.bladeOk = false;
   AR.b0.copy(AR.b1); AR.t0.copy(AR.t1);
   for (let i = 0; i < 2 && AR.cutQ.length; i++) { const c = AR.cutQ.shift(); cutPiece(c.pc, c); }
-  stepTrail(dt); stepSeams(); stepSparks(dt); pileTidy();
+  stepTrail(dt); AR.dt = dt; stepSeams(); stepSparks(dt); stepDrips(dt); pileTidy();
   checkButtons(dt);
   if ((AR.signT = (AR.signT || 0) + dt) > .25) { AR.signT = 0; megaSign(); }
 }
@@ -2687,7 +2770,7 @@ function stepTrail(dt) {
   trail.geo.attributes.position.needsUpdate = true; trail.geo.attributes.a.needsUpdate = true;
 }
 try { renderer.compile(arena, camera, scene); } catch (e) {}
-window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
+window.__kg.arena = { AR, sword, buttons, PEDS, ARENA, PILE, KINDS, MEGA_AT, seam, drips, travel, takeSword, releaseSword, grabAny, dropAny, holdPiece, releasePiece, cutPiece, planeCut, pressButton, startSwing, deskInteract, spawnSet, spawnMega };
 </script>
 </body>
 </html>
