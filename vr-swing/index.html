@@ -1225,7 +1225,9 @@ function readHands() {
     if (!h.tracked) continue;
     rig.localToWorld(h.target.copy(h.local));
     if (!h.off) h.off = V();
-    if (h.holding) { _q2.copy(rig.quaternion).multiply(h.q); h.off.set(0, -.015, -(.085 + h.holding.r)).applyQuaternion(_q2); } else h.off.set(0, 0, 0);
+    if (h.holding) { _q2.copy(rig.quaternion).multiply(h.q); h.off.set(0, -.015, -(.085 + h.holding.r)).applyQuaternion(_q2); }
+    else if (h.sword && state.area === 'arena') { _q2.copy(rig.quaternion).multiply(h.q); h.off.copy(SW_REACH).applyQuaternion(_q2); }
+    else h.off.set(0, 0, 0);
     h.target.add(h.off); h.cr = h.holding ? h.holding.r : PAW_R;
     if (!h.ready || h.reset) { h.prev.copy(h.target); h.pos.copy(h.target); h.ready = true; h.reset = false; }
   }
@@ -2696,13 +2698,13 @@ function paneBuild(pane) {   // (re)make the pane's fixed piece from its outline
   // a paw resting on glass that is gone now lets go
   for (const h of hands) if (h.stuck && h.col && h.col.pane === pane) { toPane(pane, _g4.copy(h.sp).sub(ARENA), _g1); if (!glassAt(pane, _g1.x, _g1.y, PAW_R * .4)) h.stuck = false; }
 }
-function paneFresh(pane) { pane.polys = [[[-pane.W / 2, 0], [pane.W / 2, 0], [pane.W / 2, pane.H], [-pane.W / 2, pane.H]]]; pane.crk = []; pane.shown = 0; pane.dmg = []; pane.seq = []; pane.trace = null; crackGeo(pane); }
+function paneFresh(pane) { pane.polys = [[[-pane.W / 2, 0], [pane.W / 2, 0], [pane.W / 2, pane.H], [-pane.W / 2, pane.H]]]; pane.crk = []; pane.shown = 0; pane.dmg = []; pane.seq = []; pane.trace = null; pane.stab = null; crackGeo(pane); }
 function glassReset() {   // fresh panes (the yard's RESET button, or a new room)
   GL.epoch++;
   for (const pane of GL.panes) { paneFresh(pane); pane.gen = 0; pane.kind = GLASS_K; paneBuild(pane); }
 }
 const toPane = (pane, arenaP, out) => out.copy(arenaP).sub(pane.pos).applyQuaternion(pane.qi);
-const toughOf = T => Math.pow(T / .012, .9);   // thicker glass is tougher
+const toughOf = T => Math.pow(T / .012, 1.5);   // thicker glass is way tougher (3 mm ~0.13x, 35 mm ~5x)
 
 /* ---------- the glass is solid: paws, heads and bodies bump into it (collider type 3) ---------- */
 const _g5 = V();
@@ -2989,7 +2991,7 @@ const TINK_NOTES = [1568, 1760, 2093, 2349, 2637, 3136, 3520];
 function glassHit(pane, x, y, s, vW, opt = {}) {
   if (!glassAt(pane, x, y, .01)) return 'miss';
   x = clamp(x, -pane.W / 2, pane.W / 2); y = clamp(y, 0, pane.H);
-  const tf = toughOf(pane.T), TK = GL_TINK * tf, BR = GL_BREAK * tf;
+  const tf = toughOf(pane.T), TK = GL_TINK * Math.sqrt(tf), BR = Math.max(GL_BREAK * tf, TK * 1.15);
   if (s < TK && !opt.through) {
     if (tAll - pane.tinkT < .09) return 'tink'; pane.tinkT = tAll;
     const z = clamp(Math.floor(y / pane.H * 7), 0, 6); sfxTink(TINK_NOTES[z] / Math.sqrt(tf), clamp(.08 + s / tf * .12, .08, .25));
@@ -3011,9 +3013,10 @@ function glassHit(pane, x, y, s, vW, opt = {}) {
     return 'break';
   }
   const segs = makeCracks(pane, x, y, k);
-  pane.dmg.push([x, y, .35 + k * .6]); addCracks(pane, segs); sfxCrack(.4 + k * .6);
+  const dm = (.35 + k * .6) / Math.max(1, Math.pow(tf, .8));   // tough glass shrugs off each crack: it takes many more hits
+  pane.dmg.push([x, y, dm]); addCracks(pane, segs); sfxCrack(.4 + k * .6);
   glitBurst(pane.pos.clone().add(_g2.set(x, y, 0).applyQuaternion(pane.q)), 4, vW);
-  netSend({ t: 'gl', op: 'crk', i: pane.i, x, y, d: .35 + k * .6, c: segs });
+  netSend({ t: 'gl', op: 'crk', i: pane.i, x, y, d: dm, c: segs });
   return 'crack';
 }
 function paneRainbow(pane) {
@@ -3028,6 +3031,7 @@ function glassNet(d) {
     if (d.op === 'pbrk') { const pc = AR.byId.get(d.id); if (pc) pieceShatter(pc, d.x, d.y, d.R, d.s, V(...d.v)); return; }
     if (d.op === 'thk') { labSet(d.k, true); return; }
     const pane = GL.panes[d.i]; if (!pane) return;
+    if (d.op === 'stm') { steamBurst(pane.pos.clone().add(_g2.set(d.x, d.y, 0).applyQuaternion(pane.q)), pane.n, d.k >= 2 ? 70 : 3 + Math.round(d.k * 6), d.k >= 2 ? 1.7 : .4 + d.k); sfxHiss(d.k >= 2 ? 1.4 : .3 + d.k * .6); return; }
     if (d.op === 'brk') paneShatter(pane, d.x, d.y, d.R, d.s, V(...d.v), d.sy || 1);
     else if (d.op === 'crk') { addCracks(pane, d.c); pane.dmg.push([d.x, d.y, d.d]); sfxCrack(.6); }
     else if (d.op === 'cut') paneCarve(pane, d.n[0], d.n[1], d.d, V(...d.v));
@@ -3131,7 +3135,7 @@ function stepGlassPre(dt) {
     if (sp > 2.5) for (const pane of GL.panes) {
       toPane(pane, _g4.set(t.x, t.y, t.z), _g1); _g2.set(v.x, v.y, v.z).applyQuaternion(pane.qi);
       if (Math.abs(_g1.z) < .4 && _g1.z * _g2.z < 0 && Math.abs(_g1.z) < Math.abs(_g2.z) * dt * 2 + .05 && glassAt(pane, _g1.x, _g1.y, .05) && !(tAll - pane.hitT < .3))
-        glassHit(pane, _g1.x, _g1.y, Math.max(GL_BREAK * toughOf(pane.T), sp), V(v.x, v.y, v.z), { R: .14 });
+        glassHit(pane, _g1.x, _g1.y, sp >= GL_BREAK * toughOf(pane.T) * .7 ? Math.max(GL_BREAK * toughOf(pane.T), sp) : sp, V(v.x, v.y, v.z), { R: .14 });
     }
   }
 }
@@ -3141,8 +3145,8 @@ function glassBlade(dt) {
   if (Math.max(AR.b0.distanceTo(AR.b1), AR.t0.distanceTo(AR.t1)) > .9) { GL.panes.forEach(p => traceEnd(p)); return; }
   const desk = !(state.xr || sim.on);
   for (const pane of GL.panes) {
-    if (!pane.pc) { pane.trace = null; continue; }
-    const tf = toughOf(pane.T), CARVE = GL_CARVE * Math.sqrt(tf);
+    if (!pane.pc) { pane.trace = null; pane.stab = null; continue; }
+    const tf = toughOf(pane.T), CARVE = GL_CARVE * Math.max(.8, Math.pow(tf, .7));
     let best = -1, bx = 0, by = 0, touch = false; const mv = V(), ax = V();
     for (let j = 0; j <= 10; j++) {
       const f = j / 10; _g3.lerpVectors(AR.b0, AR.t0, f); _g4.lerpVectors(AR.b1, AR.t1, f);
@@ -3167,9 +3171,12 @@ function glassBlade(dt) {
       } else glassHit(pane, bx, by, s, vW, { size: .02 });
       pane.bTouch = true; continue;
     }
+    if (pane.stab) { stabStep(pane, cur, tf); pane.bTouch = true; continue; }   // stabbed in: twist it to bore a hole
     if (pane.trace) {   // scoring: follow the blade
       if (!cur) { traceEnd(pane); pane.bTouch = touch; continue; }
       const T = pane.trace, last = T.pts[T.pts.length - 1];
+      T.tw = (T.tw || 0) + bladeTwist();
+      if (!desk && T.len < .035 && T.tw > .45) { stabStart(pane, T.pts[0], tf); pane.bTouch = true; continue; }   // you turned it instead of dragging: that's a stab
       if (Math.hypot(cur[0] - last[0], cur[1] - last[1]) > .012) {
         T.pts.push(cur); T.len += Math.hypot(cur[0] - last[0], cur[1] - last[1]);
         pane.crk.push(last[0], last[1], cur[0], cur[1]); T.segs++; pane.shown = pane.crk.length / 4; crackGeo(pane);
@@ -3183,10 +3190,42 @@ function glassBlade(dt) {
     pane.bTouch = touch;
   }
 }
+function bladeTwist() {   // how far the sword turned about its own blade since last frame
+  if (sword.mode !== 'held') return 0;
+  _gq.copy(sword.pq).invert().multiply(sword.g.quaternion); let w = _gq.w, y = _gq.y; if (w < 0) { w = -w; y = -y; }
+  return Math.abs(2 * Math.atan2(y, w));
+}
+function stabStart(pane, p, tf) {
+  traceEnd(pane, true);
+  pane.stab = { x: p[0], y: p[1], tw: 0, need: 2.4 * Math.max(.7, Math.pow(tf, .4)), cT: 0, hT: 0, nT: 0 };
+  sfxCrack(.5); sfxScratch(); if (sword.held) buzz(sword.held, .8, 40);
+  if (!GL.toldStab) { GL.toldStab = true; toast('🗡️ STABBED! Now twist the sword round and round 🌀💨', 4.5); }
+}
+function stabStep(pane, cur, tf) {
+  const S = pane.stab;
+  if (!cur || Math.hypot(cur[0] - S.x, cur[1] - S.y) > .07) { pane.stab = null; sfxScratch(); return; }   // pulled out early
+  const d = bladeTwist(), k = clamp((S.tw += d) / S.need, 0, 1);
+  const wp = pane.pos.clone().add(_g2.set(S.x, S.y, 0).applyQuaternion(pane.q));
+  if (d > .012) {
+    steamBurst(wp, pane.n, 1 + Math.round(k * 4), .35 + k);
+    if (tAll - S.hT > .08) { S.hT = tAll; sfxHiss(.3 + k * .7); sfxScratch(); if (sword.held) buzz(sword.held, .15 + k * .5, 14); }
+    if (tAll - S.nT > .25) { S.nT = tAll; netSend({ t: 'gl', op: 'stm', i: pane.i, x: S.x, y: S.y, k }); }
+  }
+  if (S.tw - S.cT > .75) { S.cT = S.tw; const segs = makeCracks(pane, S.x, S.y, .12 + k * .25); addCracks(pane, segs); sfxCrack(.25 + k * .3); netSend({ t: 'gl', op: 'crk', i: pane.i, x: S.x, y: S.y, d: 0, c: segs }); }
+  if (S.tw >= S.need) {   // POP: a hole, and a big gush of steam
+    pane.stab = null;
+    const side = Math.sign(AR.t1.clone().sub(AR.b1).dot(pane.n)) || 1;
+    glassHit(pane, S.x, S.y, 99, pane.n.clone().multiplyScalar(side * .8), { through: true, R: .05 + .012 * Math.min(4, tf) });
+    steamBurst(wp, pane.n, 70, 1.7); sfxHiss(1.4); netSend({ t: 'gl', op: 'stm', i: pane.i, x: S.x, y: S.y, k: 2 });
+    if (sword.held) buzz(sword.held, 1, 80);
+    if (!GL.toldHole) { GL.toldHole = true; toast('💨 PSSSHHH! You bored a hole!', 3.5); }
+  }
+}
 function traceEnd(pane, quiet) {
   const T = pane.trace; if (!T) return; pane.trace = null;
   pane.crk.splice(pane.crk.length - T.segs * 4, T.segs * 4); crackGeo(pane);   // the scratch becomes the real cut (or fades if too short)
   if (quiet || T.len < .07 || T.pts.length < 2) return;
+  if (toughOf(pane.T) >= 2.5) { glassHit(pane, T.pts[0][0], T.pts[0][1], .5, V()); if (!GL.toldThick) { GL.toldThick = true; toast('🛡️ Too thick to score! Stab it and TWIST the sword to bore through 🌀', 5); } return; }
   const v3 = T.pts.map(p => V(p[0], p[1], 0));
   let tol = .006, ch = simplify(v3, tol); while (ch.length > 8) { tol *= 1.4; ch = simplify(v3, tol); }
   let pts = ch.map(p => [Math.round(p.x * 1e5) / 1e5, Math.round(p.y * 1e5) / 1e5]);
@@ -3199,16 +3238,17 @@ function stepGlassPost(dt) {
   // loose glass: tinkles when it lands, and a big piece SMASHES if it crashes down hard enough
   let smashed = 0;
   for (const pc of AR.pieces) {
-    if (!KINDS[pc.kind].glass || pc.pane || !pc.body || pc.held || pc.dying) continue;
+    if (!KINDS[pc.kind].glass || pc.pane || !pc.body || pc.dying) continue;
+    if (pc.held || pc.body.bodyType() !== 0) { pc.gvh = []; pc.gsp = 0; continue; }   // in a paw: no crash history, so a throw doesn't smash it
     const v = pc.body.linvel(), sp = Math.hypot(v.x, v.y, v.z), gh = pc.gvh || (pc.gvh = []), gv = gh.length >= 6 ? gh[0] : null;   // its velocity ~0.1 s ago
     if (gv && mine(pc) && !smashed && tAll - pc.born > .25 && pc.body.bodyType() === 0) {
       if (!pc.gT) { let z0 = 1e9, z1 = -1e9; const hh = pc.hull; for (let i = 2; i < hh.length; i += 3) { z0 = Math.min(z0, hh[i]); z1 = Math.max(z1, hh[i]); } pc.gT = Math.max(.002, z1 - z0); }
       const dv = Math.hypot(v.x - gv.x, v.y - gv.y, v.z - gv.z), T = pc.gT, tf = toughOf(T), area = pc.vol / T;
-      if (area > .01 && dv > 3.2 * tf) {
+      if (area > .01 && dv > Math.max(1.2, 3.2 * tf)) {
         // where it hit: the corner that was leading the way
         const r = pc.body.rotation(); _gq.set(r.x, r.y, r.z, r.w).invert(); _g1.set(gv.x, gv.y, gv.z).applyQuaternion(_gq);
         let bi = 0, bd = -1e9; const h = pc.hull; for (let i = 0; i < h.length; i += 3) { const d = h[i] * _g1.x + h[i + 1] * _g1.y + h[i + 2] * _g1.z; if (d > bd) { bd = d; bi = i; } }
-        const hx = h[bi], hy = h[bi + 1], R = clamp(.07 + (dv - 3.2 * tf) * .03 / Math.sqrt(tf) + Math.sqrt(area) * .25, .07, .3);
+        const hx = h[bi], hy = h[bi + 1], R = clamp(.07 + (dv - Math.max(1.2, 3.2 * tf)) * .03 / Math.sqrt(tf) + Math.sqrt(area) * .25, .07, .3);
         const seeds = glassSeeds(hx, hy, R), vW = V(gv.x, gv.y, gv.z).multiplyScalar(.5), id = pc.id;
         pieceShatter(pc, hx, hy, R, seeds, vW); smashed++;
         netSend({ t: 'gl', op: 'pbrk', id, x: hx, y: hy, R, s: seeds, v: va(vW) });
@@ -3218,7 +3258,7 @@ function stepGlassPost(dt) {
     if ((pc.gsp || 0) > 1.1 && sp < pc.gsp * .55 && tAll - GL.tkT > .04) { GL.tkT = tAll; sfxTinkle(clamp(pc.gsp * .03, .02, .1)); }
     pc.gsp = sp; gh.push({ x: v.x, y: v.y, z: v.z }); if (gh.length > 6) gh.shift();
   }
-  stepGlit(dt);
+  stepGlit(dt); stepSteam(dt);
 }
 
 
@@ -3241,6 +3281,40 @@ function glitBurst(p, n, vW) {
   }
   G.alive = 1.8;
 }
+/* ---------- steam: soft puffs that drift out of a twisted-open hole ---------- */
+const STEAM_N = 220;
+GL.steam = (() => {
+  const pos = new Float32Array(STEAM_N * 3).fill(-500), col = new Float32Array(STEAM_N * 3);
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+  geo.boundingSphere = new THREE.Sphere(V(), 80);
+  const c = document.createElement('canvas'); c.width = c.height = 64; { const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,.9)'); gr.addColorStop(.45, 'rgba(255,255,255,.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); }
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: .11, vertexColors: true, transparent: true, depthWrite: false, map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending }));
+  pts.frustumCulled = false; arena.add(pts);
+  return { pos, col, geo, v: new Float32Array(STEAM_N * 3), life: new Float32Array(STEAM_N), max: new Float32Array(STEAM_N), i: 0, alive: 0 };
+})();
+function steamBurst(p, nrm, n, k = 1) {
+  const S = GL.steam;
+  for (let j = 0; j < n; j++) {
+    const i = S.i = (S.i + 1) % STEAM_N, sd = Math.random() < .5 ? -1 : 1, sp = (.25 + Math.random() * .7) * k;
+    S.pos.set([p.x + (Math.random() - .5) * .03, p.y + (Math.random() - .5) * .03, p.z + (Math.random() - .5) * .03], i * 3);
+    S.v.set([nrm.x * sd * sp + (Math.random() - .5) * .35 * k, nrm.y * sd * sp + .15 + Math.random() * .3, nrm.z * sd * sp + (Math.random() - .5) * .35 * k], i * 3);
+    S.life[i] = S.max[i] = .9 + Math.random() * 1.3;
+  }
+  S.alive = 2.4;
+}
+function stepSteam(dt) {
+  const S = GL.steam; if (S.alive <= 0) return; S.alive -= dt;
+  const P = S.pos, Vv = S.v, C = S.col, dr = Math.exp(-dt * 2.4);
+  for (let i = 0; i < STEAM_N; i++) {
+    if (S.life[i] <= 0) { if (P[i * 3 + 1] > -400) P[i * 3 + 1] = -500; continue; }
+    const f = (S.life[i] -= dt) / S.max[i];
+    Vv[i * 3] *= dr; Vv[i * 3 + 1] = Vv[i * 3 + 1] * dr + .5 * dt; Vv[i * 3 + 2] *= dr;
+    P[i * 3] += Vv[i * 3] * dt; P[i * 3 + 1] += Vv[i * 3 + 1] * dt; P[i * 3 + 2] += Vv[i * 3 + 2] * dt;
+    const b = Math.max(0, f) * Math.min(1, (1 - f) * 8) * .32; C[i * 3] = b * .95; C[i * 3 + 1] = b; C[i * 3 + 2] = b * 1.05;
+  }
+  S.geo.attributes.position.needsUpdate = true; S.geo.attributes.color.needsUpdate = true;
+}
+function sfxHiss(k) { if (!ac) return; const t = ac.currentTime; noiseHit(t, .18 + k * .35, .03 + k * .09, 'highpass', 2600 + Math.random() * 1800, .6); if (k > 1) noiseHit(t + .05, .9, .12, 'bandpass', 1400, .5); }
 function stepGlit(dt) {
   const G = GL.glit; if (G.alive <= 0) return; G.alive -= dt;
   const P = G.pos, Vv = G.v, C = G.col;
@@ -3334,7 +3408,9 @@ function vrPose(h, pos, q) {
   _aq2.copy(rig.quaternion).multiply(h.q);
   if (h.src && h.src.hand) { rig.localToWorld(pos.copy(h.local)); q.copy(_aq2).multiply(HAND_ROT[h.side] || HAND_ROT.right); }
   else { pos.copy(PAW_OFF).applyQuaternion(h.q).negate().add(h.local); rig.localToWorld(pos); q.copy(_aq2).multiply(GRIP_ROT); }
+  if (h.sword) pos.add(_swR.copy(SW_REACH).applyQuaternion(_aq2));   // a longer arm, like when you hold a ball
 }
+const SW_REACH = V(0, -.015, -.16), _swR = V();
 function takeSword(h) {
   if (sword.held && sword.held !== h) sword.held.sword = false;
   if (sword.body) { AR.world.removeRigidBody(sword.body); sword.body = null; }
