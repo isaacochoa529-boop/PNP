@@ -1,6 +1,6 @@
 // ===== DUMMY: a training dummy that looks like YOU. Pull parts off, punch it, smash its head. =====
-// Each rippable part: pivot at the joint. While held it swings toward your hand and STRETCHES;
-// pull past the limit and it tears off (stump + bone on both sides, blood squirts).
+// The body is a physics ragdoll (05b-ragdoll.js). Each limb hangs on a JOINT that stretches when you pull
+// and tears after enough force (stump + bone on both sides, blood squirts).
 const PDEF = {
   head: { rip: .2, stumpR: .046, boneR: .016, com: [0, .17, 0], mass: 5, k: .09, maxAng: 1.1,
     grab: [[0, .2, 0], [0, .07, 0]], bodyStump: [[0, .535, 0], [0, 1, 0]], partStump: [[0, 0, 0], [0, -1, 0]],
@@ -22,12 +22,13 @@ const LINES = {
   smash: ['OW OW OW', 'My TEETH!!', 'I see stars ⭐', 'Brain hurty'],
 };
 const pick = a => a[Math.random() * a.length | 0];
-let DUM = null;
+let DUM = null, DUM_ID = 0;
 const tendonMat = new THREE.MeshStandardMaterial({ color: '#b3122a', roughness: .4, emissive: '#300' });
 
 function buildDummy(opts = {}) {
   if (DUM) {
-    scene.remove(DUM.root);
+    scene.remove(DUM.root); scene.remove(DUM.torso);
+    for (const P of Object.values(DUM.parts)) scene.remove(P.tendon);
     for (let i = LOOSE.length - 1; i >= 0; i--) killLoose(LOOSE[i]);
   }
   const gold = opts.gold ?? Math.random() < 1 / 20;
@@ -40,65 +41,100 @@ function buildDummy(opts = {}) {
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(.045, .055, 1.35, 10), wood); pole.position.set(0, .675, -.2); pole.castShadow = true; h.root.add(pole);
   const peg = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, .16, 8), wood); peg.rotation.x = Math.PI / 2; peg.position.set(0, 1.12, -.12); h.root.add(peg);
   [0, Math.PI / 2].forEach(a => { const f = new THREE.Mesh(new THREE.BoxGeometry(.7, .06, .09), wood); f.rotation.y = a; f.position.set(0, .03, -.2); f.castShadow = true; h.root.add(f); });
-  scene.add(h.root);
+  scene.add(h.root); h.root.updateMatrixWorld(true);
+  // the torso lives straight in the scene: the ragdoll moves it
+  const T = h.torso; const wp = T.getWorldPosition(new V3()); h.root.remove(T); T.position.copy(wp); scene.add(T); T.updateMatrixWorld(true);
   const parts = {};
   for (const [name, g] of Object.entries(h.parts)) {
     const type = name.startsWith('arm') ? 'arm' : name.startsWith('leg') ? 'leg' : 'head';
     const side = name.endsWith('L') ? -1 : 1;
     const def = PDEF[type];
-    const P = { name, type, side, g, def, restPos: g.position.clone(), restQuat: g.quaternion.clone(), attached: true, held: null,
-      grab: def.grab.map(a => new V3(...a)), sx: 0, sz: 0, vx: 0, vz: 0, body: null };
+    const P = { name, type, side, g, def, restPos: g.position.clone(), restQuat: g.quaternion.clone(), attached: true, tear: 0, stretch: 0, body: null };
     if (type === 'arm') P.bodyStump = [[side * .19, .455, 0], [side, -.15, 0]];
     else if (type === 'leg') P.bodyStump = [[side * .088, -.16, 0], [0, -1, 0]];
     else P.bodyStump = def.bodyStump;
+    P.tendon = new THREE.Mesh(new THREE.CylinderGeometry(.02, .028, 1, 8), tendonMat); P.tendon.visible = false; scene.add(P.tendon);
     parts[name] = P;
   }
-  const tendon = new THREE.Mesh(new THREE.CylinderGeometry(.022, .03, 1, 8), tendonMat); tendon.visible = false; scene.add(tendon);
-  DUM = { h, root: h.root, torso: h.torso, parts, face: h.face, gold, sway: { x: 0, z: 0, vx: 0, vz: 0 }, blink: 2, faceT: 0, said: 0, tendon, tendons: [], empty: false, free: false, body: null };
-  h.root.updateMatrixWorld(true);
+  DUM = { id: ++DUM_ID, h, root: h.root, torso: T, parts, face: h.face, gold, blink: 2, faceT: 0, said: 0, empty: false, hs: 0, slams: 0 };
+  buildRag(DUM);
   if (gold) setTimeout(() => sayDummy('✨ I feel... SHINY ✨'), 400);
 }
+const ownerPart = i => DUM && DUM.parts[RAG.owner[i]];
+function heldParts() { const s = new Set(); for (const h of RAG.holds) s.add(RAG.owner[h.i]); return s; }
 
-// --- ragdoll: the whole dummy pops off the post and becomes one physics body with floppy limbs ---
-const BODY_COM = new V3(0, .25, 0);
-const TORSO_GRAB = [[0, .32, .1], [0, .45, 0], [0, .08, .1], [0, .2, -.11], [.13, .4, 0], [-.13, .4, 0]].map(a => new V3(...a));
-function bodySamples() {
-  const P = DUM.parts, L = [[.16, .45, 0], [-.16, .45, 0], [0, .56, 0], [.13, -.02, .07], [-.13, -.02, -.07], [0, .25, .11], [0, .25, -.11]];
-  if (P.head && P.head.attached) L.push([0, .86, 0], [0, .72, .12], [0, .72, -.11], [.1, .72, 0], [-.1, .72, 0]);
-  for (const s of [-1, 1]) {
-    const a = P[s < 0 ? 'armL' : 'armR'], l = P[s < 0 ? 'legL' : 'legR'];
-    if (a && a.attached) L.push([s * .27, -.13, .08], [s * .25, .17, 0]);
-    if (l && l.attached) L.push([s * .09, -.95, .15], [s * .09, -.95, -.04], [s * .09, -.5, .06]);
+// --- finding something to grab: {rag: pointIndex} on the dummy, or {body} for a loose piece ---
+function findGrab(p, reach = .1) {
+  let best = null, bd = reach;
+  if (DUM) { const i = ragNearest(p, reach); if (i >= 0) { bd = RAG.p[i].distanceTo(p) - RAG.r[i]; best = { rag: i }; } }
+  for (const b of LOOSE) {
+    if (b.held) continue;
+    const d = b.obj.position.distanceTo(p) - b.r * .7;
+    if (d < bd) { bd = d; best = { body: b }; }
   }
-  return L.map(a => new V3(...a).sub(BODY_COM));
+  return best;
 }
-function freeDummy() {
-  if (DUM.free) return DUM.body;
-  const T = DUM.torso; T.updateWorldMatrix(true, false);
-  const wrap = new THREE.Group();
-  T.localToWorld(wrap.position.copy(BODY_COM)); T.getWorldQuaternion(wrap.quaternion);
-  T.parent.remove(T); wrap.add(T); T.position.copy(BODY_COM).negate(); T.rotation.set(0, 0, 0);
-  scene.add(wrap); wrap.updateMatrixWorld(true);
-  const b = makeLoose(wrap, { mass: 30, k: .3, kind: 'body', r: .5, samples: bodySamples() });
-  b.soft = true; DUM.free = true; DUM.body = b; DUM.prevV = new V3();
-  sfx.crunch(); sayDummy('WHOA WHOA WHOA!');
-  return b;
+// ray version for PC: the closest grab spot along the look ray
+function findGrabRay(org, dir, maxD = 3.5) {
+  let best = null, bt = maxD;
+  if (DUM) { const r = ragRay(org, dir, maxD); if (r) { best = { rag: r.i, t: r.t }; bt = r.t; } }
+  for (const b of LOOSE) {
+    if (b.held) continue;
+    const t = _v2.subVectors(b.obj.position, org).dot(dir); if (t < .2 || t > bt) continue;
+    if (_v3.copy(org).addScaledVector(dir, t).distanceTo(b.obj.position) < b.r * .45 + .05) { bt = t; best = { body: b, t }; }
+  }
+  return best;
 }
-// drags point gp of body b toward target (velocity-level spring), used for grabbing the ragdoll
-function softPull(b, gp, target, tv, dt, k = 1) {
-  _r.subVectors(gp, b.obj.position);
-  const vp = _vp.crossVectors(b.w, _r).add(b.v);
-  const vd = _v1.subVectors(target, gp).multiplyScalar(14).addScaledVector(tv, .35).clampLength(0, 13);
-  const dv = vd.sub(vp), l = dv.length(); if (l < 1e-4) return;
-  dv.divideScalar(l); _rn.crossVectors(_r, dv);
-  const j = l / (1 / b.m + b.invI * _rn.lengthSq()) * .5 * k;
-  b.v.addScaledVector(dv, j / b.m); b.w.addScaledVector(_rn, j * b.invI);
-  b.still = 0;
+function ragHold(H, i, target) {
+  RAG.holds = RAG.holds.filter(x => x.H !== H);
+  RAG.holds.push({ H, i, target: target.clone(), k: RAG.owner[i] === 'torso' ? .2 : RAG.owner[i] === 'head' ? .35 : .45 });
 }
-function bodyImpact(b, p, speed, n) {
-  if (speed < 3) { if (speed > 2) sfx.thud(.4); return; }
-  b.cool = .2; state.slams = (state.slams || 0) + 1; updateSign();
-  DUM.slams = (DUM.slams || 0) + 1;
+function ragRelease(H, vel) {
+  const h = RAG.holds.find(x => x.H === H); if (!h) return;
+  RAG.holds = RAG.holds.filter(x => x !== h);
+  if (RAG.alive[h.i] && vel) {
+    // throw: the held point gets your hand speed, the rest of the body most of it (it all flies together)
+    const v = vel.clone().clampLength(0, 12), hh = RAG.h || 1 / 120;
+    for (let i = 0; i < RAG.p.length; i++) {
+      if (!RAG.alive[i]) continue;
+      const k = i === h.i ? 1 : RAG.owner[i] === RAG.owner[h.i] ? .85 : .6;
+      const cur = ragVel(i, hh); cur.lerp(v, k);
+      RAG.q[i].copy(RAG.p[i]).addScaledVector(cur, -hh);
+    }
+  }
+}
+
+// --- punching: shove the nearest body point ---
+function hitDummy(p, vel, who) {
+  if (!DUM) return false;
+  const sp = vel.length(); if (sp < 1.6) return false;
+  const i = ragNearest(p, .06); if (i < 0) return false;
+  const tor = RAG.owner[i] === 'torso';
+  ragAddVel(i, _v1.copy(vel).multiplyScalar(tor ? .45 : .85), RAG.h || 1 / 120);
+  if (tor && RAG.pinned && sp > 7) unpin('WHOA!');
+  sfx.thud(Math.min(1, sp / 6)); if (sp > 5) sfx.crunch();
+  if (sp > 3.2) { spawnBlood(p.clone(), vel.clone().normalize(), Math.min(25, sp * 3 | 0), sp * .3, .6); sfx.squish(); }
+  if (RAG.owner[i] === 'head' && sp > 5.5) headHit(RAG.p[i].clone(), sp * .7);
+  if (sp > 6.5) RAG.ko = Math.max(RAG.ko, 1.2);
+  if (DUM.face) setFace('ouch', 1.2);
+  if (state.t - DUM.said > 1.6 && Math.random() < .6) { DUM.said = state.t; sayDummy(pick(LINES.punch)); }
+  if (typeof buzz === 'function') buzz(who, Math.min(1, sp / 6), 50);
+  return true;
+}
+function unpin(line) {
+  if (!RAG.pinned) return;
+  RAG.pinned = false; sfx.crunch(); sfx.thud(1);
+  sayDummy(line || 'WHOA WHOA WHOA!');
+}
+// --- the body hits the floor / a wall ---
+function ragImpact(hit) {
+  const { i, v: speed, p, n } = hit;
+  DUM.slamCool = state.t + .22;
+  const owner = RAG.owner[i];
+  if (owner === 'head' && speed > 4.5) headHit(p, speed);
+  if (speed < 3.2) { sfx.thud(.35); return; }
+  state.slams = (state.slams || 0) + 1; updateSign();
+  DUM.slams++;
   if (DUM.slams === 10 && DUM.parts.armR && DUM.parts.armR.attached) {
     const hand = DUM.parts.armR.g.userData.elbow;
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(.006, .006, .5, 6), new THREE.MeshStandardMaterial({ color: '#6b4426' })); pole.position.set(0, -.3, .05); hand.add(pole);
@@ -107,12 +143,14 @@ function bodyImpact(b, p, speed, n) {
   }
   sfx.thud(1); sfx.squish(); if (speed > 6) sfx.crunch();
   spawnBlood(p, n, Math.min(40, speed * 4 | 0), speed * .3, .8);
-  if (typeof buzz === 'function') buzz(null, Math.min(1, speed / 8), 60);
+  if (n.y < .5) addSplat(p, n, Math.min(.35, .06 + speed * .03));
+  if (typeof buzz === 'function') { for (const h of RAG.holds) buzz(h.H.side, Math.min(1, speed / 7), 70); }
+  if (speed > 7) RAG.ko = 2.5;                 // knocked out: goes fully limp
   if (DUM.face) setFace('ouch', 1.5);
   if (state.t - DUM.said > 1.2) { DUM.said = state.t; sayDummy(pick(LINES.slam)); }
-  if (speed > 8.5 && Math.random() < .5) {   // SNAP: a limb flies off from the impact
-    const list = Object.values(DUM.parts).filter(P => P.attached && !P.held);
-    if (list.length) { const P = pick(list); P.heldLocal = P.grab[0].clone(); ripPart(P, n.clone().negate().add(_v1.set(rand(-1, 1), 1, rand(-1, 1))).normalize(), null); }
+  if (speed > 9.5 && Math.random() < .35) {   // SNAP: a limb flies off from the impact
+    const list = Object.values(DUM.parts).filter(P => P.attached && P.type !== 'head');
+    if (list.length) { const P = pick(list); ripPart(P, n.clone().negate().add(_v1.set(rand(-1, 1), 1, rand(-1, 1))).normalize(), null); }
   }
 }
 
@@ -147,91 +185,12 @@ function setFace(kind, secs = 1.5) {
   DUM.faceT = kind === 'calm' ? 0 : state.t + secs;
 }
 
-// --- finding something to grab: returns {P, local} for an attached part or {body} for a loose one ---
-function findGrab(p, reach = .13) {
-  let best = null, bd = reach;
-  if (DUM) for (const P of Object.values(DUM.parts)) {
-    if (!P.attached || P.held) continue;
-    for (const gp of P.grab) {
-      const w = P.g.localToWorld(_v1.copy(gp)); const d = w.distanceTo(p);
-      if (d < bd) { bd = d; best = { P, local: P.g.worldToLocal(p.clone()) }; }
-    }
-  }
-  if (DUM && !(DUM.free && DUM.body.held)) for (const gp of TORSO_GRAB) {
-    const d = DUM.torso.localToWorld(_v1.copy(gp)).distanceTo(p);
-    if (d < bd) { bd = d; best = { torso: true, p: p.clone() }; }
-  }
-  for (const b of LOOSE) {
-    if (b.held || b.kind === 'body') continue;
-    const d = b.obj.position.distanceTo(p) - b.r * .7;
-    if (d < bd) { bd = d; best = { body: b }; }
-  }
-  return best;
-}
-// ray version for PC: the closest grab spot along the look ray
-function findGrabRay(org, dir, maxD = 3.5) {
-  let best = null, bt = maxD;
-  const test = (w, rad, make) => {
-    const t = _v2.subVectors(w, org).dot(dir); if (t < .2 || t > bt) return;
-    const off = _v3.copy(org).addScaledVector(dir, t).distanceTo(w);
-    if (off < rad) { bt = t; best = make(t); }
-  };
-  if (DUM) for (const P of Object.values(DUM.parts)) {
-    if (!P.attached || P.held) continue;
-    for (const gp of P.grab) { const w = P.g.localToWorld(gp.clone()); test(w, P.type === 'head' ? .14 : .1, t => ({ P, local: gp.clone(), t })); }
-  }
-  if (DUM && !(DUM.free && DUM.body.held)) for (const gp of TORSO_GRAB) { const w = DUM.torso.localToWorld(gp.clone()); test(w, .13, t => ({ torso: true, p: w.clone(), t })); }
-  for (const b of LOOSE) if (!b.held && b.kind !== 'body') test(b.obj.position, b.r * .45 + .05, t => ({ body: b, t }));
-  return best;
-}
-
-// --- pulling an attached part toward the hand. Returns how close it is to ripping (0..1) ---
-const _J = new V3(), _pq = new Q(), _rq = new Q();
-function pullPart(P, handW, hand, dt = 1 / 60, handVel) {
-  const parent = P.g.parent; parent.updateWorldMatrix(true, false);
-  _J.copy(P.restPos).applyMatrix4(parent.matrixWorld);
-  parent.getWorldQuaternion(_pq);
-  _rq.copy(_pq).multiply(P.restQuat);                                  // rest orientation in world
-  const pl = P.heldLocal;
-  const a = _v1.copy(pl).applyQuaternion(_rq).normalize();
-  const d = _v2.subVectors(handW, _J); const dist = d.length(); d.divideScalar(dist || 1);
-  const swing = new Q().setFromUnitVectors(a, d);
-  const ang = 2 * Math.acos(clamp(swing.w, -1, 1));
-  const lim = Math.min(1, P.def.maxAng / Math.max(ang, 1e-4));
-  swing.slerp(new Q(), 1 - lim * .9);
-  const wq = swing.multiply(_rq);
-  P.g.quaternion.copy(_pq).invert().multiply(wq);
-  const s = dist - pl.length();
-  // a free (ragdoll) dummy gets DRAGGED by the part you hold
-  if (DUM.free && DUM.body && s > 0) softPull(DUM.body, _J.clone(), handW, handVel || _v3.set(0, 0, 0), dt, .55);
-  const move = s > 0 ? Math.min(s * .5, .17) : 0;
-  const off = _v3.copy(d).multiplyScalar(move);
-  const invPQ = _q1.copy(_pq).invert();
-  P.g.position.copy(P.restPos).add(off.applyQuaternion(invPQ));
-  P.stretch = move;
-  // RESISTANCE: it only tears after you keep pulling hard. The harder you pull, the faster it tears.
-  const over = s - P.def.rip * .35;
-  P.tear = Math.max(0, (P.tear || 0) + (over > 0 ? dt * over / (P.def.rip * .65) * 1.15 : -dt * .6));
-  const k = clamp(P.tear, 0, 1);
-  if (k > 0) {
-    // shaking part + the whole dummy struggles and flails
-    P.g.position.add(_v1.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(.012 * k));
-    P.g.rotateX(rand(-1, 1) * .06 * k); P.g.rotateZ(rand(-1, 1) * .06 * k);
-    for (const o of Object.values(DUM.parts)) if (o !== P && o.attached && !o.held) { o.vx += rand(-1, 1) * 90 * k * dt * 4; o.vz += rand(-1, 1) * 90 * k * dt * 4; }
-    if (!DUM.free) { DUM.sway.vx += rand(-1, 1) * 30 * k * dt; DUM.sway.vz += rand(-1, 1) * 30 * k * dt; }
-    else if (DUM.body) DUM.body.w.add(_v1.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(6 * k * dt));
-    if (DUM.face) setFace('scream', .6);
-    if (k > .25 && !P.begged) { P.begged = true; sayDummy(pick(LINES.beg)); }
-    if (Math.random() < dt * 25 * k) spawnBlood(_J.clone().addScaledVector(d, move * .5), d, 1, .5, .6);
-  }
-  if (P.tear >= 1) { ripPart(P, d.clone(), hand); return 1; }
-  return k;
-}
-
 function ripPart(P, pullDir, hand) {
   const g = P.g, torso = DUM.torso;
-  g.position.copy(P.restPos).add(_v1.copy(pullDir).multiplyScalar(.06).applyQuaternion(_q1.copy(torso.getWorldQuaternion(new Q())).invert()));
   g.updateWorldMatrix(true, true);
+  const vel = new V3(); for (const i of P.pts || []) vel.add(ragVel(i, RAG.h || 1 / 120)); if (P.pts) vel.divideScalar(P.pts.length);
+  for (const h of RAG.holds) if (RAG.owner[h.i] === P.name) h.ripped = true;
+  ragKill(P); P.tendon.visible = false;
   const com = new V3(...P.def.com);
   const wrap = new THREE.Group();
   g.getWorldPosition(wrap.position); g.getWorldQuaternion(wrap.quaternion);
@@ -251,8 +210,8 @@ function ripPart(P, pullDir, hand) {
   spawnBlood(jw, pullDir, 45, 3.2, .5); spawnBlood(jw, _v1.set(0, 1, 0), 20, 2, .8);
   const b = makeLoose(wrap, { mass: P.def.mass, k: P.def.k, kind: P.type === 'head' ? 'head' : 'part', r: P.type === 'leg' ? .5 : P.type === 'arm' ? .35 : .16,
     samples: P.def.samples.map(a => new V3(...a).sub(com)) });
-  b.P = P; P.body = b; P.attached = false; P.held = null;
-  if (DUM.free && DUM.body) { DUM.body.samples = bodySamples(); b.v.copy(DUM.body.v); }
+  b.P = P; P.body = b; P.attached = false; b.v.copy(vel).clampLength(0, 10);
+  RAG.musc = Math.max(.3, RAG.musc - .2);
   state.rips++; updateSign(); sfx.rip();
   if (typeof buzz === 'function') buzz(hand, 1, 120);
   if (DUM.face) setFace('scream', 3);
@@ -262,38 +221,25 @@ function ripPart(P, pullDir, hand) {
   return b;
 }
 
-// --- punching ---
-function hitDummy(p, vel, who) {
-  if (!DUM) return false;
-  const sp = vel.length(); if (sp < 1.6) return false;
-  const T = DUM.torso; T.updateWorldMatrix(true, false);
-  let hit = null, hd = 1;
-  const torsoC = T.localToWorld(_v1.set(0, .25, 0));
-  if (DUM.free ? p.distanceTo(torsoC) < .27 : Math.hypot(p.x - torsoC.x, p.z - torsoC.z) < .2 && Math.abs(p.y - torsoC.y) < .33) hit = { what: 'torso' };
-  for (const P of Object.values(DUM.parts)) {
-    if (!P.attached) continue;
-    for (const gp of P.grab) { const d = P.g.localToWorld(_v2.copy(gp)).distanceTo(p); if (d < (P.type === 'head' ? .14 : .085) && d < hd) { hd = d; hit = { what: 'part', P }; } }
-  }
-  if (!hit) return false;
-  if (DUM.free && DUM.body) { const b = DUM.body; b.v.addScaledVector(vel, .14); _r.subVectors(p, b.obj.position); b.w.add(_rn.crossVectors(_r, vel).multiplyScalar(.5)); b.still = 0; }
-  const loc = _v3.copy(vel).applyQuaternion(_q1.copy(T.getWorldQuaternion(new Q())).invert());
-  const s = DUM.sway; s.vx += loc.z * .45; s.vz -= loc.x * .45;
-  if (hit.P) { hit.P.vx += loc.z * 1.6; hit.P.vz -= loc.x * 1.6; }
-  sfx.thud(Math.min(1, sp / 6));
-  if (sp > 3.2) { spawnBlood(p.clone(), vel.clone().normalize(), Math.min(25, sp * 3 | 0), sp * .3, .6); sfx.squish(); }
-  if (DUM.face) setFace('ouch', 1.2);
-  if (state.t - DUM.said > 1.6 && Math.random() < .6) { DUM.said = state.t; sayDummy(pick(LINES.punch)); }
-  if (typeof buzz === 'function') buzz(who, Math.min(1, sp / 6), 50);
-  return true;
-}
 
 // --- head smashing (floor) ---
 const toothMat = new THREE.MeshStandardMaterial({ color: '#fffdf0', roughness: .3 });
 function smashHead(b, p, speed) {
-  const P = b.P; const g = P.g;
-  b.smash++; state.smashes++; updateSign();
+  b.smash++;
+  damageHead(b.P.g, b.smash, p, speed, b);
+  if (b.smash >= 5) burstHead(b, p);
+}
+// an attached head hitting the floor or a wall
+function headHit(p, speed) {
+  const H = DUM.parts.head; if (!H || !H.attached || state.t < (DUM.headCool || 0)) return;
+  DUM.headCool = state.t + .3; DUM.hs++;
+  damageHead(H.g, DUM.hs, p, speed, null);
+  if (DUM.hs >= 5) { const b = ripPart(H, new V3(0, 1, 0), null); b.smash = 5; burstHead(b, p); }
+}
+function damageHead(g, n, p, speed, b) {
+  state.smashes++; updateSign();
   sfx.crunch(); if (typeof buzz === 'function') { buzz('L', 1, 90); buzz('R', 1, 90); }
-  spawnBlood(p.clone().setY(p.y + .03), _v1.set(0, 1, 0), 30 + b.smash * 6, 2 + speed * .25, .9);
+  spawnBlood(p.clone().setY(p.y + .03), _v1.set(0, 1, 0), 30 + n * 6, 2 + speed * .25, .9);
   for (let i = 0; i < 3; i++) addDecal(p.x + rand(-.12, .12), p.z + rand(-.12, .12), rand(.08, .18), bloodCol());
   const sk = g.userData.skull; sk.scale.y *= .87; sk.scale.x *= 1.05; sk.scale.z *= 1.04;
   // a bloody dent on the skull
@@ -307,7 +253,7 @@ function smashHead(b, p, speed) {
     const tb = makeLoose(tg, { mass: .02, k: .01, kind: 'tooth', r: .02, life: 25, samples: [new V3(0, -.008, 0), new V3(0, .008, 0), new V3(.006, 0, 0), new V3(-.006, 0, 0)] });
     tb.v.set(rand(-2, 2), rand(2, 4), rand(-2, 2)); tb.w.set(rand(-20, 20), rand(-20, 20), rand(-20, 20));
   }
-  if (b.smash === 3) {   // an eyeball pops out
+  if (n === 3) {   // an eyeball pops out
     const eg = g.userData.face.eyes[0];
     if (eg && eg.parent) {
       const wp = eg.getWorldPosition(new V3()); eg.parent.remove(eg);
@@ -318,8 +264,7 @@ function smashHead(b, p, speed) {
       const sock = new THREE.Mesh(new THREE.SphereGeometry(.017, 8, 6), meatMat); sock.position.set(-.038, .2, .088); g.add(sock);
     }
   }
-  if (Math.random() < .5 || b.smash === 1) sayDummy(pick(LINES.smash), b);
-  if (b.smash >= 5) burstHead(b, p);
+  if (Math.random() < .5 || n === 1) sayDummy(pick(LINES.smash), b);
 }
 function burstHead(b, p) {
   const wp = b.obj.position.clone();
@@ -342,63 +287,55 @@ function burstHead(b, p) {
 // --- every frame ---
 function stepDummy(dt) {
   if (!DUM) return;
-  const t = state.t, s = DUM.sway;
-  s.vx += (-70 * s.x - 5 * s.vx) * dt; s.vz += (-70 * s.z - 5 * s.vz) * dt;
-  s.x += s.vx * dt; s.z += s.vz * dt; s.x = clamp(s.x, -.6, .6); s.z = clamp(s.z, -.6, .6);
-  const T = DUM.torso;
-  if (!DUM.free) T.rotation.set(s.x, 0, s.z);
-  const br = 1 + Math.sin(t * 1.7) * .012; T.scale.set(br, 1, br);
-  // ragdoll: limbs hang toward gravity and swing when the body is shaken
-  let gl = null, al = null;
-  if (DUM.free && DUM.body) {
-    const iq = T.getWorldQuaternion(new Q()).invert();
-    gl = new V3(0, -1, 0).applyQuaternion(iq);
-    al = _v3.subVectors(DUM.body.v, DUM.prevV).divideScalar(Math.max(dt, 1e-3)).clampLength(0, 60).applyQuaternion(iq).clone();
-    DUM.prevV.copy(DUM.body.v);
-  }
+  const t = state.t;
+  RAG.h = dt / RAG_SUB;
+  stepRag(dt);
+  // pulled hard enough by the chest? it rips off the post
+  if (RAG.pinned) for (const h of RAG.holds) if (RAG.owner[h.i] === 'torso' && RAG.p[RAG.idx.Ch].distanceTo(RAG.pin[RAG.idx.Ch]) > .1) { unpin(); break; }
+  if (RAG.hitBest && RAG.hitBest.v > 2.6 && t > (DUM.slamCool || 0)) ragImpact(RAG.hitBest);
+  // JOINTS: they stretch under force and slowly TEAR. The dummy fights back while you pull.
+  const held = heldParts();
   for (const P of Object.values(DUM.parts)) {
-    if (!P.attached) continue;
-    let tx = 0, tz = 0, K = 90, C = 7;
-    if (gl) {
-      const lim = P.type === 'head' ? .6 : P.type === 'leg' ? 1.3 : 1.6;
-      if (P.type === 'head') { tx = Math.asin(clamp(gl.z, -1, 1)) * .6; tz = -Math.asin(clamp(gl.x, -1, 1)) * .6; }   // floppy neck
-      else { tx = clamp(Math.atan2(-gl.z, -gl.y), -lim, lim); tz = clamp(Math.atan2(gl.x, -gl.y), -lim, lim); }
-      K = P.type === 'head' ? 60 : 30; C = 4;
-      P.vx += -al.z * .02; P.vz += al.x * .02;
+    if (!P.attached || !P.pts) continue;
+    const st = RAG.p[P.root].distanceTo(RAG.p[P.sock]);
+    P.stretch = st;
+    const lim = .035;
+    P.tear = Math.max(0, P.tear + (st > lim ? dt * Math.min(1.15, Math.pow((st - lim) / .1, 1.5)) : -dt * .35));
+    const k = clamp(P.tear, 0, 1);
+    if (k > 0 && held.has(P.name)) {
+      for (const o of Object.values(DUM.parts)) if (o !== P && o.attached && o.pts) ragAddVel(o.end, _v1.set(rand(-1, 1), rand(-.5, 1), rand(-1, 1)).multiplyScalar(5 * k), RAG.h);   // flailing
+      if (DUM.face) setFace('scream', .6);
+      if (k > .2 && !P.begged) { P.begged = true; sayDummy(pick(LINES.beg)); }
+      for (const h of RAG.holds) if (RAG.owner[h.i] === P.name) { buzz(h.H.side, .15 + k * .7, 25); if (Math.random() < dt * 10 * k) sfx.stretch(k); }
+      if (Math.random() < dt * 30 * k) spawnBlood(RAG.p[P.sock].clone(), _v1.subVectors(RAG.p[P.root], RAG.p[P.sock]).normalize(), 1, .6, .6);
     }
-    P.vx += (-K * (P.sx - tx) - C * P.vx) * dt; P.vz += (-K * (P.sz - tz) - C * P.vz) * dt;
-    P.sx = clamp(P.sx + P.vx * dt, -1.7, 1.7); P.sz = clamp(P.sz + P.vz * dt, -1.7, 1.7);
-    if (P.held) continue;
-    P.g.position.lerp(P.restPos, 1 - Math.exp(-dt * 12));
-    let q = _q1.setFromEuler(new THREE.Euler(P.sx * (P.type === 'head' && !DUM.free ? .4 : 1), 0, P.sz * (P.type === 'head' && !DUM.free ? .4 : 1))).premultiply(P.restQuat);
-    if (P.type === 'head' && DUM.face && !DUM.free) {   // head watches you (a little)
-      const cw = camera.getWorldPosition(_v1); const hp = P.g.getWorldPosition(_v2);
-      const yaw = clamp(Math.atan2(cw.x - hp.x, cw.z - hp.z) - DUM.root.rotation.y, -.6, .6);
-      q = q.multiply(new Q().setFromEuler(new THREE.Euler(0, yaw, 0)));
+    if (P.tear < .05) P.begged = false;
+    if (P.tear >= 1) {
+      const dir = _v1.subVectors(RAG.p[P.root], RAG.p[P.sock]).normalize().clone();
+      const holder = RAG.holds.find(h => RAG.owner[h.i] === P.name);
+      ripPart(P, dir, holder ? holder.H.side : null);
     }
-    P.g.quaternion.slerp(q, 1 - Math.exp(-dt * 10));
   }
+  poseRag(DUM);
   // blinking + face reset
   const f = DUM.face;
   if (f) {
-    DUM.blink -= dt; const bl = DUM.blink < .12 ? .1 : 1; if (DUM.blink < 0) DUM.blink = rand(2, 5);
+    DUM.blink -= dt; const bl = DUM.blink < .12 || RAG.ko > 0 ? .1 : 1; if (DUM.blink < 0) DUM.blink = rand(2, 5);
     f.eyes.forEach(e => e.scale.y = bl);
     if (DUM.faceT && t > DUM.faceT) setFace('calm');
   }
-  // the stretchy torn meat between a held part and its socket
-  const ten = DUM.tendon; ten.visible = false;
+  // the stretchy torn meat between a pulled part and its socket
   for (const P of Object.values(DUM.parts)) {
-    if (!P.attached || !P.held || (P.stretch || 0) < .015) continue;
-    const a = _v1.copy(P.restPos).applyMatrix4(P.g.parent.matrixWorld), b = P.g.getWorldPosition(_v2);
-    const L = a.distanceTo(b);
-    ten.position.copy(a).add(b).multiplyScalar(.5); ten.scale.set(1 - L * 3, L, 1 - L * 3);
-    ten.quaternion.setFromUnitVectors(_v3.set(0, 1, 0), b.sub(a).normalize()); ten.visible = true;
-    if (Math.random() < dt * 20) spawnBlood(ten.position.clone(), _v3.set(0, -1, 0), 1, .3, .3);
+    const ten = P.tendon; ten.visible = false;
+    if (!P.attached || !P.pts || P.stretch < .02) continue;
+    const a = RAG.p[P.sock], b = RAG.p[P.root], L = a.distanceTo(b);
+    ten.position.copy(a).add(b).multiplyScalar(.5); ten.scale.set(Math.max(.35, 1 - L * 4), L + .03, Math.max(.35, 1 - L * 4));
+    ten.quaternion.setFromUnitVectors(_v3.set(0, 1, 0), _v2.subVectors(b, a).normalize()); ten.visible = true;
   }
   // secret: put the head back on its neck
   const H = DUM.parts.head;
   if (H && !H.attached && H.body && H.body.held && H.body.smash < 5) {
-    const neck = _v1.copy(H.restPos).applyMatrix4(DUM.torso.matrixWorld);
+    const neck = _v1.copy(RAG.p[RAG.idx.N]);
     const dn = H.g.getWorldPosition(_v2).distanceTo(neck);
     if (dn > .5) H.body.away = true;
     if (H.body.away && dn < .1) {

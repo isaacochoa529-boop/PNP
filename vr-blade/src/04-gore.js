@@ -194,7 +194,6 @@ function collideFloor(b, dynamic) {
 function onImpact(b, p, speed, n) {
   b.cool = .12; n = n || _v3.set(0, 1, 0);
   if (n.y < .5 && speed > 2.5 && b.kind !== 'tooth' && b.kind !== 'eye' && b.kind !== 'chunk') addSplat(p, n, Math.min(.35, .05 + speed * .025));
-  if (b.kind === 'body') { bodyImpact(b, p, speed, n); return; }
   if (b.kind === 'head' && speed > 3.2) { smashHead(b, p, speed); return; }
   if (b.kind === 'tooth' || b.kind === 'eye') { if (speed > 1) sfx.click(); return; }
   if (speed > 2) { sfx.thud(Math.min(1, speed / 6)); if (b.kind !== 'chunk') { spawnBlood(p, n, Math.min(14, speed * 2 | 0), speed * .25, .9); sfx.splat(); } }

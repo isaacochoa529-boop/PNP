@@ -19,4 +19,4 @@ function step(dt) {
 renderer.setAnimationLoop(() => { step(Math.min(clock.getDelta(), 1 / 30)); renderer.render(scene, camera); });
 // test hook for automated checks
 window.__bbCam = () => camera.getWorldPosition(new V3());
-window.__bb = { step, freeDummy, rig, camera, state, HANDS, pc, get DUM() { return DUM; }, LOOSE, pullPart, ripPart, smashHead, hitDummy, buildDummy, findGrabRay, startPC, keepIn };
+window.__bb = { step, RAG, get RAGh() { return RAG; }, rig, camera, state, HANDS, pc, get DUM() { return DUM; }, LOOSE, ripPart, ragHold, ragRelease, smashHead, hitDummy, buildDummy, findGrabRay, startPC, keepIn };

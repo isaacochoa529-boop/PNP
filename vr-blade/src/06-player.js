@@ -41,16 +41,14 @@ function say3D(msg, secs) {
 
 // ---- grabbing ----
 const _hm = new THREE.Matrix4(), _bm = new THREE.Matrix4();
-function startGrab(H, found, handMatrix) {
-  if (found.torso) { const b = freeDummy(); H.grab = { body: b, soft: true, gl: b.obj.worldToLocal(found.p.clone()) }; b.held = H; b.still = 0; }
-  else if (found.P) { H.grab = { P: found.P }; found.P.held = H; found.P.heldLocal = found.local; found.P.tear = 0; found.P.begged = false; }
+function startGrab(H, found, handMatrix, handW) {
+  if (found.rag !== undefined) { H.grab = { rag: found.rag, dum: DUM.id }; ragHold(H, found.rag, handW || RAG.p[found.rag]); }
   else { const b = found.body; H.grab = { body: b, off: new THREE.Matrix4().copy(handMatrix).invert().multiply(b.obj.matrixWorld) }; b.held = H; b.still = 0; }
   sfx.squish(); buzz(H.side, .4, 30);
 }
 function drop(H) {
   const g = H.grab; if (!g) return; H.grab = null;
-  if (g.P) g.P.held = null;
-  if (g.body && g.soft) { g.body.held = null; g.body.v.addScaledVector(avgVel(H.vbuf, 4).clampLength(0, 12), .25); return; }
+  if (g.rag !== undefined) { ragRelease(H, avgVel(H.vbuf, 4).multiplyScalar(.9)); return; }
   if (g.body) {
     const b = g.body; b.held = null; b.still = 0;
     const v = avgVel(H.vbuf, 4); b.v.copy(v).clampLength(0, 14);
@@ -60,19 +58,21 @@ function drop(H) {
 function avgVel(buf, n) { const v = new V3(); const k = Math.min(n, buf.length); for (let i = buf.length - k; i < buf.length; i++) v.add(buf[i]); return k ? v.divideScalar(k) : v; }
 function grabValid(H) {
   const g = H.grab; if (!g) return false;
-  if (g.P && (!DUM || DUM.parts[g.P.name] !== g.P || !g.P.attached)) { H.grab = null; return false; }
+  if (g.rag !== undefined) {
+    if (!DUM || g.dum !== DUM.id) { H.grab = null; ragRelease(H); return false; }
+    if (!RAG.alive[g.rag]) {          // it tore off: keep holding the torn-off piece
+      const P = DUM.parts[RAG.owner[g.rag]]; ragRelease(H);
+      if (P && P.body && !P.body.held) { const b = P.body; H.grab = { body: b, off: new THREE.Matrix4().copy(H.mat).invert().multiply(b.obj.matrixWorld) }; b.held = H; return true; }
+      H.grab = null; return false;
+    }
+    return true;
+  }
   if (g.body && !LOOSE.includes(g.body)) { H.grab = null; return false; }
   return true;
 }
 // moves a held loose body with the hand and handles floor smashes
 function carry(H, dt, handW) {
   const b = H.grab.body, o = b.obj;
-  if (H.grab.soft) {     // the ragdoll hangs from your hand and swings
-    const gp = o.localToWorld(H.grab.gl.clone());
-    softPull(b, gp, handW, avgVel(H.vbuf, 3), dt, 1);
-    buzz(H.side, Math.min(.6, gp.distanceTo(handW) * 2), 16);
-    return;
-  }
   const prev = _v3.copy(o.position);
   _bm.multiplyMatrices(H.mat, H.grab.off); _bm.decompose(o.position, o.quaternion, _v1);
   o.scale.set(1, 1, 1);
@@ -89,16 +89,16 @@ function handStep(H, dt, pressed, handW, handMatrix) {
   H.cool -= dt;
   if (pressed && !H.was && !H.grab && !H.stuck) {
     const f = inVR() ? findGrab(handW, .14) : H.pcFound;
-    if (f) startGrab(H, f, handMatrix);
+    if (f) startGrab(H, f, handMatrix, handW);
   }
   if (!pressed && H.was) drop(H);
   H.was = pressed;
   if (H.grab && grabValid(H)) {
-    if (H.grab.P) {
-      const P = H.grab.P, k = pullPart(P, handW, H.side, dt, avgVel(H.vbuf, 3));
-      if (!P.attached && P.body) {          // it tore off: keep holding the torn-off piece
-        const b = P.body; H.grab = { body: b, off: new THREE.Matrix4().copy(handMatrix).invert().multiply(b.obj.matrixWorld) }; b.held = H;
-      } else { buzz(H.side, k * .5, 20); if (k > .3 && Math.random() < dt * 12) sfx.stretch(k); }
+    if (H.grab.rag !== undefined) {
+      const hd = RAG.holds.find(x => x.H === H); if (hd) hd.target.copy(handW);
+      // weight: the further the body lags behind your hand, the more it pulls on your hand
+      const lag = RAG.p[H.grab.rag].distanceTo(handW);
+      if (lag > .04) buzz(H.side, Math.min(.5, lag * 1.5), 16);
     } else carry(H, dt, handW);
   } else if (inVR() && H.vel.length() > 1.6 && H.cool <= 0) { if (hitDummy(handW, avgVel(H.vbuf, 3), H.side)) H.cool = .25; }
   // buttons you can touch
@@ -253,7 +253,7 @@ function stepPC(dt) {
   }
   if (pc.yank > 0) pc.yank -= dt;
   let dd = pc.dist;   // looking down steeply while holding something = slam it into the floor
-  if (pcHandR.grab && pcHandR.grab.body && d.y < -.55) dd = Math.max(dd, o.y / -d.y + .12);
+  if (pcHandR.grab && d.y < -.55) dd = Math.max(dd, o.y / -d.y + .12);
   pc.T.copy(o).addScaledVector(d, dd);
   if (pc.T.y < .01) pc.T.y = Math.max(pc.T.y, -.25);
   const m = new THREE.Matrix4().compose(pc.T, camera.getWorldQuaternion(new Q()), new V3(1, 1, 1));
@@ -261,7 +261,7 @@ function stepPC(dt) {
   if (!pc.down) pcHandR.pcFound = null;
   // show the right hand where it's grabbing, or punching
   pc.punchT = Math.max(0, pc.punchT - dt);
-  if (pcHandR.grab) { const lp = camera.worldToLocal(pc.T.clone()); pcHandR.model.position.copy(lp).add(_v1.set(0, -.03, .09)); }
+  if (pcHandR.grab) { const lp = camera.worldToLocal((pcHandR.grab.rag !== undefined ? RAG.p[pcHandR.grab.rag] : pc.T).clone()); pcHandR.model.position.copy(lp).add(_v1.set(0, -.03, .09)); }
   else pcHandR.model.position.set(.22 - Math.sin(pc.punchT / .25 * Math.PI) * .18, -.2 + Math.sin(pc.punchT / .25 * Math.PI) * .08, -.42 - Math.sin(pc.punchT / .25 * Math.PI) * .35);
 }
 
