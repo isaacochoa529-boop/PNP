@@ -69,12 +69,13 @@ const colliders = [];
 function addCol(c) {
   if (c.t === 0) { const e = Math.hypot(c.hx, c.hz); Object.assign(c, { minx: c.x - e, maxx: c.x + e, minz: c.z - e, maxz: c.z + e, miny: c.y - c.hy, maxy: c.y + c.hy, cs: Math.cos(c.yaw || 0), sn: Math.sin(c.yaw || 0) }); }
   else if (c.t === 1) Object.assign(c, { minx: c.x - c.r, maxx: c.x + c.r, minz: c.z - c.r, maxz: c.z + c.r, miny: c.cy - c.hy, maxy: c.cy + c.hy });
-  else if (c.t !== 3) Object.assign(c, { minx: c.c.x - c.r, maxx: c.c.x + c.r, miny: c.c.y - c.r, maxy: c.c.y + c.r, minz: c.c.z - c.r, maxz: c.c.z + c.r });
+  else if (c.t !== 3 && c.t !== 4) Object.assign(c, { minx: c.c.x - c.r, maxx: c.c.x + c.r, miny: c.c.y - c.r, maxy: c.c.y + c.r, minz: c.c.z - c.r, maxz: c.c.z + c.r });
   colliders.push(c); return c;
 }
 // signed distance from p to the collider surface; writes the outward normal into n
 function sdf(c, p, n) {
   if (c.t === 3) return paneSdf(c.pane, p, n);   // glass
+  if (c.t === 4) return c.sdf(p, n);             // a whole landscape (the Wilds): it remembers what it hit in c.last
   if (c.t === 0) {
     const wx = p.x - c.x, wz = p.z - c.z;
     const lx = c.cs * wx - c.sn * wz, lz = c.sn * wx + c.cs * wz, ly = p.y - c.y;
@@ -145,10 +146,11 @@ function pushOut(p, r, info) {
   let any = false;
   for (let it = 0; it < 3; it++) {
     let moved = false;
-    for (const c of colliders) {
+    for (let c of colliders) {
       if (p.x + r < c.minx || p.x - r > c.maxx || p.y + r < c.miny || p.y - r > c.maxy || p.z + r < c.minz || p.z - r > c.maxz) continue;
       const d = sdf(c, p, _n);
       if (d < r) {
+        if (c.t === 4) c = c.last;
         if (c.pane && glassPush(c, p, _n)) continue;
         p.addScaledVector(_n, r - d); moved = any = true;
         if (info) { info.nrm.add(_n); if (_n.y > 0.6) { info.ground = true; if (c.bounce) info.bounce = c; } info.col = c; }
@@ -171,7 +173,7 @@ function pawHit(p, R = PAW_R, h) {
     if (c.pane && h && h.glSkip === c.pane && h.glSkipT > tAll) continue;   // just punched through this pane
     if (p.x + R < c.minx || p.x - R > c.maxx || p.y + R < c.miny || p.y - R > c.maxy || p.z + R < c.minz || p.z - R > c.maxz) continue;
     const d = sdf(c, p, _n);
-    if (d < bd) { bd = d; best = { c, d, n: _n.clone() }; }
+    if (d < bd) { bd = d; best = { c: c.t === 4 ? c.last : c, d, n: _n.clone() }; }
   }
   triQuery(p, R, (t, d, n) => { if (d < bd) { bd = d; best = { c: t.owner, d, n: n.clone() }; } });
   return best;

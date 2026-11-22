@@ -121,6 +121,7 @@ function csPlay() {
   if (!state.xr) { CS.cv.style.display = 'block'; $('csSkip').style.display = 'block'; }
   else csTheater(true);
   if (state.area === 'arena') travel(false);
+  if (state.area === 'wilds') arrive(V().copy(SPAWN), 0, 'grove');
   csNext();
   if (ac) { tone('sine', 220, 220, 2.5, .05); tone('sine', 330, 330, 2.5, .04, .1); tone('sine', 440, 440, 2.5, .03, .2); }
 }
