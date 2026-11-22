@@ -1,0 +1,27 @@
+# Knuckle Grove: where the code lives
+
+`index.html` holds the page (HTML, CSS, menus). It loads the files in `src/` in this order, glues them
+together and runs them as **one** module. Every file can use everything defined in the files before it
+(and functions from any file). There's no build step: edit a file, push, and GitHub Pages serves it.
+
+| File | What's in it |
+|---|---|
+| `src/00-treekit.js` | The low-poly tree kit (oak, pine, palm...) |
+| `src/01-core.js` | Tuning numbers, renderer + scene, the collision world (`addCol`, colliders) |
+| `src/02-world.js` | The grove: ground, cliffs, trees, stump, sign, mushrooms, treehouse, sky island, Knuckle Wall, pond, boulders, berries + secrets, Pip |
+| `src/03-player.js` | Paws, the Thumpling avatar (`avSc`, `poseAvatar`), selfie screen, grabbable toys |
+| `src/04-loop.js` | Audio, game state, arm-swing movement (`stepArms`), desktop walking, effects, toasts, input, XR controllers, main loop (`update`) |
+| `src/10-yard.js` | Slicing Yard build: baseplate, portals, pedestals, console, sword, MEGA cube spot |
+| `src/11-cubes.js` | Sliceable cubes and pieces (`makePiece`, `spawnCube`, cutting) |
+| `src/12-glass.js` | Glass panes, cracks, breaking, glass lab, steam, glass sounds |
+| `src/13-yard-play.js` | Rapier physics, sword handling, grabbing pieces, buttons, portal travel, yard per-frame |
+| `src/20-horror.js` | Horror mode: switch, dark figure, screen effects, mirror, fake crash |
+| `src/21-extras.js` | Slow-cut sizzle, bites, Pip pick-up, tough pulls (sword in stone, switch) |
+| `src/30-multiplayer.js` | Rooms (PeerJS), sending your pose, friends' avatars, room-code menu |
+| `src/31-computer.js` | The grove computer (desk, screen, keyboard) |
+| `src/32-shared-world.js` | Shared world sync: owners, sending/receiving objects, snapshots for new friends |
+| `src/33-phones.js` | Phone + tablet touch controls |
+| `src/34-voice.js` | Voice chat (mic, calls, mouths) |
+| `src/40-berry-menu.js` | The Berry Menu and its mods, plus the `window.__kg` test hooks |
+
+New file? Add it to `PARTS` in `index.html`.
