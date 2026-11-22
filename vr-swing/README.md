@@ -26,5 +26,6 @@ together and runs them as **one** module. Every file can use everything defined 
 | `src/50-water.js` | Water Lab: wavy pool (ripples, slosh, floating/sinking, rising level), CUP button, drinking/pouring, slippery puddles, whetstone that turns glass into a glass sword |
 | `src/60-royale.js` | Battle Royale mode: red start button by the spawn (🏆 on screens), loot (swords, guns, grenades, medkits, shields, jump boots), storm circle, health/shield HUD + wrist HUD, kill feed, bots, net `t:'br'` |
 | `src/70-story.js` | Story intro cutscene (montage of the grove, letterbox, typed Elder Thump lore, VR theater screen), skippable, 🎬 STORY replay pedestal + menu button, black cheek paint |
+| `src/80-wilds.js` | THE WILDS: huge 640 m open world behind the orange portal (Plaza + Beacon Tower, Frostfang Peak, river + Big Lake, Dune Temple + oasis, pine forest + Elder Tree, Old Town, Crystal Cave, Sky Islands). One heightfield collider (`t:4` in 01-core) holds the terrain plus a grid of every tree/rock/building. 8 waystones for fast travel (keys 1-8 / touch an orb), zipline, launch mushrooms, minimap, big-map Battle Royale |
 
 New file? Add it to `PARTS` in `index.html`.

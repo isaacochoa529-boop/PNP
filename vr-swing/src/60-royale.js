@@ -88,43 +88,50 @@ function brFeed(msg) {
 }
 function brBig(msg, secs) { const b = $('brBig'); b.textContent = msg; b.style.display = msg ? 'flex' : 'none'; if (state.xr && msg) showVrToast(msg, secs || 2); }
 /* ---------- starting a match ---------- */
-function brStartAsk() {
+function brStartAsk(map = state.area === 'wilds' ? 'wilds' : 'grove') {
   if (BR.phase !== 'off') { if (BR.phase === 'play' && (!online() || MP.host)) { brStop(true); } return; }
   if (online() && !MP.host) { toast('⚔️ Only the room host can start Battle Royale. Ask them to tap the red button!', 4); return; }
   const players = [brMe(), ...(online() ? [...MP.others.keys()] : [])].slice(0, 4);
   const seed = (Math.random() * 1e9) | 0, R = seeded(seed), nb = Math.max(online() ? 0 : 1, 4 - players.length);
-  const spots = {}, all = [...players, ...Array.from({ length: nb }, (_, i) => 'bot' + i)], a0 = R() * 6.28;
-  all.forEach((id, i) => { const a = a0 + i / all.length * 6.283; spots[id] = [r3(Math.cos(a) * 15), r3(Math.sin(a) * 15)]; });
+  const spots = {}, all = [...players, ...Array.from({ length: nb }, (_, i) => 'bot' + i)], a0 = R() * 6.28, big = map === 'wilds';
+  // the big map: the circle starts somewhere near the Plaza, everyone drops on dry land around it
+  const c = big ? [WILD.x + (R() - .5) * 90, WILD.z + (R() - .5) * 90] : [(R() - .5) * 10, (R() - .5) * 10];
+  all.forEach((id, i) => { let a = a0 + i / all.length * 6.283, x, z;
+    for (let k = 0; k < 12; k++) { const r = big ? 50 + R() * 25 : 15; x = (big ? c[0] : 0) + Math.cos(a) * r; z = (big ? c[1] : 0) + Math.sin(a) * r; if (!big || groundAt(x, z) > WL + .3) break; a += .4; }
+    spots[id] = [r3(x), r3(z)]; });
   const names = {}; players.forEach(id => names[id] = id === brMe() ? (MP.name || 'Host') : ((MP.others.get(id) || {}).name || 'Friend'));
   const bots = Array.from({ length: nb }, (_, i) => ['bot' + i, BOT_NAMES[(i + seed) % BOT_NAMES.length] + ' 🤖', [0xff9a3c, 0x9a6bff, 0x5fd94a, 0xff4fc3][i % 4]]);
-  const d = { t: 'br', e: 'start', seed, spots, names, bots, players, c: [r3((R() - .5) * 10), r3((R() - .5) * 10)] };
+  const d = { t: 'br', e: 'start', seed, spots, names, bots, players, map, c: [r3(c[0]), r3(c[1])] };
   netSend(d); brStart(d);
 }
 function brStart(d) {
   brClear(); BR.seed = d.seed; brRnd = seeded(d.seed + 7); BR.phase = 'count'; BR.t = 0; BR.hp = 100; BR.sh = 0; BR.out = false; BR.kills = 0; BR.boots = false;
   BR.alive = new Set([...d.players, ...d.bots.map(b => b[0])]); BR.names = new Map(Object.entries(d.names)); d.bots.forEach(b => BR.names.set(b[0], b[1]));
-  BR.storm.c.set(d.c[0], 0, d.c[1]); BR.storm.r = 34;
+  BR.map = d.map === 'wilds' ? 'wilds' : 'grove'; const big = BR.map === 'wilds';
+  BR.storm.c.set(d.c[0], 0, d.c[1]); BR.storm.r = stormRadius(0);
   // loot: one weapon next to every drop spot, the rest scattered around the grove (not inside trees or rocks)
   const R = seeded(d.seed); let n = 0;
-  const place = (type, x, z) => { for (let k = 0; k < 8; k++) { if (!pawHit(_b1.set(x, .35, z), .3)) break; x += (R() - .5) * 2; z += (R() - .5) * 2; } brAddLoot('L' + n++, type, x, z); };
-  Object.values(d.spots).forEach(([x, z]) => place(['pistol', 'sword', 'shotgun'][Math.floor(R() * 3)], x * .88, z * .88));
-  for (let i = 0; i < 26; i++) { const a = R() * 6.283, r = 3 + Math.sqrt(R()) * 21; place(BR_POOL[Math.floor(R() * BR_POOL.length)], Math.cos(a) * r, Math.sin(a) * r); }
+  const place = (type, x, z) => { for (let k = 0; k < 8; k++) { if (!pawHit(_b1.set(x, groundAt(x, z) + .45, z), .3) && (!big || groundAt(x, z) > WL + .1)) break; x += (R() - .5) * (big ? 6 : 2); z += (R() - .5) * (big ? 6 : 2); } brAddLoot('L' + n++, type, x, z); };
+  const cx = big ? d.c[0] : 0, cz = big ? d.c[1] : 0;
+  Object.values(d.spots).forEach(([x, z]) => place(['pistol', 'sword', 'shotgun'][Math.floor(R() * 3)], cx + (x - cx) * .93, cz + (z - cz) * .93));
+  for (let i = 0; i < (big ? 120 : 26); i++) { const a = R() * 6.283, r = 3 + Math.sqrt(R()) * (big ? 105 : 21); place(BR_POOL[Math.floor(R() * BR_POOL.length)], cx + Math.cos(a) * r, cz + Math.sin(a) * r); }
   // bots
   BR.bots = d.bots.map(([id, name, col]) => { const f = makeFriend(col, col, name); f.arms && f.arms.forEach(a => { a.up.visible = a.fore.visible = a.elbow.visible = false; }); const s = d.spots[id];
     const gun = BRM[['pistol', 'shotgun', 'rifle'][Math.floor(R() * 3)]].clone(); scene.add(gun);
-    return { id, name, f, p: V(s[0], 0, s[1]), yaw: 0, hp: 100, alive: true, gun: gun, wp: V(), wT: 0, fireT: 1 + R() * 2, tgt: null, np: null, walk: 0 }; });
+    return { id, name, f, p: V(s[0], groundAt(s[0], s[1]), s[1]), yaw: 0, hp: 100, alive: true, gun: gun, wp: V(), wT: 0, fireT: 1 + R() * 2, tgt: null, np: null, walk: 0 }; });
   BR.bots.forEach(b => { b.f.label.visible = true; b.bar = brBar(b.f); });
   // go to your drop spot
   if (state.area === 'arena') travel(false);
   hands.forEach(h => { if (h.cup) cupDrop(h); });
-  const s = d.spots[brMe()]; if (s && d.players.includes(brMe())) { rig.position.set(s[0], 0, s[1]); rig.position.y += state.bodyH - eyeLocal(_b1).y + .05; state.vel.set(0, 0, 0); hands.forEach(h => { h.stuck = false; h.ready = false; }); if (!state.xr) { state.yaw = Math.atan2(s[0], s[1]); } }
+  WD.zip = null; WD.fly = null; if (state.area !== 'arena') state.area = big ? 'wilds' : 'grove';
+  const s = d.spots[brMe()]; if (s && d.players.includes(brMe())) { rig.position.set(s[0], groundAt(s[0], s[1]), s[1]); rig.position.y += state.bodyH - eyeLocal(_b1).y + .05; state.vel.set(0, 0, 0); hands.forEach(h => { h.stuck = false; h.ready = false; }); if (!state.xr) { state.yaw = Math.atan2(s[0], s[1]); } }
   else BR.out = true;   // joined after it started: watch
   $('brHud').style.display = 'block'; brWrist.m.visible = state.xr; brStormMesh.visible = true;
   toast('⚔️ BATTLE ROYALE! Grab loot, stay inside the circle, be the last one standing!', 5);
   if (ac) { tone('square', 440, 880, .3, .1); }
 }
 function brAddLoot(id, type, x, z) {
-  const g = new THREE.Group(), m = BRM[type].clone(); g.add(m); g.position.set(x, .38, z);
+  const g = new THREE.Group(), m = BRM[type].clone(); g.add(m); g.position.set(x, groundAt(x, z) + .38, z);
   const ring = new THREE.Mesh(BRM.ring, new THREE.MeshBasicMaterial({ color: BR_W[type].col, transparent: true, opacity: .7, depthWrite: false })); ring.position.y = -.35; g.add(ring);
   if (BR_W[type].gun || type === 'sword') m.rotation.set(0, 0, Math.PI / 2 * 0);
   scene.add(g); BR.loot.set(id, { id, type, g, m, ph: x * 3 + z });
@@ -137,7 +144,8 @@ const brStormMesh = (() => {
     fragmentShader: 'uniform float t; varying vec2 vU; varying float vY; void main(){ float s = .5 + .5 * sin(vU.x * 180.0 + t * 2.0 + vY * .6) * sin(vY * 1.3 - t * 1.5); float fade = smoothstep(20.0, 2.0, abs(vY)); gl_FragColor = vec4(mix(vec3(.45,.15,.85), vec3(.9,.5,1.0), s * .5), (.18 + s * .12) * fade); }' }));
   m.position.y = 0; m.visible = false; m.renderOrder = 4; scene.add(m); return m;
 })();
-function stormRadius(t) { return t < 25 ? 34 : Math.max(3.5, 34 - (t - 25) * .26); }   // waits 25 s, then closes in over ~2 minutes
+function stormRadius(t) {   // grove: waits 25 s, then closes in over ~2 minutes. big map: starts 120 m wide, waits 35 s, ~2.5 minutes to close
+  return BR.map === 'wilds' ? (t < 35 ? 120 : Math.max(5, 120 - (t - 35) * .78)) : (t < 25 ? 34 : Math.max(3.5, 34 - (t - 25) * .26)); }
 /* ---------- health ---------- */
 function brBar(f) {   // a little health bar over someone's head
   const c = document.createElement('canvas'); c.width = 128; c.height = 20; const t = new THREE.CanvasTexture(c);
@@ -310,11 +318,11 @@ function stepBots(dt) {
       let best = null, bd = 16; for (const T of tgts) { if (T.id === b.id) continue; const d = T.p.distanceTo(b.f.head.position); if (d < bd) { bd = d; best = T; } }
       const sc = BR.storm, toC = _b1.set(sc.c.x - b.p.x, 0, sc.c.z - b.p.z), outside = toC.length() > sc.r - 2;
       if (outside || !best) {   // wander toward the safe circle
-        if ((b.wT -= dt) < 0 || outside) { b.wT = 2 + brRnd() * 3; const a = brRnd() * 6.28, r = brRnd() * Math.max(2, sc.r * .6); b.wp.set(sc.c.x + Math.cos(a) * r, 0, sc.c.z + Math.sin(a) * r); if (outside) b.wp.copy(sc.c); }
+        if ((b.wT -= dt) < 0 || outside) { b.wT = 2 + brRnd() * 3; const a = brRnd() * 6.28, r = brRnd() * Math.max(2, sc.r * .6); b.wp.set(sc.c.x + Math.cos(a) * r, 0, sc.c.z + Math.sin(a) * r); if (BR.map === 'wilds' && groundAt(b.wp.x, b.wp.z) < WL) b.wp.lerp(sc.c, .5); if (outside) b.wp.copy(sc.c); }
       } else { b.wp.copy(best.p).setY(0); if (bd < 5) b.wp.copy(b.p).addScaledVector(_b2.set(-(best.p.x - b.p.x), 0, -(best.p.z - b.p.z)).normalize(), 2); }
       _b2.subVectors(b.wp, b.p).setY(0); const dist = _b2.length(), mv = dist > .4 ? 2.4 : 0;
       if (mv) { b.p.addScaledVector(_b2.normalize(), Math.min(dist, mv * dt)); }
-      _b3.copy(b.p).setY(.5); const hit = pawHit(_b3, .3); if (hit) b.p.addScaledVector(hit.n.setY(0), .3 - hit.d);   // don't walk through trees
+      b.p.y = groundAt(b.p.x, b.p.z); _b3.copy(b.p); _b3.y += .5; const hit = pawHit(_b3, .3); if (hit && hit.n.y < .7) { b.p.addScaledVector(hit.n.setY(0), .3 - hit.d); b.p.y = groundAt(b.p.x, b.p.z); }   // don't walk through trees
       b.walk = mv ? b.walk + dt * 9 : b.walk * .9;
       if (best) b.yaw = Math.atan2(best.p.x - b.p.x, best.p.z - b.p.z); else if (mv) b.yaw = Math.atan2(_b2.x, _b2.z);
       if (best && (b.fireT -= dt) < 0) {   // shoot (bots miss a lot)
@@ -336,10 +344,10 @@ function stepBots(dt) {
   if (host && online() && (BR.botT -= dt) < 0) { BR.botT = .1; netSend({ t: 'br', e: 'bots', b: BR.bots.map(b => [b.id, r3(b.p.x), r3(b.p.z), r3(b.yaw), Math.ceil(b.hp), b.walk > .1 ? 1 : 0]) }); }
 }
 function poseBot(b, dt) {
-  const f = b.f, y = b.yaw, hy = AVATAR_EYE + Math.abs(Math.sin(b.walk)) * .04, fx = Math.sin(y), fz = Math.cos(y);
+  const f = b.f, y = b.yaw, gy0 = b.p.y, hy = gy0 + AVATAR_EYE + Math.abs(Math.sin(b.walk)) * .04, fx = Math.sin(y), fz = Math.cos(y);
   f.head.position.set(b.p.x, hy, b.p.z); f.head.rotation.set(0, y + Math.PI, 0);
-  if (f.root) { f.root.position.set(b.p.x - fx * .03, 0, b.p.z - fz * .03); f.root.rotation.set(0, y + Math.PI, 0); }
-  else f.body.position.set(b.p.x, hy * .45, b.p.z);
+  if (f.root) { f.root.position.set(b.p.x - fx * .03, gy0, b.p.z - fz * .03); f.root.rotation.set(0, y + Math.PI, 0); }
+  else f.body.position.set(b.p.x, gy0 + (hy - gy0) * .45, b.p.z);
   f.paws.forEach((p, i) => { const sd = i ? -1 : 1, sw = Math.sin(b.walk + i * Math.PI) * .08; p.visible = true; p.position.set(b.p.x + fx * (.28 + (i ? .05 : sw)) + fz * sd * .2, hy - .3 + (i ? .05 : 0), b.p.z + fz * (.28 + (i ? .05 : sw)) - fx * sd * .2); p.rotation.set(0, y + Math.PI, 0); });
   const rp = f.paws[1].position; b.gun.position.set(rp.x, rp.y + .02, rp.z); b.gun.rotation.set(0, y + Math.PI, 0);
   f.label.position.set(b.p.x, hy + .42, b.p.z); if (b.bar) { b.bar.s.position.set(b.p.x, hy + .31, b.p.z); b.bar.set(b.hp, 0); }
@@ -358,7 +366,7 @@ function stepRoyale(dt) {
     if (BR.t > 4) { BR.phase = 'play'; BR.t = 0; setTimeout(() => { if (BR.phase === 'play') brBig(''); }, 900); }
   }
   // storm
-  const S = BR.storm; S.r = stormRadius(BR.phase === 'play' ? BR.t : 0); brStormMesh.position.set(S.c.x, 0, S.c.z); brStormMesh.scale.set(S.r, 1, S.r);
+  const S = BR.storm; S.r = stormRadius(BR.phase === 'play' ? BR.t : 0); brStormMesh.position.set(S.c.x, BR.map === 'wilds' ? groundAt(S.c.x, S.c.z) : 0, S.c.z); brStormMesh.scale.set(S.r, BR.map === 'wilds' ? 4 : 1, S.r);
   headWorld(_b1); const outside = Math.hypot(_b1.x - S.c.x, _b1.z - S.c.z) > S.r;
   $('brStorm').style.display = outside && !state.xr && !BR.out ? 'block' : 'none';
   if (outside && BR.phase === 'play' && !BR.out && (BR.outT += dt) > 1) { BR.outT = 0; brHurt(5, null, 'storm'); if (state.xr) showVrToast('🌀 Get back in the circle!', 1); }
@@ -424,6 +432,6 @@ function brNet(d) {
   else if (d.e === 'gren') throwGren(V(...d.p), V(...d.v), false);
   else if (d.e === 'hp') { const f = MP.others.get(d.from); if (f) { f.brHp = d.hp; f.brSh = d.sh; } }
   else if (d.e === 'hold') { const f = MP.others.get(d.from); if (!f) return; const old = BR.friendW.get(d.from); if (old) { scene.remove(old); BR.friendW.delete(d.from); } if (d.w && BRM[d.w]) { const m = BRM[d.w].clone(); m.userData.h = d.h; scene.add(m); BR.friendW.set(d.from, m); } }
-  else if (d.e === 'bots') { for (const s of d.b) { const b = BR.bots.find(x => x.id === s[0]); if (!b) continue; b.np = (b.np || V()).set(s[1], 0, s[2]); b.yaw = s[3]; b.hp = s[4]; b.walk = s[5] ? b.walk + .15 : b.walk * .9; } }
+  else if (d.e === 'bots') { for (const s of d.b) { const b = BR.bots.find(x => x.id === s[0]); if (!b) continue; b.np = (b.np || V()).set(s[1], groundAt(s[1], s[2]), s[2]); b.yaw = s[3]; b.hp = s[4]; b.walk = s[5] ? b.walk + .15 : b.walk * .9; } }
 }
 window.__kg.royale = { BR, BR_W, BRM, brStartAsk, brStart, brNet, brPick, brGrab, brDrop, brHurt, sendHit, fireGun, throwGren, stepRoyale, botHurt, rayHit, brTargets, BR_BTN };
