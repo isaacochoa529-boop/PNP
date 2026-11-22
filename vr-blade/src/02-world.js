@@ -153,9 +153,10 @@ const sign = (() => {
 function updateSign() {
   const x = sign.c.getContext('2d');
   x.fillStyle = '#2a1a10'; x.fillRect(0, 0, 256, 128);
-  x.fillStyle = '#f1e6cf'; x.font = 'bold 22px Fredoka, sans-serif'; x.textAlign = 'center';
-  x.fillText('🦴 PARTS RIPPED: ' + state.rips, 128, 52);
-  x.fillText('💀 HEAD SMASHES: ' + state.smashes, 128, 96);
+  x.fillStyle = '#f1e6cf'; x.font = 'bold 21px Fredoka, sans-serif'; x.textAlign = 'center';
+  x.fillText('🦴 PARTS RIPPED: ' + state.rips, 128, 38);
+  x.fillText('💀 HEAD SMASHES: ' + state.smashes, 128, 72);
+  x.fillText('💥 BODY SLAMS: ' + (state.slams || 0), 128, 106);
   sign.t.needsUpdate = true;
 }
 updateSign();
@@ -185,11 +186,48 @@ const gary = (() => {
   });
   scene.add(g); return g;
 })();
-// keep a point inside the yard (or the secret room corridor)
+// stone pillars + wooden crates to slam things into
+const PILLARS = [[-4.2, -3.8], [4.6, -4.4], [-5.6, 2.6], [5.2, 3.2]].map(([x, z]) => ({ x, z, r: .42 }));
+const CRATES = [[3, .4, .9], [-3.3, -.9, .8], [2.4, -5.6, .8]].map(([x, z, s]) => ({ x, z, h: s / 2, top: s }));
+{
+  const sm = new THREE.MeshStandardMaterial({ color: '#9b8f82', roughness: .9 });
+  for (const P of PILLARS) {
+    const g = new THREE.Group(); g.position.set(P.x, 0, P.z);
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(.36, .4, 3, 14), sm); col.position.y = 1.5; g.add(col);
+    for (let i = 0; i < 8; i++) { const fl = new THREE.Mesh(new THREE.BoxGeometry(.06, 2.6, .06), new THREE.MeshStandardMaterial({ color: '#83786c' })); const a = i / 8 * Math.PI * 2; fl.position.set(Math.cos(a) * .37, 1.5, Math.sin(a) * .37); g.add(fl); }
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1, .22, 1), sm); base.position.y = .11; g.add(base);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(.95, .2, .95), sm); cap.position.y = 3.05; g.add(cap);
+    g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    scene.add(g);
+  }
+  const plank = canvasTex(128, 128, (x, w, h) => {
+    x.fillStyle = '#8a5a32'; x.fillRect(0, 0, w, h);
+    for (let i = 0; i < 4; i++) { x.fillStyle = i % 2 ? '#7a4e2a' : '#946338'; x.fillRect(0, i * 32 + 2, w, 28); }
+    x.strokeStyle = '#4a2f1d'; x.lineWidth = 8; x.strokeRect(4, 4, w - 8, h - 8); x.beginPath(); x.moveTo(8, 8); x.lineTo(w - 8, h - 8); x.stroke();
+  });
+  for (const C of CRATES) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(C.h * 2, C.top, C.h * 2), new THREE.MeshStandardMaterial({ map: plank, roughness: 1 }));
+    m.position.set(C.x, C.top / 2, C.z); m.castShadow = m.receiveShadow = true; scene.add(m);
+  }
+}
+// keep a point inside the yard (or the secret room corridor) and out of pillars/crates
 function keepIn(p, r = .25) {
   const inCorr = Math.abs(p.x) < .75 && p.z < -8.5;
   if (inCorr) { p.z = Math.max(p.z, -12.1 + r); p.x = clamp(p.x, -.9 + r, .9 - r); return p; }
   const d = Math.hypot(p.x, p.z), lim = AR_R + .5 - r;
   if (d > lim) { p.x *= lim / d; p.z *= lim / d; }
+  for (const P of PILLARS) {
+    const dx = p.x - P.x, dz = p.z - P.z, dd = Math.hypot(dx, dz), m = P.r + r;
+    if (dd < m && p.y < 3.2) { const k = m / (dd || 1e-4); p.x = P.x + dx * k; p.z = P.z + dz * k; }
+  }
+  for (const C of CRATES) {
+    if (p.y > C.top) continue;
+    const dx = p.x - C.x, dz = p.z - C.z, m = C.h + r;
+    if (Math.abs(dx) < m && Math.abs(dz) < m) {
+      const ox = m - Math.abs(dx), oz = m - Math.abs(dz), oy = C.top - p.y;
+      if (oy < Math.min(ox, oz) && oy < .25) p.y = C.top;           // landed on top of the crate
+      else if (ox < oz) p.x = C.x + Math.sign(dx || 1) * m; else p.z = C.z + Math.sign(dz || 1) * m;
+    }
+  }
   return p;
 }

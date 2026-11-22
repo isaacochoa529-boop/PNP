@@ -42,13 +42,15 @@ function say3D(msg, secs) {
 // ---- grabbing ----
 const _hm = new THREE.Matrix4(), _bm = new THREE.Matrix4();
 function startGrab(H, found, handMatrix) {
-  if (found.P) { H.grab = { P: found.P }; found.P.held = H; found.P.heldLocal = found.local; }
+  if (found.torso) { const b = freeDummy(); H.grab = { body: b, soft: true, gl: b.obj.worldToLocal(found.p.clone()) }; b.held = H; b.still = 0; }
+  else if (found.P) { H.grab = { P: found.P }; found.P.held = H; found.P.heldLocal = found.local; found.P.tear = 0; found.P.begged = false; }
   else { const b = found.body; H.grab = { body: b, off: new THREE.Matrix4().copy(handMatrix).invert().multiply(b.obj.matrixWorld) }; b.held = H; b.still = 0; }
   sfx.squish(); buzz(H.side, .4, 30);
 }
 function drop(H) {
   const g = H.grab; if (!g) return; H.grab = null;
   if (g.P) g.P.held = null;
+  if (g.body && g.soft) { g.body.held = null; g.body.v.addScaledVector(avgVel(H.vbuf, 4).clampLength(0, 12), .25); return; }
   if (g.body) {
     const b = g.body; b.held = null; b.still = 0;
     const v = avgVel(H.vbuf, 4); b.v.copy(v).clampLength(0, 14);
@@ -63,8 +65,14 @@ function grabValid(H) {
   return true;
 }
 // moves a held loose body with the hand and handles floor smashes
-function carry(H, dt) {
+function carry(H, dt, handW) {
   const b = H.grab.body, o = b.obj;
+  if (H.grab.soft) {     // the ragdoll hangs from your hand and swings
+    const gp = o.localToWorld(H.grab.gl.clone());
+    softPull(b, gp, handW, avgVel(H.vbuf, 3), dt, 1);
+    buzz(H.side, Math.min(.6, gp.distanceTo(handW) * 2), 16);
+    return;
+  }
   const prev = _v3.copy(o.position);
   _bm.multiplyMatrices(H.mat, H.grab.off); _bm.decompose(o.position, o.quaternion, _v1);
   o.scale.set(1, 1, 1);
@@ -87,11 +95,11 @@ function handStep(H, dt, pressed, handW, handMatrix) {
   H.was = pressed;
   if (H.grab && grabValid(H)) {
     if (H.grab.P) {
-      const P = H.grab.P, k = pullPart(P, handW, H.side);
+      const P = H.grab.P, k = pullPart(P, handW, H.side, dt, avgVel(H.vbuf, 3));
       if (!P.attached && P.body) {          // it tore off: keep holding the torn-off piece
         const b = P.body; H.grab = { body: b, off: new THREE.Matrix4().copy(handMatrix).invert().multiply(b.obj.matrixWorld) }; b.held = H;
       } else { buzz(H.side, k * .5, 20); if (k > .3 && Math.random() < dt * 12) sfx.stretch(k); }
-    } else carry(H, dt);
+    } else carry(H, dt, handW);
   } else if (inVR() && H.vel.length() > 1.6 && H.cool <= 0) { if (hitDummy(handW, avgVel(H.vbuf, 3), H.side)) H.cool = .25; }
   // buttons you can touch
   const nearBtn = handW.distanceTo(RESP_POS) < .13;

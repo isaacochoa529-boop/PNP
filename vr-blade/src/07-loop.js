@@ -1,8 +1,7 @@
 // ===== LOOP: runs every frame =====
 buildDummy();
 const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 1 / 30);
+function step(dt) {
   state.t += dt;
   if (inVR()) stepVR(dt);
   else if (state.mode === 'pc') stepPC(dt);
@@ -16,8 +15,8 @@ renderer.setAnimationLoop(() => {
   stepToast(dt);
   if (vrText.m.visible && state.t > vrText.until) vrText.m.visible = false;
   gary.rotation.y = Math.sin(state.t * .7) * .4; gary.position.y = GARY_POS.y + Math.abs(Math.sin(state.t * 3)) * .02;
-  renderer.render(scene, camera);
-});
+}
+renderer.setAnimationLoop(() => { step(Math.min(clock.getDelta(), 1 / 30)); renderer.render(scene, camera); });
 // test hook for automated checks
 window.__bbCam = () => camera.getWorldPosition(new V3());
-window.__bb = { state, HANDS, pc, get DUM() { return DUM; }, LOOSE, pullPart, ripPart, smashHead, hitDummy, buildDummy, findGrabRay, startPC, keepIn };
+window.__bb = { step, freeDummy, rig, camera, state, HANDS, pc, get DUM() { return DUM; }, LOOSE, pullPart, ripPart, smashHead, hitDummy, buildDummy, findGrabRay, startPC, keepIn };
