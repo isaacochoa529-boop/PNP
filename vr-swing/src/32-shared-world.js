@@ -108,7 +108,7 @@ function netGot(d) {
   } else if (d.t === 'kill') {
     for (const id of d.ids || []) { const pc = AR.byId.get(id); if (!pc) continue; if (d.eat && pc.body) { const t = pc.body.translation(); crumbs(V(t.x, t.y, t.z).add(ARENA), pc.kind, 8); } removePiece(pc); }
   } else if (d.t === 'reset') {
-    AR.pieces.forEach((p, i) => { if (p.pane) return; if (p.held) { p.held.piece = null; p.held = null; } p.dying = .2 + Math.min(i, 150) * .002; }); glassReset();
+    AR.pieces.forEach((p, i) => { if (p.pane) return; if (p.held) { p.held.piece = null; p.held = null; } p.dying = .2 + Math.min(i, 150) * .002; }); glassReset(); waterReset();
   } else if (d.t === 'hz') { HZ.fromNet = true; setHorror(!!d.on, d.quiet); HZ.fromNet = false; }
   else if (d.t === 'fig') {
     if (d.ev === 'spawn' && d.to === MP.me) { if (HZ.on && HZ.phase === 'none' && !HZ.crash) spawnFig(); }
@@ -118,6 +118,7 @@ function netGot(d) {
   else if (d.t === 'pcs' || d.t === 'gls') { if (!AR.ready || MP.clearOnReady) { (MP.snapQ = MP.snapQ || []).push(d); return; } if (d.t === 'gls') glassFromSnap(d); else d.list.forEach(addSnapPiece); }
   else if (d.t === 'gl') glassNet(d);
   else if (d.t === 'bm') bmNet(d);
+  else if (d.t === 'wat') watNet(d);
 }
 function quietIfAway(f) { const keep = ac; if (state.area !== 'arena') ac = null; try { return f(); } finally { ac = keep; } }
 function packCut(c) {
