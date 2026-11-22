@@ -72,6 +72,11 @@ function makeStump(r, boneR, boneLen = .05) {
   }
   const bone = new THREE.Mesh(new THREE.CylinderGeometry(boneR, boneR * 1.15, boneLen, 10), boneMat); bone.position.y = boneLen / 2 + .006; g.add(bone);
   const knob = new THREE.Mesh(new THREE.SphereGeometry(boneR * 1.45, 10, 8), boneMat); knob.position.y = boneLen + .006; knob.scale.y = .8; g.add(knob);
+  for (let i = 0; i < 4; i++) {   // splintered bone tips
+    const a = i / 4 * Math.PI * 2 + rand(-.4, .4);
+    const sp = new THREE.Mesh(new THREE.ConeGeometry(boneR * .45, boneR * rand(1.6, 2.8), 4), boneMat);
+    sp.position.set(Math.cos(a) * boneR * .8, boneLen + .006 + boneR, Math.sin(a) * boneR * .8); sp.rotation.set(rand(-.35, .35), 0, rand(-.35, .35)); g.add(sp);
+  }
   const marrow = new THREE.Mesh(new THREE.CircleGeometry(boneR * .5, 8), meatMat); marrow.rotation.x = -Math.PI / 2; marrow.position.y = boneLen + .006 + boneR * 1.17; g.add(marrow);
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
@@ -194,7 +199,6 @@ function collideFloor(b, dynamic) {
 function onImpact(b, p, speed, n) {
   b.cool = .12; n = n || _v3.set(0, 1, 0);
   if (n.y < .5 && speed > 2.5 && b.kind !== 'tooth' && b.kind !== 'eye' && b.kind !== 'chunk') addSplat(p, n, Math.min(.35, .05 + speed * .025));
-  if (b.kind === 'body') { bodyImpact(b, p, speed, n); return; }
   if (b.kind === 'head' && speed > 3.2) { smashHead(b, p, speed); return; }
   if (b.kind === 'tooth' || b.kind === 'eye') { if (speed > 1) sfx.click(); return; }
   if (speed > 2) { sfx.thud(Math.min(1, speed / 6)); if (b.kind !== 'chunk') { spawnBlood(p, n, Math.min(14, speed * 2 | 0), speed * .25, .9); sfx.splat(); } }

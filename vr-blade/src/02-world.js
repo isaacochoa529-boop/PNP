@@ -72,7 +72,7 @@ function canvasTex(w, h, draw, rep = 1) {
   const add = (w, h, d, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), rm); m.position.set(x, y, z); scene.add(m); };
   add(2.2, .1, 2.2, 0, -.04, -11.2); add(.3, 2, 2.2, -1.15, 1, -11.2); add(.3, 2, 2.2, 1.15, 1, -11.2); add(2.2, 2, .3, 0, 1, -12.35); add(2.6, .2, 2.6, 0, 2.05, -11.2);
   const ped = new THREE.Mesh(new THREE.CylinderGeometry(.22, .28, .6, 10), new THREE.MeshStandardMaterial({ color: '#9a8f84' })); ped.position.set(0, .3, -11.25); scene.add(ped);
-  const glow = new THREE.PointLight('#ffd27a', 1.5, 3); glow.position.set(0, 1.4, -11.2); scene.add(glow);
+  // (no extra point light here: Quest is happier with fewer lights; Gary glows a little instead)
 }
 // banners (cloth sways). The north one hides the gap and has a torn corner.
 const banners = [];
@@ -171,7 +171,7 @@ const respBtn = (() => {
 // Gary the chicken (just a chicken in a secret room)
 const gary = (() => {
   const g = new THREE.Group(); g.position.copy(GARY_POS); g.rotation.y = 0;
-  const w = new THREE.MeshStandardMaterial({ color: '#fbfbf5', roughness: .8 }), o = new THREE.MeshStandardMaterial({ color: '#f39c12' }), r = new THREE.MeshStandardMaterial({ color: '#d11a2a' }), k = new THREE.MeshStandardMaterial({ color: '#111' });
+  const w = new THREE.MeshStandardMaterial({ color: '#fbfbf5', roughness: .8, emissive: '#5a4a20' }), o = new THREE.MeshStandardMaterial({ color: '#f39c12' }), r = new THREE.MeshStandardMaterial({ color: '#d11a2a' }), k = new THREE.MeshStandardMaterial({ color: '#111' });
   const body = new THREE.Mesh(new THREE.SphereGeometry(.13, 16, 12), w); body.scale.set(1, .9, 1.25); body.position.y = .2; g.add(body);
   const tail = new THREE.Mesh(new THREE.ConeGeometry(.07, .14, 8), w); tail.position.set(0, .28, -.15); tail.rotation.x = -.8; g.add(tail);
   const head = new THREE.Mesh(new THREE.SphereGeometry(.07, 14, 10), w); head.position.set(0, .36, .12); g.add(head);
@@ -187,7 +187,8 @@ const gary = (() => {
   scene.add(g); return g;
 })();
 // stone pillars + wooden crates to slam things into
-const PILLARS = [[-4.2, -3.8], [4.6, -4.4], [-5.6, 2.6], [5.2, 3.2]].map(([x, z]) => ({ x, z, r: .42 }));
+const PILLARS = [[-4.2, -3.8], [4.6, -4.4], [-5.6, 2.6], [5.2, 3.2]].map(([x, z]) => ({ x, z, r: .42, h: 3.2 }));
+const POST = { x: DUMMY_POS.x, z: DUMMY_POS.z - .2, r: .05, h: 1.35, off: true }; PILLARS.push(POST);   // the dummy's wooden post (solid once he's off it)
 const CRATES = [[3, .4, .9], [-3.3, -.9, .8], [2.4, -5.6, .8]].map(([x, z, s]) => ({ x, z, h: s / 2, top: s }));
 {
   const sm = new THREE.MeshStandardMaterial({ color: '#9b8f82', roughness: .9 });
@@ -218,7 +219,8 @@ function keepIn(p, r = .25) {
   if (d > lim) { p.x *= lim / d; p.z *= lim / d; }
   for (const P of PILLARS) {
     const dx = p.x - P.x, dz = p.z - P.z, dd = Math.hypot(dx, dz), m = P.r + r;
-    if (dd < m && p.y < 3.2) { const k = m / (dd || 1e-4); p.x = P.x + dx * k; p.z = P.z + dz * k; }
+    if (P.off) continue;
+    if (dd < m && p.y < P.h) { const k = m / (dd || 1e-4); p.x = P.x + dx * k; p.z = P.z + dz * k; }
   }
   for (const C of CRATES) {
     if (p.y > C.top) continue;

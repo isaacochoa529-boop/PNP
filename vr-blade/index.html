@@ -87,7 +87,7 @@ button:disabled { background: #5a4a44; box-shadow: none; color: #2a1d1a; cursor:
 </script>
 <script type="module">
 // The game lives in src/ as small files (see README.md), joined here and run as ONE module.
-const PARTS = ['../../vr-swing/src/00-treekit.js', '01-core.js', '02-world.js', '03-human.js', '04-gore.js', '05-dummy.js', '06-player.js', '07-loop.js'];
+const PARTS = ['../../vr-swing/src/00-treekit.js', '01-core.js', '02-world.js', '03-human.js', '04-gore.js', '05-dummy.js', '05b-ragdoll.js', '06-player.js', '07-loop.js'];
 try {
   const txt = await Promise.all(PARTS.map(n => fetch('src/' + n, { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error(n + ' ' + r.status); return r.text(); })));
   // TreeKit file imports three itself; drop its import lines so they are not doubled.

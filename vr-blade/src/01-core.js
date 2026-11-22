@@ -10,7 +10,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'hi
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;   // cheaper on Quest
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
@@ -72,10 +72,11 @@ function tone(f0, f1, dur, vol, type = 'sine') {
   o.connect(g).connect(AC.destination); o.start(t); o.stop(t + dur + .05);
 }
 const sfx = {
-  rip() { noise(.45, 2200, 1.5, .7, 'bandpass', .25); noise(.25, 300, 1, .6); tone(140, 50, .3, .4, 'triangle'); },
+  rip() { noise(.45, 2200, 1.5, .7, 'bandpass', .25); noise(.25, 300, 1, .6); tone(140, 50, .3, .4, 'triangle'); this.crack(); },
+  crack() { noise(.07, 4200, 2, .7, 'bandpass'); setTimeout(() => noise(.05, 2600, 3, .5, 'bandpass'), 35); tone(220, 70, .08, .3, 'square'); },
   squish() { noise(.18, 900, 3, .35, 'bandpass', .4); },
   splat() { noise(.12, 600, 1, .3); },
-  thud(v = 1) { tone(110, 45, .18, .35 * v, 'sine'); noise(.08, 400, 1, .2 * v); },
+  thud(v = 1) { tone(rand(95, 125), 40, .2, .4 * v, 'sine'); noise(.1, rand(300, 520), 1, .25 * v); },
   crunch() { noise(.3, 3000, .8, .6, 'highpass'); noise(.25, 500, 2, .6, 'bandpass', .3); tone(90, 40, .25, .5, 'triangle'); },
   pop() { tone(500, 1400, .12, .3, 'sine'); },
   stretch(k) { tone(80 + k * 120, 60 + k * 90, .08, .05 + .08 * k, 'sawtooth'); },

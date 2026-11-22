@@ -85,7 +85,7 @@ function makeArm(m, side) {
   const wr = new THREE.Group(); wr.position.y = -.25; el.add(wr);
   const hand = makeHand(m.skin, side, .4); wr.add(hand);
   g.rotation.z = side * .1; el.rotation.x = -.25;
-  g.userData.elbow = el;
+  g.userData.elbow = el; g.userData.wrist = wr;
   return g;
 }
 function makeLeg(m, side) {
@@ -98,6 +98,7 @@ function makeLeg(m, side) {
   const shoe = mesh(new THREE.SphereGeometry(.055, 14, 10), m.shoe, 0, -.43, .045, kn); shoe.scale.set(.85, .6, 1.9);
   mesh(new THREE.BoxGeometry(.085, .015, .2), m.belt, 0, -.455, .045, kn);
   kn.rotation.x = .04; g.rotation.z = side * .03;
+  g.userData.knee = kn;
   return g;
 }
 // opts: {skin, shirt, hair, legs, gold, partyHat}
