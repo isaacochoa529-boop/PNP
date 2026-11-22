@@ -119,6 +119,7 @@ function netGot(d) {
   else if (d.t === 'gl') glassNet(d);
   else if (d.t === 'bm') bmNet(d);
   else if (d.t === 'wat') watNet(d);
+  else if (d.t === 'br') brNet(d);
 }
 function quietIfAway(f) { const keep = ac; if (state.area !== 'arena') ac = null; try { return f(); } finally { ac = keep; } }
 function packCut(c) {

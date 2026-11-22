@@ -158,6 +158,7 @@ function holdGrab(h) {   // squeeze near a climbing hold: your paw clamps onto i
 }
 function letGoHold(h) { if (h.hold) { if (h.hold.plat) h.hold.m.userData.fade = .25; else h.hold.m.scale.setScalar(1); h.hold = null; } }
 function grabAny(h) {
+  if (BR.phase === 'play' && brGrab(h)) return;
   if (BM.stop && h.side === 'right') { bmStatue(true); return; }   // stop-motion: R grip freezes another you
   if (BM.grab && bmGrabFriend(h)) return;
   if (toughGrab(h)) return;
@@ -172,6 +173,7 @@ function grabAny(h) {
   if (BM.plat && !h.holding && !h.piece && !h.sword && !h.stuck && !h.hold && h.tracked) bmPlatform(h);
 }
 function dropAny(h) {
+  if (BR.held[h.i] && brDrop(h)) return;
   if (h.plat) { h.plat.userData.fade = .25; h.plat = null; }
   if (h.grabF) { bmDropFriend(h); return; }
   if (h.hold) { letGoHold(h); h.stuck = false; h.cool = .15; return; }
@@ -193,6 +195,7 @@ function aimAt(maxD, test) {
 function aimButton() { return aimAt(2.6, f => buttons.forEach(b => f(b, b.top, .09))); }
 function deskInteract() {
   if (compDesk()) return;
+  if (brDesk()) return;
   const h = hands[1], hl = hands[0];
   if (state.area === 'arena' && AR.ready) {
     if (cupDesk(h)) return;
