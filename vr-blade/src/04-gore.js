@@ -47,6 +47,7 @@ const decGeo = new THREE.CircleGeometry(1, 12); decGeo.rotateX(-Math.PI / 2);
 { const p = decGeo.attributes.position; for (let i = 1; i < p.count; i++) { const k = rand(.75, 1.15); p.setX(i, p.getX(i) * k); p.setZ(i, p.getZ(i) * k); } }
 const decals = new THREE.InstancedMesh(decGeo, new THREE.MeshStandardMaterial({ roughness: .2, metalness: .1, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), DEC_N);
 decals.count = 0; decals.receiveShadow = true; decals.frustumCulled = false; scene.add(decals);
+for (let i = 0; i < DEC_N; i++) decals.setColorAt(i, BLOOD);
 let decI = 0;
 function addDecal(x, z, s, col) {
   const i = decI % DEC_N; decI++;
@@ -102,7 +103,7 @@ const GRAV = 9.8;
 function makeLoose(obj, { mass = 3, k = .12, samples, kind = 'part', life = 0, r = .15 } = {}) {
   const b = { obj, v: new V3(), w: new V3(), m: mass, invI: 1 / (mass * k * k), samples, kind, life, r, held: null, still: 0, cool: 0, smash: 0 };
   LOOSE.push(b);
-  if (LOOSE.length > 45) { const old = LOOSE.findIndex(x => !x.held && x.kind !== 'head'); if (old >= 0) killLoose(LOOSE[old]); }
+  if (LOOSE.length > 45) { const old = LOOSE.findIndex(x => !x.held && x.kind !== 'head' && x.kind !== 'body'); if (old >= 0) killLoose(LOOSE[old]); }
   return b;
 }
 function killLoose(b) { const i = LOOSE.indexOf(b); if (i >= 0) LOOSE.splice(i, 1); if (b.obj.parent) b.obj.parent.remove(b.obj); if (b.held) b.held.grab = null; }
@@ -112,19 +113,51 @@ function stepLoose(dt) {
     const b = LOOSE[i];
     if (b.life) { b.life -= dt; if (b.life <= 0) { killLoose(b); continue; } }
     b.cool -= dt;
-    if (b.held) continue;
+    if (b.held && !b.soft) continue;
+    if (b.held) b.still = 0;
     if (b.still > .6) continue;
     const o = b.obj;
-    b.v.y -= GRAV * dt; b.v.multiplyScalar(1 - .1 * dt); b.w.multiplyScalar(1 - .3 * dt);
+    b.v.y -= GRAV * dt; b.v.multiplyScalar(1 - .1 * dt); b.w.multiplyScalar(1 - (b.soft ? 1.5 : .3) * dt);
     o.position.addScaledVector(b.v, dt);
     const wl = b.w.length();
     if (wl > 1e-5) { _q1.setFromAxisAngle(_v1.copy(b.w).divideScalar(wl), wl * dt); o.quaternion.premultiply(_q1); }
     collideFloor(b, true);
-    const before = _v1.copy(o.position);
-    keepIn(o.position, b.r * .6);
-    if (before.distanceToSquared(o.position) > 1e-8) { const n = _v2.subVectors(o.position, before).normalize(); const vn = b.v.dot(n); if (vn < 0) b.v.addScaledVector(n, -1.4 * vn); }
+    collideWalls(b);
     if (b.v.lengthSq() < .004 && b.w.lengthSq() < .02 && b.touch) b.still += dt; else b.still = 0;
   }
+}
+// bounce one contact point off a surface with normal n (unit). Returns impact speed (0 if separating).
+function bounce(b, p, n, e = .25, mu = .5) {
+  _r.subVectors(p, b.obj.position);
+  _vp.crossVectors(b.w, _r).add(b.v);
+  const vn = _vp.dot(n); if (vn >= 0) return 0;
+  _rn.crossVectors(_r, n);
+  const j = -(1 + (-vn > 1.5 ? e : 0)) * vn / (1 / b.m + b.invI * _rn.lengthSq());
+  b.v.addScaledVector(n, j / b.m); b.w.addScaledVector(_rn, j * b.invI);
+  _vp.crossVectors(b.w, _r).add(b.v); _t.copy(_vp).addScaledVector(n, -_vp.dot(n));
+  const tl = _t.length();
+  if (tl > 1e-4) {
+    _t.divideScalar(tl); const rt = _v2.crossVectors(_r, _t);
+    const jt = Math.min(tl / (1 / b.m + b.invI * rt.lengthSq()), mu * j);
+    b.v.addScaledVector(_t, -jt / b.m); b.w.addScaledVector(rt, -jt * b.invI);
+  }
+  return -vn;
+}
+// walls, pillars and crates: every sample point is kept inside with keepIn()
+const _wc = new V3();
+function collideWalls(b) {
+  const o = b.obj; let worst = 0, wn = null, wp = null;
+  const pts = b.samples.length ? b.samples : [new V3()];
+  for (const s of pts) {
+    const p = _v1.copy(s).applyQuaternion(o.quaternion).add(o.position);
+    _wc.copy(p); keepIn(_wc, .02);
+    const d = _wc.sub(p), l = d.length();
+    if (l > worst) { worst = l; wn = d.divideScalar(l).clone(); wp = p.clone(); }
+  }
+  if (!wn) return;
+  o.position.addScaledVector(wn, worst);
+  const hit = bounce(b, wp.addScaledVector(wn, worst), wn, .35, .4);
+  if (hit > 2.2 && b.cool <= 0) onImpact(b, wp, hit, wn);
 }
 // pushes the body out of the floor with bounce + friction. Returns the hardest impact speed.
 function collideFloor(b, dynamic) {
@@ -158,9 +191,25 @@ function collideFloor(b, dynamic) {
   if (hit > 0 && hp && dynamic && b.cool <= 0) onImpact(b, hp, hit);
   return { deepest, hp };
 }
-function onImpact(b, p, speed) {
-  b.cool = .12;
+function onImpact(b, p, speed, n) {
+  b.cool = .12; n = n || _v3.set(0, 1, 0);
+  if (n.y < .5 && speed > 2.5 && b.kind !== 'tooth' && b.kind !== 'eye' && b.kind !== 'chunk') addSplat(p, n, Math.min(.35, .05 + speed * .025));
+  if (b.kind === 'body') { bodyImpact(b, p, speed, n); return; }
   if (b.kind === 'head' && speed > 3.2) { smashHead(b, p, speed); return; }
   if (b.kind === 'tooth' || b.kind === 'eye') { if (speed > 1) sfx.click(); return; }
-  if (speed > 2) { sfx.thud(Math.min(1, speed / 6)); if (b.kind !== 'chunk') { spawnBlood(p, _v2.set(0, 1, 0), Math.min(14, speed * 2 | 0), speed * .25, .9); sfx.splat(); } }
+  if (speed > 2) { sfx.thud(Math.min(1, speed / 6)); if (b.kind !== 'chunk') { spawnBlood(p, n, Math.min(14, speed * 2 | 0), speed * .25, .9); sfx.splat(); } }
+}
+// blood splats stuck on walls / pillars / crates (face along the normal)
+const SPL_N = 160;
+const splats = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 12), new THREE.MeshStandardMaterial({ roughness: .2, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), SPL_N);
+splats.count = 0; splats.frustumCulled = false; scene.add(splats);
+for (let i = 0; i < SPL_N; i++) splats.setColorAt(i, BLOOD);
+let splI = 0;
+function addSplat(p, n, s) {
+  const i = splI % SPL_N; splI++;
+  _m4.compose(_v1.copy(p).addScaledVector(n, .012), _q1.setFromUnitVectors(_v2.set(0, 0, 1), n).multiply(new Q().setFromAxisAngle(_v2, Math.random() * 6)), _v3.set(s, s * rand(.6, 1.4), 1));
+  splats.setMatrixAt(i, _m4); splats.setColorAt(i, bloodCol().multiplyScalar(.75));
+  splats.count = Math.min(SPL_N, splI); splats.instanceMatrix.needsUpdate = true; splats.instanceColor.needsUpdate = true;
+  // drips run down from it
+  spawnBlood(p.clone().addScaledVector(n, .03), n, 6, 1, .5);
 }
