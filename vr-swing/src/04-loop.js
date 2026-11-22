@@ -64,7 +64,7 @@ function launch() {
   avg.multiplyScalar(LAUNCH_MUL / w);
   if (avg.length() > MAX_LAUNCH) avg.setLength(MAX_LAUNCH);
   if (avg.length() < .25) avg.multiplyScalar(.3);     // only a really slow let-go turns into a gentle drop
-  state.vel.copy(avg);
+  state.vel.copy(avg).multiplyScalar(brJump());
 }
 
 /* ---------- body collision: feet, middle and head spheres ---------- */
@@ -245,7 +245,7 @@ function stepDesktop(dt) {
   const acc = state.grounded ? (onPuddle() ? 1.1 : 14) : 3.5, v = state.vel;
   v.x += (wx * sp - v.x) * Math.min(1, acc * dt); v.z += (wz * sp - v.z) * Math.min(1, acc * dt);
   if (k.Space && BM.nograv && !state.grounded) v.y = 3;
-  if (k.Space && state.grounded) { v.y = 5.3; state.grounded = false; sfxTap('grass', .3); }
+  if (k.Space && state.grounded) { v.y = 5.3 * brJump(); state.grounded = false; sfxTap('grass', .3); }
   v.y -= G * bmGrav() * dt;
   rig.position.addScaledVector(v, dt);
   resolveBody(false);
@@ -514,7 +514,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); stepWater(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); stepWater(dt); stepRoyale(dt);
 
 }
 window.__kg.calibrate = () => calibrate();
