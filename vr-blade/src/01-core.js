@@ -81,5 +81,8 @@ const sfx = {
   pop() { tone(500, 1400, .12, .3, 'sine'); },
   stretch(k) { tone(80 + k * 120, 60 + k * 90, .08, .05 + .08 * k, 'sawtooth'); },
   chime() { [0, .12, .24].forEach((d, i) => setTimeout(() => tone(660 * (1 + i * .25), 900 * (1 + i * .25), .4, .2), d * 1000)); },
+  clang(v = 1, m = 1) { const f = m > 5 ? 380 : 1500; tone(f * rand(.9, 1.1), f * .7, .5, .18 * v, 'triangle'); tone(f * 2.7, f * 2, .3, .07 * v, 'sine'); noise(.08, 3500, 2, .3 * v, 'bandpass'); },
+  slice() { noise(.16, 5200, 1.2, .45, 'highpass', .5); noise(.12, 1400, 2, .3, 'bandpass', .5); },
+  whoosh(v = 1) { noise(.22, 700, 1.4, .18 * v, 'bandpass', 2.4); },
   click() { tone(900, 500, .06, .2, 'square'); },
 };

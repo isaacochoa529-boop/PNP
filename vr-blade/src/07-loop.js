@@ -1,11 +1,13 @@
 // ===== LOOP: runs every frame =====
 buildDummy();
+setupWeapons();
 const clock = new THREE.Clock();
 function step(dt) {
   state.t += dt;
   if (inVR()) stepVR(dt);
   else if (state.mode === 'pc') stepPC(dt);
   else { camera.position.set(0, 1.55, 0); camera.rotation.set(-.08, Math.sin(state.t * .2) * .15, 0); }
+  stepWeapons(dt);
   stepDummy(dt);
   stepLoose(dt);
   stepBleeders(dt);
@@ -19,4 +21,4 @@ function step(dt) {
 renderer.setAnimationLoop(() => { step(Math.min(clock.getDelta(), 1 / 30)); renderer.render(scene, camera); });
 // test hook for automated checks
 window.__bbCam = () => camera.getWorldPosition(new V3());
-window.__bb = { step, RAG, get RAGh() { return RAG; }, rig, camera, state, HANDS, pc, get DUM() { return DUM; }, LOOSE, ripPart, ragHold, ragRelease, smashHead, hitDummy, buildDummy, findGrabRay, startPC, keepIn };
+window.__bb = { step, RAG, get RAGh() { return RAG; }, rig, camera, state, HANDS, pc, get DUM() { return DUM; }, LOOSE, ripPart, ragHold, ragRelease, smashHead, hitDummy, buildDummy, findGrabRay, startPC, keepIn, WEAPONS, weaponGripAt, startGrab, drop, splitDummy, addWound, ragSplit, pcLeftHand };

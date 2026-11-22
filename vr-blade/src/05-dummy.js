@@ -29,7 +29,7 @@ function buildDummy(opts = {}) {
   if (DUM) {
     scene.remove(DUM.root); scene.remove(DUM.torso);
     for (const P of Object.values(DUM.parts)) scene.remove(P.tendon);
-    for (let i = LOOSE.length - 1; i >= 0; i--) killLoose(LOOSE[i]);
+    for (let i = LOOSE.length - 1; i >= 0; i--) if (LOOSE[i].kind !== 'weapon') killLoose(LOOSE[i]);
   }
   const gold = opts.gold ?? Math.random() < 1 / 20;
   goldBlood = gold;
@@ -56,7 +56,7 @@ function buildDummy(opts = {}) {
     P.tendon = new THREE.Mesh(new THREE.CylinderGeometry(.02, .028, 1, 8), tendonMat); P.tendon.visible = false; scene.add(P.tendon);
     parts[name] = P;
   }
-  DUM = { id: ++DUM_ID, h, root: h.root, torso: T, parts, face: h.face, gold, blink: 2, faceT: 0, said: 0, empty: false, hs: 0, slams: 0 };
+  DUM = { id: ++DUM_ID, h, root: h.root, torso: T, torsoUp: h.torsoUp, wounds: [], parts, face: h.face, gold, blink: 2, faceT: 0, said: 0, empty: false, hs: 0, slams: 0 };
   buildRag(DUM); POST.off = true;
   if (gold) setTimeout(() => sayDummy('✨ I feel... SHINY ✨'), 400);
 }
@@ -68,9 +68,14 @@ function findGrab(p, reach = .1) {
   let best = null, bd = reach;
   if (DUM) { const i = ragNearest(p, reach); if (i >= 0) { bd = RAG.p[i].distanceTo(p) - RAG.r[i]; best = { rag: i }; } }
   for (const b of LOOSE) {
-    if (b.held) continue;
+    if (b.held || b.kind === 'weapon') continue;
     const d = b.obj.position.distanceTo(p) - b.r * .7;
     if (d < bd) { bd = d; best = { body: b }; }
+  }
+  // weapons are grabbed by the handle (a second hand can join the first)
+  for (const b of WEAPONS) {
+    const g = weaponGripAt(b, p);
+    if (g.dist < .1 && g.dist < bd + .03) { bd = g.dist; best = { weapon: b, local: g.local }; }
   }
   return best;
 }
@@ -78,8 +83,13 @@ function findGrab(p, reach = .1) {
 function findGrabRay(org, dir, maxD = 3.5) {
   let best = null, bt = maxD;
   if (DUM) { const r = ragRay(org, dir, maxD); if (r) { best = { rag: r.i, t: r.t }; bt = r.t; } }
-  for (const b of LOOSE) {
+  for (const b of WEAPONS) {
     if (b.held) continue;
+    const g = weaponGripRay(b, org, dir, bt + .15);
+    if (g) { bt = g.t; best = { weapon: b, local: g.local, t: g.t }; }
+  }
+  for (const b of LOOSE) {
+    if (b.held || b.kind === 'weapon') continue;
     const t = _v2.subVectors(b.obj.position, org).dot(dir); if (t < .2 || t > bt) continue;
     if (_v3.copy(org).addScaledVector(dir, t).distanceTo(b.obj.position) < b.r * .45 + .05) { bt = t; best = { body: b, t }; }
   }
@@ -87,7 +97,7 @@ function findGrabRay(org, dir, maxD = 3.5) {
 }
 function ragHold(H, i, target) {
   RAG.holds = RAG.holds.filter(x => x.H !== H);
-  RAG.holds.push({ H, i, target: target.clone(), k: RAG.owner[i] === 'torso' ? .2 : RAG.owner[i] === 'head' ? .35 : .45 });
+  RAG.holds.push({ H, i, target: target.clone(), k: RAG.owner[i] === 'torso' || RAG.owner[i] === 'hips' ? .2 : RAG.owner[i] === 'head' ? .35 : .45 });
 }
 function ragRelease(H, vel) {
   const h = RAG.holds.find(x => x.H === H); if (!h) return;
@@ -109,11 +119,13 @@ function hitDummy(p, vel, who) {
   if (!DUM) return false;
   const sp = vel.length(); if (sp < 1.6) return false;
   const i = ragNearest(p, .06); if (i < 0) return false;
-  const tor = RAG.owner[i] === 'torso';
+  const tor = RAG.owner[i] === 'torso' || RAG.owner[i] === 'hips';
   ragAddVel(i, _v1.copy(vel).multiplyScalar(tor ? .45 : .85), RAG.h || 1 / 120);
   if (tor && RAG.pinned && sp > 7) unpin('WHOA!');
   sfx.thud(Math.min(1, sp / 6)); if (sp > 5) sfx.crunch();
+  if (sp > 2.4) addWound(RAG.p[i].clone().lerp(p, .5), vel, clamp(.012 + sp * .004, .015, .04), 'bruise');
   if (sp > 3.2) { spawnBlood(p.clone(), vel.clone().normalize(), Math.min(25, sp * 3 | 0), sp * .3, .6); sfx.squish(); }
+  if (typeof bloodyHand === 'function') bloodyHand(who, sp);
   if (RAG.owner[i] === 'head' && sp > 5.5) headHit(RAG.p[i].clone(), sp * .7);
   if (sp > 6.5) RAG.ko = Math.max(RAG.ko, 1.2);
   if (DUM.face) setFace('ouch', 1.2);
@@ -187,7 +199,7 @@ function setFace(kind, secs = 1.5) {
 }
 
 function ripPart(P, pullDir, hand) {
-  const g = P.g, torso = DUM.torso;
+  const g = P.g, torso = P.type === 'leg' ? DUM.torso : DUM.torsoUp;
   g.updateWorldMatrix(true, true);
   const vel = new V3(); for (const i of P.pts || []) vel.add(ragVel(i, RAG.h || 1 / 120)); if (P.pts) vel.divideScalar(P.pts.length);
   for (const h of RAG.holds) if (RAG.owner[h.i] === P.name) h.ripped = true;
@@ -299,7 +311,7 @@ function stepDummy(dt) {
   } else RAG.look = (RAG.look || 0) * .95;
   stepRag(dt);
   // pulled hard enough by the chest? it rips off the post
-  if (RAG.pinned) for (const h of RAG.holds) if (RAG.owner[h.i] === 'torso' && RAG.p[RAG.idx.Ch].distanceTo(RAG.pin[RAG.idx.Ch]) > .1) { unpin(); break; }
+  if (RAG.pinned) for (const h of RAG.holds) if ((RAG.owner[h.i] === 'torso' || RAG.owner[h.i] === 'hips') && RAG.p[RAG.idx.Ch].distanceTo(RAG.pin[RAG.idx.Ch]) > .1) { unpin(); break; }
   if (RAG.hitBest && RAG.hitBest.v > 2.6 && t > (DUM.slamCool || 0)) ragImpact(RAG.hitBest);
   // JOINTS: they stretch under force and slowly TEAR. The dummy fights back while you pull.
   const held = heldParts();
@@ -323,6 +335,21 @@ function stepDummy(dt) {
       const holder = RAG.holds.find(h => RAG.owner[h.i] === P.name);
       ripPart(P, dir, holder ? holder.H.side : null);
     }
+  }
+  // WAIST: grab the top and bottom half and pull him in two
+  if (!RAG.split) {
+    let st = 0;
+    for (const c of RAG.C) if (c.kind === 'waist') st = Math.max(st, RAG.p[c.a].distanceTo(RAG.p[c.b]) - c.len);
+    DUM.waistSt = st;
+    RAG.waistTear = Math.max(0, RAG.waistTear + (st > .05 ? dt * Math.min(1, Math.pow((st - .05) / .1, 1.5)) : -dt * .3));
+    const k = clamp(RAG.waistTear, 0, 1);
+    if (k > 0) {
+      if (DUM.face) setFace('scream', .6);
+      if (k > .2 && !DUM.waistBeg) { DUM.waistBeg = true; sayDummy(pick(['NOT THE MIDDLE!!', 'I WILL SNAP!', 'NO NO NO NO'])); }
+      for (const h of RAG.holds) buzz(h.H.side, .2 + k * .7, 25);
+      if (Math.random() < dt * 30 * k) spawnBlood(RAG.p[RAG.idx.Fr].clone(), _v1.set(0, -1, 0), 1, .6, .8);
+    } else DUM.waistBeg = false;
+    if (RAG.waistTear >= 1) splitDummy();
   }
   poseRag(DUM);
   // blinking + face reset
@@ -361,4 +388,59 @@ function stepDummy(dt) {
       src.getWorldPosition(bubble.s.position); bubble.s.position.y += src === DUM.torso ? .95 : .45;
     }
   }
+}
+
+// --- torn in two at the waist ---
+function splitDummy() {
+  ragSplit();
+  const U = DUM.torsoUp, T = DUM.torso;
+  const sU = makeStump(.13, .022, .05); sU.position.set(0, .19, 0); sU.quaternion.setFromUnitVectors(_v1.set(0, 1, 0), _v2.set(0, -1, 0)); sU.scale.z = .65; U.add(sU);
+  const sL = makeStump(.13, .022, .04); sL.position.set(0, .17, 0); sL.scale.z = .65; T.add(sL);
+  // guts hanging out
+  const gm = new THREE.MeshStandardMaterial({ color: '#d4707e', roughness: .35, emissive: '#3a0a10' });
+  for (const [grp, y, dirY] of [[U, .17, -1], [T, .19, 1]]) for (let i = 0; i < 5; i++) {
+    const gut = new THREE.Mesh(new THREE.TorusGeometry(rand(.025, .04), rand(.012, .018), 6, 10, rand(2.5, 5)), gm);
+    gut.position.set(rand(-.07, .07), y + dirY * rand(.0, .05), rand(-.03, .04)); gut.rotation.set(rand(0, 6), rand(0, 6), rand(0, 6)); gut.castShadow = true; grp.add(gut);
+  }
+  const col = goldBlood || state.rainbow ? () => bloodCol() : null;
+  addBleeder(U, new V3(0, .17, 0), new V3(0, -1, 0), 7, 60, col);
+  addBleeder(T, new V3(0, .19, 0), new V3(0, 1, 0), 7, 50, col);
+  const mid = RAG.p[RAG.idx.Fr].clone();
+  spawnBlood(mid, _v1.set(0, 1, 0), 80, 3.5, .9);
+  sfx.rip(); sfx.crunch(); setTimeout(() => sfx.rip(), 90);
+  for (const h of RAG.holds) buzz(h.H.side, 1, 200);
+  state.rips++; updateSign();
+  RAG.ko = 4; RAG.musc = .3;
+  if (DUM.face) setFace('scream', 4);
+  sayDummy("I'M IN TWO PIECES?!");
+}
+
+// --- bloody marks that stick to his body (and spray onto walls nearby) ---
+const woundMat = new THREE.MeshStandardMaterial({ color: '#6a0510', roughness: .3, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+const woundDeep = new THREE.MeshStandardMaterial({ color: '#2a0004', roughness: .5, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 });
+const woundGeo = (() => { const g = new THREE.CircleGeometry(1, 10); const p = g.attributes.position; for (let i = 1; i < p.count; i++) { const k = rand(.7, 1.2); p.setX(i, p.getX(i) * k); p.setY(i, p.getY(i) * k); } return g; })();
+const _ray = new THREE.Raycaster();
+// kind: 'bruise' (punch), 'cut' (long gash), 'stab' (deep hole)
+function addWound(p, dir, size, kind = 'bruise') {
+  if (!DUM) return null;
+  const d = dir.clone().normalize();
+  _ray.set(p.clone().addScaledVector(d, -.3), d); _ray.far = .6;
+  const hit = _ray.intersectObject(DUM.torso, true).find(h => h.object.isMesh && h.object.material !== woundMat && h.object.material !== woundDeep && h.face);
+  if (!hit) return null;
+  const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+  const par = hit.object.parent;
+  const m = new THREE.Mesh(woundGeo, kind === 'stab' ? woundDeep : woundMat);
+  par.add(m);
+  const pq = par.getWorldQuaternion(new Q()).invert();
+  m.position.copy(par.worldToLocal(hit.point.clone().addScaledVector(n, .002)));
+  m.quaternion.copy(pq).multiply(new Q().setFromUnitVectors(_v1.set(0, 0, 1), n)).multiply(new Q().setFromAxisAngle(_v2.set(0, 0, 1), kind === 'cut' ? Math.atan2(d.y, d.x) : rand(0, 6)));
+  const ps = par.getWorldScale(new V3());
+  m.scale.set(size * (kind === 'cut' ? 2.6 : 1) / ps.x, size * (kind === 'cut' ? .35 : 1) / ps.y, 1);
+  if (kind === 'stab') { const ring = new THREE.Mesh(woundGeo, woundMat); ring.scale.set(1.8, 1.8, 1); ring.position.z = -.001; m.add(ring); }
+  DUM.wounds.push(m); if (DUM.wounds.length > 90) { const o = DUM.wounds.shift(); if (o.parent) o.parent.remove(o); }
+  // blood flies off the wound and splats on a wall if one is close
+  const wallDir = d.clone(); wallDir.y = Math.max(wallDir.y, -.2);
+  const tgt = hit.point.clone().addScaledVector(wallDir, 1.4), before = tgt.clone(); keepIn(tgt, .02);
+  if (tgt.distanceToSquared(before) > 1e-6) addSplat(tgt, before.sub(tgt).normalize().negate(), size * 4);
+  return { point: hit.point, n, obj: par };
 }

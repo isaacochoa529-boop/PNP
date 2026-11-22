@@ -193,6 +193,7 @@ const CRATES = [[3, .4, .9], [-3.3, -.9, .8], [2.4, -5.6, .8]].map(([x, z, s]) =
 {
   const sm = new THREE.MeshStandardMaterial({ color: '#9b8f82', roughness: .9 });
   for (const P of PILLARS) {
+    if (P === POST) continue;          // the post is his wooden post, not a stone pillar (this was the 'he's inside a pillar' bug)
     const g = new THREE.Group(); g.position.set(P.x, 0, P.z);
     const col = new THREE.Mesh(new THREE.CylinderGeometry(.36, .4, 3, 14), sm); col.position.y = 1.5; g.add(col);
     for (let i = 0; i < 8; i++) { const fl = new THREE.Mesh(new THREE.BoxGeometry(.06, 2.6, .06), new THREE.MeshStandardMaterial({ color: '#83786c' })); const a = i / 8 * Math.PI * 2; fl.position.set(Math.cos(a) * .37, 1.5, Math.sin(a) * .37); g.add(fl); }
@@ -211,6 +212,8 @@ const CRATES = [[3, .4, .9], [-3.3, -.9, .8], [2.4, -5.6, .8]].map(([x, z, s]) =
     m.position.set(C.x, C.top / 2, C.z); m.castShadow = m.receiveShadow = true; scene.add(m);
   }
 }
+// the square stone bases of the pillars are solid too (nothing sinks into them)
+for (const P of PILLARS) if (P !== POST) CRATES.push({ x: P.x, z: P.z, h: .5, top: .22, base: true });
 // keep a point inside the yard (or the secret room corridor) and out of pillars/crates
 function keepIn(p, r = .25) {
   const inCorr = Math.abs(p.x) < .75 && p.z < -8.5;
@@ -224,11 +227,11 @@ function keepIn(p, r = .25) {
   }
   for (const C of CRATES) {
     if (p.y > C.top) continue;
-    const dx = p.x - C.x, dz = p.z - C.z, m = C.h + r;
-    if (Math.abs(dx) < m && Math.abs(dz) < m) {
-      const ox = m - Math.abs(dx), oz = m - Math.abs(dz), oy = C.top - p.y;
+    const dx = p.x - C.x, dz = p.z - C.z, m = (C.hx ?? C.h) + r, mz = (C.hz ?? C.h) + r;
+    if (Math.abs(dx) < m && Math.abs(dz) < mz) {
+      const ox = m - Math.abs(dx), oz = mz - Math.abs(dz), oy = C.top - p.y;
       if (oy < Math.min(ox, oz) && oy < .25) p.y = C.top;           // landed on top of the crate
-      else if (ox < oz) p.x = C.x + Math.sign(dx || 1) * m; else p.z = C.z + Math.sign(dz || 1) * m;
+      else if (ox < oz) p.x = C.x + Math.sign(dx || 1) * m; else p.z = C.z + Math.sign(dz || 1) * mz;
     }
   }
   return p;

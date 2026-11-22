@@ -5,7 +5,7 @@
 const RAG = { p: [], q: [], w: [], r: [], alive: [], owner: [], name: [], C: [], rest: [], holds: [], pinned: true, pin: [], musc: 1, ko: 0, pushers: [] };
 const _ra = new V3(), _rb = new V3(), _rc = new V3(), _rm = new THREE.Matrix4(), _rq2 = new Q();
 const RAG_SUB = 2, RAG_IT = 7;
-const RAG_JK = { head: .32, arm: .15, leg: .13 };   // joint stiffness: lower = stretches more before tearing
+const RAG_JK = { head: .32, arm: .15, leg: .13, waist: .3 };   // joint stiffness: lower = stretches more before tearing
 
 function ragReset() { Object.assign(RAG, { p: [], q: [], w: [], r: [], alive: [], owner: [], name: [], C: [], rest: [], holds: [], pinned: true, pin: [], musc: 1, ko: 0, hit: 0, pushers: [] }); }
 function ragAdd(name, owner, pos, mass, rad) {
@@ -25,11 +25,14 @@ function buildRag(D) {
   ragReset(); RAG.idx = {};
   const T = D.torso; T.updateWorldMatrix(true, true);
   const W = (o, x, y, z) => o.localToWorld(new V3(x, y, z));
-  const tor = [['Pz', 0, 0, 0, .13], ['Ch', 0, .42, 0, .14], ['N', 0, .52, .005, .06], ['SL', -.2, .465, 0, .07], ['SR', .2, .465, 0, .07],
-    ['HL', -.088, -.07, 0, .08], ['HR', .088, -.07, 0, .08], ['Fr', 0, .25, .09, .1], ['Bk', 0, .25, -.09, .1]];
-  const ti = tor.map(([n, x, y, z, r]) => ragAdd(n, 'torso', W(T, x, y, z), 4, r));
-  for (let a = 0; a < ti.length; a++) for (let b = a + 1; b < ti.length; b++) ragC(ti[a], ti[b], 'rigid', 1);
-  RAG.torso = ti;
+  // upper body (owner 'torso') and hips (owner 'hips'), joined at the waist by stretchy, tearable links
+  const up = [['Ch', 0, .42, 0, .14], ['N', 0, .52, .005, .06], ['SL', -.2, .465, 0, .07], ['SR', .2, .465, 0, .07], ['Fr', 0, .26, .09, .1], ['Bk', 0, .26, -.09, .1]];
+  const lo = [['Pz', 0, 0, 0, .13], ['HL', -.088, -.07, 0, .08], ['HR', .088, -.07, 0, .08], ['Lo', 0, .1, .08, .09], ['Lb', 0, .1, -.08, .09]];
+  const ui = up.map(([n, x, y, z, r]) => ragAdd(n, 'torso', W(T, x, y, z), 4, r));
+  const li = lo.map(([n, x, y, z, r]) => ragAdd(n, 'hips', W(T, x, y, z), 5, r));
+  for (const set of [ui, li]) for (let a = 0; a < set.length; a++) for (let b = a + 1; b < set.length; b++) ragC(set[a], set[b], 'rigid', 1);
+  for (const a of ui) for (const b of li) ragC(a, b, 'waist', RAG_JK.waist);
+  RAG.torso = [...ui, ...li]; RAG.up = ui; RAG.lo = li; RAG.split = false; RAG.waistTear = 0;
   const P = D.parts;
   if (P.head) {
     const g = P.head.g;
@@ -70,19 +73,27 @@ function buildRag(D) {
   // the other leg can't pass through: keep feet/knees apart a little
   if (P.legL && P.legR) { ragC(P.legL.pts[1], P.legR.pts[1], 'min', 1, .1); ragC(P.legL.pts[2], P.legR.pts[2], 'min', 1, .1); }
   // rest positions in torso space (for muscles) + pins for the post
-  const inv = ragTorsoMatrix(new THREE.Matrix4()).invert();
-  RAG.rest = RAG.p.map(p => p.clone().applyMatrix4(inv));
+  const iu = ragFrame('up', new THREE.Matrix4()).invert(), il = ragFrame('lo', new THREE.Matrix4()).invert();
+  RAG.rest = RAG.p.map((p, i) => p.clone().applyMatrix4(RAG.owner[i].startsWith('leg') ? il : iu));
   RAG.pin = RAG.p.map(p => p.clone());
   RAG.pinned = true;
 }
-// torso frame (position = pelvis point) from the torso points
-function ragTorsoMatrix(m) {
+// body frames from the points: 'up' = chest (origin at the chest point), 'lo' = hips (origin at the pelvis point)
+function ragFrame(which, m) {
   const I = RAG.idx, p = RAG.p;
-  const up = _ra.subVectors(p[I.Ch], p[I.Pz]).normalize();
-  const right = _rb.subVectors(p[I.SR], p[I.SL]); right.addScaledVector(up, -right.dot(up)).normalize();
+  let o, up, right;
+  if (which === 'up') { o = p[I.Ch]; up = _ra.addVectors(p[I.Fr], p[I.Bk]).multiplyScalar(.5).negate().add(p[I.Ch]).normalize(); right = _rb.subVectors(p[I.SR], p[I.SL]); }
+  else { o = p[I.Pz]; up = _ra.addVectors(p[I.Lo], p[I.Lb]).multiplyScalar(.5).sub(p[I.Pz]).normalize(); right = _rb.subVectors(p[I.HR], p[I.HL]); }
+  right.addScaledVector(up, -right.dot(up)).normalize();
   const fwd = _rc.crossVectors(right, up);
-  m.makeBasis(right, up, fwd); m.setPosition(p[I.Pz]);
+  m.makeBasis(right, up, fwd); m.setPosition(o);
   return m;
+}
+function ragTorsoMatrix(m) { return ragFrame('lo', m); }
+// tear the body in two at the waist
+function ragSplit() {
+  if (RAG.split) return; RAG.split = true;
+  RAG.C = RAG.C.filter(c => c.kind !== 'waist');
 }
 function ragKill(P) { for (const i of P.pts || []) RAG.alive[i] = false; RAG.C = RAG.C.filter(c => RAG.alive[c.a] && RAG.alive[c.b]); RAG.holds = RAG.holds.filter(h => RAG.alive[h.i]); }
 function ragVel(i, h) { return RAG.p[i].clone().sub(RAG.q[i]).divideScalar(h); }
@@ -103,7 +114,7 @@ function ragRay(o, d, maxT) {
   return best < 0 ? null : { i: best, t: bt };
 }
 // ---- the simulation ----
-const _mus = new THREE.Matrix4();
+const _mus = new THREE.Matrix4(), _musL = new THREE.Matrix4();
 function stepRag(dt) {
   if (!RAG.p.length) return;
   const h = dt / RAG_SUB, g = -9.8 * h * h, N = RAG.p.length;
@@ -119,13 +130,13 @@ function stepRag(dt) {
     // muscles: limbs gently try to get back to their pose (strong while standing, floppy when thrown or knocked out)
     const mk = RAG.ko > 0 ? 0 : RAG.pinned ? .035 * RAG.musc : .006 * RAG.musc;
     if (mk > 0) {
-      ragTorsoMatrix(_mus);
+      ragFrame('up', _mus); ragFrame('lo', _musL);
       for (let i = 0; i < N; i++) {
-        if (!RAG.alive[i] || RAG.owner[i] === 'torso') continue;
+        if (!RAG.alive[i] || RAG.owner[i] === 'torso' || RAG.owner[i] === 'hips') continue;
         const k = RAG.owner[i] === 'head' ? mk * 2.5 : mk;
         const t = _ra.copy(RAG.rest[i]);
         if (RAG.owner[i] === 'head' && RAG.look) t.sub(RAG.rest[RAG.idx.N]).applyAxisAngle(_rb.set(0, 1, 0), RAG.look).add(RAG.rest[RAG.idx.N]);   // looks at you
-        t.applyMatrix4(_mus);
+        t.applyMatrix4(RAG.owner[i].startsWith('leg') ? _musL : _mus);
         RAG.p[i].lerp(t, k);
       }
     }
@@ -171,21 +182,33 @@ function stepRag(dt) {
           if (vn < 0) q.addScaledVector(n, vn * 1.3);              // bounce a bit off walls
         }
       }
+      // limbs are solid along their whole length, not just at the joints (no arm sliding through a pillar)
+      if (it === RAG_IT - 1) for (const c of RAG.C) {
+        if (c.kind !== 'bone' && c.kind !== 'joint') continue;
+        if (!RAG.alive[c.a] || !RAG.alive[c.b]) continue;
+        const a = RAG.p[c.a], b = RAG.p[c.b];
+        _rc.addVectors(a, b).multiplyScalar(.5); _rb.copy(_rc); keepIn(_rc, .05);
+        if (_rc.distanceToSquared(_rb) > 1e-10) { _rc.sub(_rb); a.add(_rc); b.add(_rc); }
+      }
     }
   }
   if (RAG.ko > 0) RAG.ko -= dt;
   RAG.pushers.length = 0;
 }
 // put the meshes where the points are
-const _pq2 = new Q(), _tm = new THREE.Matrix4(), _tq = new Q(), _tinv = new Q();
+const _pq2 = new Q(), _tm = new THREE.Matrix4(), _tq = new Q();
+const _upOff = new THREE.Matrix4().makeTranslation(0, -.42, 0), _um = new THREE.Matrix4(), _pqi = new Q();
 function poseRag(D) {
-  const T = D.torso, I = RAG.idx, p = RAG.p;
-  ragTorsoMatrix(_tm); _tm.decompose(T.position, T.quaternion, _ra); T.scale.set(1, 1, 1);
+  const T = D.torso, U = D.torsoUp, p = RAG.p;
+  ragFrame('lo', _tm); _tm.decompose(T.position, T.quaternion, _ra); T.scale.set(1, 1, 1);
   T.updateMatrixWorld(true);
-  _tinv.copy(T.quaternion).invert();
-  const local = v => T.worldToLocal(v.clone());
+  ragFrame('up', _um).multiply(_upOff);                       // chest frame -> upper-body group
+  _tm.copy(T.matrixWorld).invert().multiply(_um); _tm.decompose(U.position, U.quaternion, _ra); U.scale.set(1, 1, 1);
+  U.updateMatrixWorld(true);
   for (const P of Object.values(D.parts)) {
     if (!P.attached || !P.pts) continue;
+    const par = P.g.parent; par.getWorldQuaternion(_pqi).invert(); const _tinv = _pqi;
+    const local = v => par.worldToLocal(v.clone());
     const [i0, i1, i2] = P.pts, g = P.g;
     g.position.copy(local(p[i0]));
     if (P.type === 'head') {
@@ -199,7 +222,7 @@ function poseRag(D) {
     const du = _ra.subVectors(p[i1], p[i0]).normalize(), df = _rb.subVectors(p[i2], p[i1]).normalize();
     const leg = P.type === 'leg';
     let x = _rc.crossVectors(leg ? du : df, leg ? df : du);
-    if (x.lengthSq() < .0025) { x.copy(P.lastX || new V3(1, 0, 0).applyQuaternion(T.quaternion)); }
+    if (x.lengthSq() < .0025) { x.copy(P.lastX || new V3(1, 0, 0).applyQuaternion(par.getWorldQuaternion(new Q()))); }
     x.normalize(); P.lastX = (P.lastX || new V3()).copy(x);
     const y = du.clone().negate(), z = new V3().crossVectors(x, y).normalize(); x.crossVectors(y, z);
     _rm.makeBasis(x, y, z); _tq.setFromRotationMatrix(_rm);
