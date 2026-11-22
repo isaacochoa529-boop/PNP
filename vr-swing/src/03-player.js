@@ -90,6 +90,7 @@ const L_UP = .3, L_FORE = .3;
   })();
   const furOf = o => { let m = null; o.traverse(c => { if (c.isMesh && c.material.name === 'Fur') m = c.material; }); return m; };
   const prep = (o, layer) => { o.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; if (layer) c.layers.set(layer); } }); return o; };
+  paintCheeks(get('Head'));   // the mark of the Knuckle (everyone's head is copied from this one)
   AV.torso = prep(get('Torso').clone(), SELF_LAYER); AV.head = prep(get('Head').clone(), SELF_LAYER);
   AV.torso.position.set(0, -.12, 0); AV.head.position.set(0, 0, 0); AV.head.visible = false;   // -.12: the bean's bottom sits on the floor
   AV.root.add(AV.torso); scene.add(AV.head);
