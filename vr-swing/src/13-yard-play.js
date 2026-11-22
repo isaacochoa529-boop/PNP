@@ -15,6 +15,7 @@ import('rapier').then(async m => {
   AR.bodyB = w.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -50, 0)); w.createCollider(R.ColliderDesc.capsule(.17, .2), AR.bodyB);
   spawnSet(false); spawnMega(false);
   GL.panes.forEach(p => fixed(R.ColliderDesc.cuboid(p.W / 2 + .04, .035, .05), p.pos.x, .035, p.pos.z, { x: p.q.x, y: p.q.y, z: p.q.z, w: p.q.w }));
+  poolRapier(fixed);
   { const [lx, lz, ly] = GL.labBox; _aq.setFromEuler(new THREE.Euler(0, ly, 0)); fixed(R.ColliderDesc.cuboid(.33, .17, .2), lx, .17, lz, { x: _aq.x, y: _aq.y, z: _aq.z, w: _aq.w }); }
   glassReset();
   // warm the cutter up (JIT) so the very first real slice is as quick as the rest
@@ -162,6 +163,7 @@ function grabAny(h) {
   if (toughGrab(h)) return;
   if (holdGrab(h)) return;
   if (state.area === 'arena' && AR.ready && h.tracked) {
+    if (cupGrab(h)) return;
     if (swordNear(h)) { takeSword(h); return; }
     const pc = pieceNear(h); if (pc) { holdPiece(h, pc); return; }
   }
@@ -175,6 +177,7 @@ function dropAny(h) {
   if (h.hold) { letGoHold(h); h.stuck = false; h.cool = .15; return; }
   if (PULL.h === h) { pullStop(false); return; }
   if (h.sword) { releaseSword(h); return; }
+  if (h.cup) { cupDrop(h); return; }
   if (h.piece) { releasePiece(h); return; }
   if (pip.heldBy === h) { pipDrop(h); return; }
   dropProp(h);
@@ -192,6 +195,7 @@ function deskInteract() {
   if (compDesk()) return;
   const h = hands[1], hl = hands[0];
   if (state.area === 'arena' && AR.ready) {
+    if (cupDesk(h)) return;
     const holder = h.piece ? h : hl.piece ? hl : null;
     if (holder) { camera.getWorldQuaternion(_aq); releasePiece(holder, V(0, 1.5, -6.5).applyQuaternion(_aq)); return; }
     const b = aimButton(); if (b) { pressButton(b, null); return; }
@@ -208,6 +212,7 @@ function deskInteract() {
 }
 canvas.addEventListener('pointerdown', e => {
   if (state.mode !== 'play' || state.xr || e.button !== 0 || (document.pointerLockElement !== canvas && !state.touch) || state.area !== 'arena') return;
+  if (hands.some(x => x.cup)) return; if (deskSharpen()) return;
   if (hands[1].sword) startSwing(false); else { const b = aimButton(); if (b) pressButton(b, null); }
 });
 // right click: a lightning-fast anime slash
@@ -218,14 +223,15 @@ function startSwing(fast) { const s = AR.swing; if (s.t < 1) { s.queued = true; 
 /* ======================= buttons ======================= */
 function pressButton(b, h) {
   if (tAll - AR.btnT[b.i] < (b.i >= 2 ? .25 : .45) || !AR.ready) return;
-  AR.btnT[b.i] = tAll; b.down = 1; sfxPress(b.i === 0 || b.i === 3); if (h) buzz(h, .6, 40);
+  AR.btnT[b.i] = tAll; b.down = 1; sfxPress(b.i === 0 || b.i === 3 || !!b.act); if (h) buzz(h, .6, 40);
+  if (b.act) { b.act(); return; }
   if (b.i >= 2) labSet(LAB.k + (b.i === 3 ? 1 : -1));
   else if (b.i === 0) {
     AR.greenTimes = AR.greenTimes.filter(t => tAll - t < 2.2); AR.greenTimes.push(tAll);
     if (AR.greenTimes.length >= 3) { AR.greenTimes.length = 0; butterBlock(); }   // secret: triple-tap SPAWN
     else spawnSet(true);
   } else {
-    AR.pieces.forEach((p, i) => { if (!p.held && !p.pane) p.dying = .2 + Math.min(i, 150) * .002; }); glassReset();
+    AR.pieces.forEach((p, i) => { if (!p.held && !p.pane) p.dying = .2 + Math.min(i, 150) * .002; }); glassReset(); waterReset();
     if (sword.mode !== 'held' && sword.mode !== 'far' && mine(sword)) swordToStone();
     netSend({ t: 'reset' });
     AR.spawnQ.push([tAll + .45, true]);
@@ -251,7 +257,7 @@ function checkButtons(dt) {
 function travel(toArena) {
   if (toArena) hands.forEach(h => { if (h.holding) { const p = h.holding; dropProp(h); toyToYard(p, true); } });
   headWorld(_a1);
-  if (!toArena) { hands.forEach(h => { if (h.sword) { swordToStone(); } if (h.piece) releasePiece(h); }); }
+  if (!toArena) { hands.forEach(h => { if (h.cup) cupDrop(h); if (h.sword) { swordToStone(); } if (h.piece) releasePiece(h); }); }
   const dest = toArena ? V().copy(ARENA).add(AR_SPAWN) : V().copy(GROVE_PORTAL).add(V(-GROVE_PORTAL.x, 0, -GROVE_PORTAL.z).normalize().multiplyScalar(1.6));
   dest.y = (toArena ? ARENA.y : .02) + state.bodyH + .03;
   rig.position.add(dest.sub(_a1));

@@ -23,5 +23,6 @@ together and runs them as **one** module. Every file can use everything defined 
 | `src/33-phones.js` | Phone + tablet touch controls |
 | `src/34-voice.js` | Voice chat (mic, calls, mouths) |
 | `src/40-berry-menu.js` | The Berry Menu and its mods, plus the `window.__kg` test hooks |
+| `src/50-water.js` | Water Lab: wavy pool (ripples, slosh, floating/sinking, rising level), CUP button, drinking/pouring, slippery puddles, whetstone that turns glass into a glass sword |
 
 New file? Add it to `PARTS` in `index.html`.

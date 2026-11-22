@@ -196,7 +196,7 @@ function stepArms(dt) {
   } else {
     if (state.wasStuck) launch();
     state.vel.y -= G * bmGrav() * dt; if (BM.nograv) state.vel.multiplyScalar(Math.exp(-dt * .8));
-    if (state.grounded) { const f = Math.exp(-7 * dt); state.vel.x *= f; state.vel.z *= f; }
+    if (state.grounded) { const f = Math.exp(-(onPuddle() ? .35 : 7) * dt); state.vel.x *= f; state.vel.z *= f; }
     rig.position.addScaledVector(state.vel, dt);
   }
   state.wasStuck = ns > 0;
@@ -242,7 +242,7 @@ function stepDesktop(dt) {
   const sp = k.ShiftLeft || k.ShiftRight || jm > .92 ? 7.5 : jm > .12 ? 4.5 * Math.min(1, jm * 1.3) : 4.5;
   const fx = -Math.sin(state.yaw), fz = -Math.cos(state.yaw), rx = Math.cos(state.yaw), rz = -Math.sin(state.yaw);
   let wx = fx * f + rx * s, wz = fz * f + rz * s; const L = Math.hypot(wx, wz); if (L > 0) { wx /= L; wz /= L; }
-  const acc = state.grounded ? 14 : 3.5, v = state.vel;
+  const acc = state.grounded ? (onPuddle() ? 1.1 : 14) : 3.5, v = state.vel;
   v.x += (wx * sp - v.x) * Math.min(1, acc * dt); v.z += (wz * sp - v.z) * Math.min(1, acc * dt);
   if (k.Space && BM.nograv && !state.grounded) v.y = 3;
   if (k.Space && state.grounded) { v.y = 5.3; state.grounded = false; sfxTap('grass', .3); }
@@ -514,7 +514,7 @@ function update(dt) {
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
   sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
   scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); stepWater(dt);
 
 }
 window.__kg.calibrate = () => calibrate();
