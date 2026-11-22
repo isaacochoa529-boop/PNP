@@ -12,8 +12,67 @@ const POOL = { c: V(5.2, 0, 8.3), W: 2.4, rim: .42, base: .3, N: 36, level: .3, 
 const WATER = { cups: [], puds: [], drops: [], cupN: 0, sharpT: 0, glassy: false, swordM: null, told: {}, sendT: 0 };
 const WHET = V(6.85, 0, 6.15);                  // the whetstone (arena-local)
 const CUP_BTN = V(3.55, 0, 7.55);               // the cup button pedestal (arena-local)
-const waterM = new THREE.MeshStandardMaterial({ color: 0x2f9be0, roughness: .06, metalness: .15, envMap: ENV, envMapIntensity: 1.3, transparent: true, opacity: .74, depthWrite: false });
-const puddleM = new THREE.MeshStandardMaterial({ color: 0x5fb6ff, roughness: .02, metalness: .2, envMap: ENV, envMapIntensity: 1.6, transparent: true, opacity: .55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 });
+const WU = { uTime: { value: 0 }, uLevel: { value: .3 }, uBox: { value: new THREE.Vector3(POOL.c.x + ARENA.x, POOL.c.z + ARENA.z, POOL.W / 2 + .002) } };
+// what water reflects: the open sky (blue overhead, pale at the horizon) and a bright sun, not a grey room
+const SKY_ENV = (() => {
+  const sc = new THREE.Scene(), m = new THREE.ShaderMaterial({ side: THREE.BackSide, depthWrite: false, vertexShader: 'varying vec3 d; void main(){ d = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `varying vec3 d; void main(){ vec3 n = normalize(d); float h = n.y;
+      vec3 c = h > 0.0 ? mix(vec3(.78, .9, 1.0), vec3(.22, .52, .95), pow(h, .55)) : mix(vec3(.62, .66, .7), vec3(.35, .38, .4), min(1.0, -h * 3.0));
+      float s = max(0.0, dot(n, normalize(vec3(.45, .75, .35)))); c += vec3(1.0, .95, .85) * (pow(s, 900.0) * 30.0 + pow(s, 40.0) * .35);
+      gl_FragColor = vec4(c, 1.0); }` });
+  sc.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), m));
+  return pmrem.fromScene(sc, 0).texture;
+})();   // shared by every water material + the caustics
+// real-looking water: nearly clear, a teal tint that gets stronger at grazing angles (fresnel), tiny moving
+// ripples bent into the normals (so the sky and sun glint off it), and soft foam where it meets the pool wall
+function makeWaterMat({ color = 0x9fdcec, alpha = .2, amp = 1, half = 0, freq = 1, fres = .75, soft = 0 } = {}) {
+  const m = new THREE.MeshStandardMaterial({ color, roughness: .03, metalness: 0, envMap: SKY_ENV, envMapIntensity: 1.6, transparent: true, depthWrite: false });
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uTime = WU.uTime; sh.uniforms.uAmp = { value: amp }; sh.uniforms.uAlpha = { value: alpha }; sh.uniforms.uHalf = { value: half }; sh.uniforms.uFreq = { value: freq }; sh.uniforms.uFres = { value: fres }; sh.uniforms.uSoft = { value: soft };
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; varying vec3 vLP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLP = position; vWP = (modelMatrix * vec4(position, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+varying vec3 vWP; varying vec3 vLP; uniform float uTime, uAmp, uAlpha, uHalf, uFreq, uFres, uSoft;
+vec2 wv(vec2 p, vec2 d, float k, float w, float a) { return d * cos(dot(d, p) * k + uTime * w) * a * k; }
+vec2 wgrad(vec2 p) {
+  p *= uFreq; vec2 g = vec2(0.);
+  g += wv(p, vec2(.96, .28), 7.0, 1.9, .010); g += wv(p, vec2(-.37, .93), 9.0, 2.3, .008);
+  g += wv(p, vec2(.6, -.8), 15.0, 3.1, .004); g += wv(p, vec2(-.99, -.12), 21.0, 3.9, .0028);
+  g += wv(p, vec2(.2, .98), 33.0, 5.2, .0016); g += wv(p, vec2(.85, .53), 47.0, 6.1, .0011);
+  return g;
+}`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+{ vec2 g = wgrad(vWP.xz) * uAmp; normal = normalize(normal + (viewMatrix * vec4(-g.x, 0.0, -g.y, 0.0)).xyz); }`)
+      .replace('#include <opaque_fragment>', `float fr = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 3.0);
+float foam = 0.0;
+if (uHalf > 0.0) { float e = uHalf - max(abs(vLP.x), abs(vLP.z)); float n = .55 + .45 * sin(vWP.x * 41.0 + uTime * 1.7) * sin(vWP.z * 37.0 - uTime * 1.3);
+  foam = smoothstep(.09, .0, e) * n + smoothstep(.025, .0, e) * .6; }
+outgoingLight = mix(outgoingLight, vec3(.95, .98, 1.0), clamp(foam, 0.0, 1.0) * .85);
+diffuseColor.a = clamp(uAlpha + fr * uFres + foam * .7, 0.0, .97);
+if (uSoft > 0.0) { float a = atan(vLP.z, vLP.x); float rr = length(vLP.xz) * (1.0 + .12 * sin(a * 3.0 + vWP.x * 7.0) + .08 * sin(a * 7.0 - vWP.z * 5.0)); diffuseColor.a *= smoothstep(1.0, .55, rr); }
+#include <opaque_fragment>`);
+  };
+  return m;
+}
+// caustics: the wobbly bright net of light you see on the bottom of a sunny pool (only below the water line)
+function addCaustics(m) {
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uTime = WU.uTime; sh.uniforms.uLevel = WU.uLevel; sh.uniforms.uBox = WU.uBox;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCW; varying float vCF;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvCW = (modelMatrix * vec4(position, 1.0)).xyz; vCF = abs(normal.y);');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+varying vec3 vCW; varying float vCF; uniform float uTime, uLevel; uniform vec3 uBox;
+float caus(vec2 p) { vec2 q = p * 4.2; float v = 0.0; float t = uTime * .55;
+  for (int i = 0; i < 3; i++) { q += vec2(sin(q.y * 1.37 + t), cos(q.x * 1.21 - t * 1.13)) * .7; v += 1.0 / (1.0 + 18.0 * abs(sin(q.x) * sin(q.y))); t *= 1.31; }
+  return v / 3.0; }`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+if (vCW.y < uLevel && abs(vCW.x - uBox.x) <= uBox.z && abs(vCW.z - uBox.y) <= uBox.z) { float c = caus(vCF > .5 ? vCW.xz : vec2(vCW.x + vCW.z, vCW.y * 1.6)); c = c * c * 1.6; totalEmissiveRadiance += vec3(.75, .95, 1.0) * c * .55 * smoothstep(0.0, .03, uLevel - vCW.y); diffuseColor.rgb *= vec3(.82, .95, .98); }`);
+  };
+  return m;
+}
+const waterM = makeWaterMat({ half: 1.2, alpha: .14 });
+const cupWaterM = makeWaterMat({ alpha: .3, amp: .25, freq: 2.5, color: 0xc8eef7 });
+const puddleM = makeWaterMat({ alpha: .12, amp: .35, freq: 1.5, color: 0xb8d8e0, fres: .45, soft: 1 }); puddleM.polygonOffset = true; puddleM.polygonOffsetFactor = -3;
+const dropM = new THREE.MeshStandardMaterial({ color: 0xe8fbff, roughness: .02, envMap: ENV, envMapIntensity: 2.2, transparent: true, opacity: .6, depthWrite: false });
 const cupM = new THREE.MeshStandardMaterial({ color: 0xeef8ff, roughness: .04, metalness: .1, envMap: ENV, envMapIntensity: 1.8, transparent: true, opacity: .32, side: THREE.DoubleSide, depthWrite: false });
 const _w1 = V(), _w2 = V(), _w3 = V(), _wq = new THREE.Quaternion(), _wq2 = new THREE.Quaternion(), _UP = V(0, 1, 0);
 const poolW = () => _w3.copy(POOL.c).add(ARENA);   // pool centre in the world
@@ -22,7 +81,7 @@ const poolW = () => _w3.copy(POOL.c).add(ARENA);   // pool centre in the world
   const g = new THREE.Group(); g.position.copy(POOL.c); arena.add(g);
   const W = POOL.W, T = .12, R = POOL.rim, tileTex = labelTex(256, 256, (q, w, h) => { q.fillStyle = '#bfe9f5'; q.fillRect(0, 0, w, h); q.strokeStyle = '#8fcfe2'; q.lineWidth = 6; for (let i = 0; i <= 4; i++) { q.beginPath(); q.moveTo(i * 64, 0); q.lineTo(i * 64, h); q.stroke(); q.beginPath(); q.moveTo(0, i * 64); q.lineTo(w, i * 64); q.stroke(); } });
   tileTex.wrapS = tileTex.wrapT = THREE.RepeatWrapping; tileTex.repeat.set(4, 4);
-  const tileM = new THREE.MeshStandardMaterial({ map: tileTex, roughness: .35 }), rimM = smat(0xe9eef2, { roughness: .5 });
+  const tileM = addCaustics(new THREE.MeshStandardMaterial({ map: tileTex, roughness: .35 })), rimM = addCaustics(new THREE.MeshStandardMaterial({ color: 0xe9eef2, roughness: .5 }));
   part(new THREE.BoxGeometry(W, .01, W), tileM, 0, .006, 0, g);
   [[0, W / 2 + T / 2, W + 2 * T, T], [0, -W / 2 - T / 2, W + 2 * T, T], [W / 2 + T / 2, 0, T, W], [-W / 2 - T / 2, 0, T, W]].forEach(([x, z, sx, sz]) => {
     part(new THREE.BoxGeometry(sx, R, sz), rimM, x, R / 2, z, g);
@@ -31,7 +90,7 @@ const poolW = () => _w3.copy(POOL.c).add(ARENA);   // pool centre in the world
   // a sign so people know what it is
   const sgT = labelTex(512, 128, (q, w, h) => signText(q, w, h, [['💧 WATER LAB 💧', 64, '#7fd8ff', 80]], 'rgba(14,20,30,.92)', '#3fb2ff'));
   const sg = new THREE.Mesh(new THREE.PlaneGeometry(1.1, .275), new THREE.MeshBasicMaterial({ map: sgT, transparent: true })); sg.position.set(0, R + .32, -W / 2 - T); g.add(sg);
-  part(new THREE.CylinderGeometry(.02, .02, .3, 8), rimM, 0, R + .15, -W / 2 - T - .01, g);
+  part(new THREE.CylinderGeometry(.02, .02, .3, 8), smat(0xe9eef2, { roughness: .5 }), 0, R + .15, -W / 2 - T - .01, g);
   // the water surface: a grid we push up and down every frame
   const geo = new THREE.PlaneGeometry(W, W, POOL.N - 1, POOL.N - 1); geo.rotateX(-Math.PI / 2);
   POOL.mesh = new THREE.Mesh(geo, waterM); POOL.mesh.position.y = POOL.base; POOL.mesh.renderOrder = 2; g.add(POOL.mesh);
@@ -79,7 +138,20 @@ function poolPoke(p, amt, rad = .12) {   // push the water at a world point (amt
       const d2 = ((i - cx) ** 2 + (j - cz) ** 2) / (r * r); if (d2 < 1) POOL.h0[j * N + i] -= amt * (1 - d2);
     }
 }
+const RING_G = new THREE.RingGeometry(.8, 1, 40); RING_G.rotateX(-Math.PI / 2);
+const RINGS = [];
+function ring(p, s, life = 1.1) {   // a ring that spreads out across the surface
+  if (RINGS.length > 14) { const o = RINGS.shift(); scene.remove(o.m); o.m.material.dispose(); }
+  const m = new THREE.Mesh(RING_G, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .5, depthWrite: false })); m.position.set(p.x, POOL.level + .006, p.z); m.scale.setScalar(.02); m.renderOrder = 3; scene.add(m);
+  RINGS.push({ m, t: 0, s, life });
+}
+function stepRings(dt) {
+  for (let i = RINGS.length - 1; i >= 0; i--) { const r = RINGS[i]; r.t += dt; const a = r.t / r.life; if (a >= 1) { scene.remove(r.m); r.m.material.dispose(); RINGS.splice(i, 1); continue; }
+    r.m.scale.setScalar(.03 + r.s * Math.sqrt(a)); r.m.material.opacity = .45 * (1 - a) ** 1.5; r.m.position.y = POOL.level + .006;
+    const c = poolW(); if (Math.abs(r.m.position.x - c.x) + r.m.scale.x > POOL.W / 2 + .05 || Math.abs(r.m.position.z - c.z) + r.m.scale.x > POOL.W / 2 + .05) r.m.material.opacity *= .5; }
+}
 function splash(p, k) {   // a splash you can see and hear
+  ring(p, .35 + k * .5); if (k > .4) ring(p, .2 + k * .3, 1.4);
   for (let i = 0; i < Math.round(6 + k * 14); i++) WATER.drops.push({ p: p.clone(), v: V((rnd() - .5) * 2.2 * k, 1.2 + rnd() * 2.6 * k, (rnd() - .5) * 2.2 * k), t: 0, pool: true });
   if (ac) { const t = ac.currentTime, v = Math.min(.6, .12 + k * .25); noiseHit(t, .18 + k * .25, v, 'bandpass', 900 + rnd() * 500, .6); tone('sine', 700 + rnd() * 300, 180, .18, v * .25); }
 }
@@ -105,6 +177,7 @@ function wetThing(key, p, r, dt) {   // ripples from anything crossing or moving
   const L = POOL.level, vy = (p.y - pv.y) / dt, hs = Math.hypot(p.x - pv.x, p.z - pv.z) / dt;
   if (Math.abs(p.y - L) > r + .03) return;
   poolPoke(p, clamp(-vy * .012, -.05, .05) + clamp(hs * .004, 0, .03) * (rnd() < .5 ? 1 : -1), r + .05);
+  if (hs > .5 && rnd() < dt * 7) ring(p, .12 + Math.min(.3, hs * .06), .8);
   if ((pv.y - r > L && p.y - r <= L && vy < -1.2) || (pv.y + r < L && p.y + r >= L && vy > 1.5)) { splash(V(p.x, L, p.z), clamp(Math.abs(vy) / 5, .2, 1.2) * Math.min(1.5, r * 6)); POOL.svx += (p.x - pv.x) / dt * .02; POOL.svz += (p.z - pv.z) / dt * .02; }
 }
 function stepPoolThings(dt) {
@@ -145,7 +218,7 @@ function makeCupMesh() {
   const g = new THREE.Group(), pts = [[0, 0], [.036, 0], [.04, .004], [.046, .13], [.042, .13], [.036, .008], [0, .008]].map(([x, y]) => new THREE.Vector2(x, y));
   const m = new THREE.Mesh(new THREE.LatheGeometry(pts, 24), cupM); m.renderOrder = 3; g.add(m);
   const wg = new THREE.CylinderGeometry(.041, .036, 1, 20); wg.translate(0, .5, 0);
-  const w = new THREE.Mesh(wg, waterM); w.position.y = .009; w.renderOrder = 2; g.add(w);
+  const w = new THREE.Mesh(wg, cupWaterM); w.position.y = .009; w.renderOrder = 2; g.add(w);
   g.userData.water = w; return g;
 }
 function spawnCup(send, d) {
@@ -245,7 +318,7 @@ function stepCups(dt) {
 const DROP_G = new THREE.SphereGeometry(.012, 6, 4);
 let DROP_M = null;
 function stepDrops(dt) {
-  if (!DROP_M) { DROP_M = new THREE.InstancedMesh(DROP_G, waterM, 220); DROP_M.frustumCulled = false; DROP_M.renderOrder = 2; scene.add(DROP_M); }
+  if (!DROP_M) { DROP_M = new THREE.InstancedMesh(DROP_G, dropM, 220); DROP_M.frustumCulled = false; DROP_M.renderOrder = 2; scene.add(DROP_M); }
   const L = POOL.level, m = new THREE.Matrix4(); let n = 0;
   for (let i = WATER.drops.length - 1; i >= 0; i--) {
     const d = WATER.drops[i]; d.t += dt; d.v.y -= 9.81 * dt; d.p.addScaledVector(d.v, dt);
@@ -312,7 +385,8 @@ function glassToSword(h, pc) {
 function stepWater(dt) {
   if (!POOL.mesh) return;
   const near = state.area === 'arena';
-  if (near) { stepPoolThings(dt); stepWaves(dt); }
+  WU.uTime.value = tAll; WU.uLevel.value = POOL.level + .004;
+  if (near) { stepPoolThings(dt); stepWaves(dt); stepRings(dt); }
   stepCups(dt); stepDrops(dt); stepPuddles(dt); stepSharpen(dt);
   if (WATER.glassy && sword.mode === 'stone') setGlassSword(false);   // back in the stone = the normal sword again
 }

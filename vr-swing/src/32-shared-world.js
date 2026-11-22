@@ -202,7 +202,7 @@ function stepShared(dt) {
 }
 // a friend's fig (in someone else's game): show it where they say, and you can still smack it
 function stepFigRemote(dt) {
-  const live = online() && HZ.on && HZ.phase === 'none' && FIG.nt && tAll - FIG.seen < .6;
+  const live = online() && HZ.phase === 'none' && FIG.nt && tAll - FIG.seen < .6;
   if (!live) { if (FIG.shown) { FIG.shown = false; if (HZ.phase === 'none') fig.g.visible = false; } return; }
   const e = FIG.nt, k = 1 - Math.exp(-dt * 14);
   if (!FIG.shown) { fig.g.position.set(e[2], e[3], e[4]); FIG.shown = true; }

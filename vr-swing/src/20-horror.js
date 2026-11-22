@@ -282,7 +282,7 @@ function hitCheck() {
   for (const h of hands) if (h.tracked && h.vel && h.vel.length() > 1 && figTouches(h.pos, PAW_R)) return hitFig();
 }
 canvas.addEventListener('pointerdown', e => {
-  if (!HZ.on || HZ.phase !== 'tpose' || state.xr || state.mode !== 'play' || e.button > 2) return;
+  if (HZ.phase !== 'tpose' || state.xr || state.mode !== 'play' || e.button > 2) return;
   headWorld(_hz); camera.getWorldDirection(_fwd); _hz2.copy(fig.g.position).add(V(0, 1.1, 0)).sub(_hz);
   if (_hz2.length() < 3.4 && _hz2.normalize().dot(_fwd) > .75) hitFig();
 });
@@ -317,7 +317,7 @@ function stepHorror(dt) {
   headWorld(_hz);
   // the switch is pulled by hand now (see the tough pulls below)
   if (HZ.pullK !== undefined) { const from = HZ.on ? 1.7 : .25; lever.rotation.x = from + ((HZ.on ? .25 : 1.7) - from) * HZ.pullK; }
-  if (!HZ.on) { redMul.visible = redAdd.visible = false; return; }
+  if (!HZ.on) { if (HZ.phase !== 'none') stepFigCore(dt, false); else redMul.visible = redAdd.visible = false; return; }
 
   // flicker: the moonlight stutters and the flashlight sometimes cuts out
   const fl = Math.sin(tAll * 23) * Math.sin(tAll * 7.3) > .93 ? .25 : 1;
@@ -357,9 +357,18 @@ function stepHorror(dt) {
     if (peek.g.position.y < -2.2) { peek.g.visible = false; HZ.peekT = -1; }
   }
 
+  stepFigCore(dt, true);
+
+  // secret: boop Pip at night
+  if (pip.hop > HZ.pipPrev + .5 && HZ.phase === 'none') { ghost.visible = true; HZ.ghostT = 4; sfxBoo(); if (!state.secrets.has('boo')) toast('👻 Pip: "boo!"  (Secret found!)', 3.5); state.secrets.add('boo'); }
+  HZ.pipPrev = pip.hop;
+  if (HZ.ghostT > 0) { HZ.ghostT -= dt; ghost.position.y = Math.sin(tAll * 4) * .03; ghost.rotation.y = Math.sin(tAll * 2) * .2; if (HZ.ghostT <= 0) ghost.visible = false; }
+}
+// the figure itself (also runs in the daytime when the Berry Menu summons it)
+function stepFigCore(dt, roll) {
   // the figure: 1 in 90 every second (about every 2 minutes), but never within 30 s of its last visit
   if (HZ.phase !== 'none') HZ.figEnd = tAll;
-  if (HZ.phase === 'none') { HZ.rollT += dt; while (HZ.rollT >= 1) { HZ.rollT -= 1; if (tAll - (HZ.figEnd || -99) > 30 && rnd() < 1 / 90) { figRoll(); break; } } }
+  if (HZ.phase === 'none') { if (roll) { HZ.rollT += dt; while (HZ.rollT >= 1) { HZ.rollT -= 1; if (tAll - (HZ.figEnd || -99) > 30 && rnd() < 1 / 90) { figRoll(); break; } } } }
   else HZ.pt += dt;
   if (HZ.phase === 'tpose') { hitCheck(); if (HZ.phase === 'tpose' && HZ.pt > 5) { fig.g.visible = false; HZ.phase = 'none'; if (ac) tone('sawtooth', 60, 30, .15, .1); } }
   else if (HZ.phase === 'spazz' || HZ.phase === 'chase') {
@@ -384,10 +393,6 @@ function stepHorror(dt) {
   redMul.material.uniforms.k.value = Math.min(1, r * (.92 + .08 * Math.sin(tAll * 47)));
   redAdd.material.uniforms.k.value = r * (.6 + .4 * Math.abs(Math.sin(tAll * 7.5 * Math.PI))) + HZ.slam * 2;
 
-  // secret: boop Pip at night
-  if (pip.hop > HZ.pipPrev + .5 && HZ.phase === 'none') { ghost.visible = true; HZ.ghostT = 4; sfxBoo(); if (!state.secrets.has('boo')) toast('👻 Pip: "boo!"  (Secret found!)', 3.5); state.secrets.add('boo'); }
-  HZ.pipPrev = pip.hop;
-  if (HZ.ghostT > 0) { HZ.ghostT -= dt; ghost.position.y = Math.sin(tAll * 4) * .03; ghost.rotation.y = Math.sin(tAll * 2) * .2; if (HZ.ghostT <= 0) ghost.visible = false; }
 }
 window.__kg.horror = { HZ, setHorror, spawnFig, hitFig, startCrash, SWITCH_AT, fig, peek, flashWords, mirNight };
 try { renderer.compile(arena, camera, scene); } catch (e) {}

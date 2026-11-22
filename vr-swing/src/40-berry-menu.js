@@ -8,7 +8,6 @@ const BM_BTN = [['grab', '🤏 GRAB'], ['plat', '🟫 PLATFORMS'], ['nograv', '�
 function bmSummon() {   // 7: call the dark figure right now (friends see it, just like a real visit)
   if (HZ.crash) return;
   if (HZ.phase !== 'none') { toast('👤 It\'s already here...', 2.5); return; }
-  if (!HZ.on) setHorror(true, true);   // it only comes out at night
   HZ.rollT = 0; spawnFig(); toast('👤 ...it heard you.', 3);
   if (ac) tone('sawtooth', 80, 40, .6, .12);
 }
