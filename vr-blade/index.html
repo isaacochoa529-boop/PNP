@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bonebreaker Yard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Metal+Mania&family=Fredoka:wght@400;600;700&display=swap">
+<style>
+:root {
+  --panel: rgba(22, 12, 10, 0.9);
+  --line: rgba(255, 190, 150, 0.25);
+  --ink: #fff4ec;
+  --muted: #d9b9a6;
+  --blood: #d11a2a;
+  --bone: #f1e6cf;
+  --fire: #ff9a3c;
+  --display: "Metal Mania", "Impact", system-ui, sans-serif;
+  --body: "Fredoka", "Trebuchet MS", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; overflow: hidden; }
+[hidden] { display: none !important; }
+body { background: #1a1212; color: var(--ink); font-family: var(--body); }
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; }
+.menu {
+  position: fixed; z-index: 5; top: 16px; left: max(16px, env(safe-area-inset-left, 0px));
+  width: min(400px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; box-sizing: border-box;
+  background: var(--panel); border: 2px solid var(--line); border-radius: 20px; padding: 20px;
+  display: grid; gap: 14px; backdrop-filter: blur(6px); box-shadow: 0 10px 40px rgba(0,0,0,.5);
+}
+.menu h1 { margin: 0; font: 400 48px/0.95 var(--display); color: var(--bone); text-shadow: 0 3px 0 #6b0d14, 0 0 18px rgba(209,26,42,.6); }
+.menu h1 span { color: var(--blood); text-shadow: 0 3px 0 #3a0508; }
+.menu p { margin: 0; color: var(--muted); line-height: 1.4; }
+.grp { display: grid; gap: 8px; }
+.grp b { font-size: 14px; color: var(--fire); letter-spacing: .5px; text-transform: uppercase; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+button {
+  font: 600 17px var(--body); color: #1d0b08; cursor: pointer; border: 0; border-radius: 12px; padding: 12px 14px;
+  background: var(--bone); box-shadow: 0 4px 0 #9d8a66; transition: transform .08s;
+}
+button:active { transform: translateY(3px); box-shadow: 0 1px 0 #9d8a66; }
+button.go { background: var(--blood); color: #fff; box-shadow: 0 4px 0 #6b0d14; font-size: 19px; }
+button.pick { background: #3a2622; color: var(--muted); box-shadow: 0 4px 0 #1d1210; }
+button.pick.on { background: var(--fire); color: #2a1206; box-shadow: 0 4px 0 #9a4f12; }
+button:disabled { background: #5a4a44; box-shadow: none; color: #2a1d1a; cursor: default; }
+.sw { display: flex; gap: 8px; flex-wrap: wrap; }
+.sw i { width: 34px; height: 34px; border-radius: 50%; cursor: pointer; border: 3px solid transparent; box-sizing: border-box; }
+.sw i.on { border-color: #fff; }
+.how { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.45; display: grid; gap: 3px; }
+.how b { color: var(--fire); }
+.note { font-size: 13px; color: var(--muted); }
+.hud { position: fixed; z-index: 4; right: 16px; top: 16px; font: 600 15px var(--body); background: var(--panel); border: 2px solid var(--line); border-radius: 12px; padding: 8px 12px; }
+.cross { position: fixed; z-index: 3; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; border: 2px solid rgba(255,255,255,.8); }
+.toast { position: fixed; z-index: 6; left: 50%; bottom: 36px; transform: translateX(-50%); max-width: calc(100% - 32px);
+  background: var(--panel); border: 2px solid var(--line); border-radius: 14px; padding: 10px 16px; font: 600 17px var(--body); text-align: center; transition: opacity .3s; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div class="menu" id="menu">
+  <h1>BONE<span>BREAKER</span> YARD</h1>
+  <p>A brutal training yard. Grab the dummy, pull its parts off, and smash things. It looks just like you. 😈</p>
+  <div class="grp"><b>How do you move?</b>
+    <div class="two"><button class="pick" data-move="stick">🕹️ Thumbstick</button><button class="pick" data-move="gorilla">🦍 Gorilla arms</button></div>
+  </div>
+  <div class="grp"><b>Your skin</b><div class="sw" id="skin"></div></div>
+  <div class="grp"><b>Your shirt</b><div class="sw" id="shirt"></div></div>
+  <div class="grp"><b>Your hair</b><div class="sw" id="hair"></div></div>
+  <div class="two"><button class="go" id="vr">🥽 Enter VR</button><button id="pc">🖥️ Play on PC</button></div>
+  <div class="note" id="xrnote"></div>
+  <ul class="how">
+    <li><b>VR:</b> squeeze GRIP on a body part and PULL hard to rip it off. Swing fast to punch.</li>
+    <li><b>VR move:</b> left stick walks, right stick turns. Gorilla: push the floor with your hands.</li>
+    <li><b>PC:</b> click to look, WASD walk, HOLD left click to grab, flick the mouse or press <b>Q</b> to yank. Right click punches. Scroll moves your hand.</li>
+    <li><b>Smash</b> a head into the floor. Hit the red button (or <b>R</b>) for a fresh dummy.</li>
+  </ul>
+</div>
+<div class="hud" id="hud" hidden>☰ Esc for menu</div>
+<div class="cross" id="cross" hidden></div>
+<div class="toast" id="toast" style="opacity:0" aria-live="polite"></div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+<script type="module">
+// The game lives in src/ as small files (see README.md), joined here and run as ONE module.
+const PARTS = ['../../vr-swing/src/00-treekit.js', '01-core.js', '02-world.js', '03-human.js', '04-gore.js', '05-dummy.js', '06-player.js', '07-loop.js'];
+try {
+  const txt = await Promise.all(PARTS.map(n => fetch('src/' + n, { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error(n + ' ' + r.status); return r.text(); })));
+  // TreeKit file imports three itself; drop its import lines so they are not doubled.
+  txt[0] = txt[0].replace(/^import .*$/gm, '');
+  await import(URL.createObjectURL(new Blob([txt.join('\n') + '\n//# sourceURL=bonebreaker.js'], { type: 'text/javascript' })));
+} catch (e) {
+  console.error(e); const t = document.getElementById('toast'); if (t) { t.textContent = '😵 The game didn\'t load. Refresh to try again!'; t.style.opacity = 1; }
+}
+</script>
+</body>
+</html>
