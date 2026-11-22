@@ -80,10 +80,12 @@ function carry(H, dt, handW) {
   const r = collideFloor(b, false);
   if (r.deepest > 0 && b.v.y < -2.4 && b.cool <= 0) onImpact(b, r.hp, -b.v.y);
   keepIn(o.position, b.r * .5);
+  RAG.pushers.push({ p: o.position.clone(), r: Math.min(.12, b.r * .35), v: b.v.clone() });
   if (b.v.length() > 2.2 && H.cool <= 0 && hitDummy(o.position, b.v, H.side)) H.cool = .3;
 }
 function handStep(H, dt, pressed, handW, handMatrix) {
   H.mat = handMatrix;
+  if (inVR() && !H.grab) RAG.pushers.push({ p: handW.clone(), r: .06, v: H.vel.clone() });
   H.vel.subVectors(handW, H.prevW).divideScalar(Math.max(dt, 1e-3)); H.prevW.copy(handW);
   H.vbuf.push(H.vel.clone()); if (H.vbuf.length > 8) H.vbuf.shift();
   H.cool -= dt;
@@ -148,11 +150,16 @@ function stepVR(dt) {
   if (SET.move === 'gorilla') gorilla(dt);
   else {
     const [x, y] = sticks.L;
+    // smooth walking: speed eases in/out (less wobbly for your stomach) and follows where you look
+    const want = new V3();
     if (Math.hypot(x, y) > .15) {
       camera.getWorldDirection(_v1); _v1.y = 0; _v1.normalize();
       _v2.set(-_v1.z, 0, _v1.x);
-      rig.position.addScaledVector(_v1, -y * 2.4 * dt).addScaledVector(_v2, x * 2.4 * dt);
+      want.addScaledVector(_v1, -y * 2.3).addScaledVector(_v2, x * 2.3);
     }
+    gor.walk = gor.walk || new V3();
+    gor.walk.lerp(want, 1 - Math.exp(-dt * 9));
+    rig.position.addScaledVector(gor.walk, dt);
     rig.position.y = 0;
   }
   // keep your head inside the yard

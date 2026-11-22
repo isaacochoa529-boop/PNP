@@ -2,12 +2,12 @@
 // Verlet points + distance constraints (position-based dynamics). Torso points are locked together
 // (one solid chest + hips), limbs hang off them with bones, joint limits stop bad bends, and each limb
 // is fixed to its socket by a JOINT that can stretch and TEAR. The meshes are posed from the points.
-const RAG = { p: [], q: [], w: [], r: [], alive: [], owner: [], name: [], C: [], rest: [], holds: [], pinned: true, pin: [], musc: 1, ko: 0 };
+const RAG = { p: [], q: [], w: [], r: [], alive: [], owner: [], name: [], C: [], rest: [], holds: [], pinned: true, pin: [], musc: 1, ko: 0, pushers: [] };
 const _ra = new V3(), _rb = new V3(), _rc = new V3(), _rm = new THREE.Matrix4(), _rq2 = new Q();
 const RAG_SUB = 2, RAG_IT = 7;
 const RAG_JK = { head: .32, arm: .15, leg: .13 };   // joint stiffness: lower = stretches more before tearing
 
-function ragReset() { Object.assign(RAG, { p: [], q: [], w: [], r: [], alive: [], owner: [], name: [], C: [], rest: [], holds: [], pinned: true, pin: [], musc: 1, ko: 0, hit: 0 }); }
+function ragReset() { Object.assign(RAG, { p: [], q: [], w: [], r: [], alive: [], owner: [], name: [], C: [], rest: [], holds: [], pinned: true, pin: [], musc: 1, ko: 0, hit: 0, pushers: [] }); }
 function ragAdd(name, owner, pos, mass, rad) {
   const i = RAG.p.length;
   RAG.p.push(pos.clone()); RAG.q.push(pos.clone()); RAG.w.push(1 / mass); RAG.r.push(rad);
@@ -123,7 +123,9 @@ function stepRag(dt) {
       for (let i = 0; i < N; i++) {
         if (!RAG.alive[i] || RAG.owner[i] === 'torso') continue;
         const k = RAG.owner[i] === 'head' ? mk * 2.5 : mk;
-        const t = _ra.copy(RAG.rest[i]).applyMatrix4(_mus);
+        const t = _ra.copy(RAG.rest[i]);
+        if (RAG.owner[i] === 'head' && RAG.look) t.sub(RAG.rest[RAG.idx.N]).applyAxisAngle(_rb.set(0, 1, 0), RAG.look).add(RAG.rest[RAG.idx.N]);   // looks at you
+        t.applyMatrix4(_mus);
         RAG.p[i].lerp(t, k);
       }
     }
@@ -154,6 +156,11 @@ function stepRag(dt) {
           p.y = fy;
           q.x += (p.x - q.x) * .35; q.z += (p.z - q.z) * .35;      // friction
         }
+        // your hands (and things you swing) physically shove the body
+        for (const P of RAG.pushers) {
+          const d = _rb.subVectors(p, P.p), L = d.length(), m = r + P.r;
+          if (L < m && L > 1e-5) { p.addScaledVector(d, (m - L) / L * .5); if (it === 0) q.addScaledVector(P.v, -h * .04); }
+        }
         _rc.copy(p); keepIn(_rc, r);
         if (_rc.distanceToSquared(p) > 1e-10) {
           const n = _rb.subVectors(_rc, p).normalize();
@@ -167,6 +174,7 @@ function stepRag(dt) {
     }
   }
   if (RAG.ko > 0) RAG.ko -= dt;
+  RAG.pushers.length = 0;
 }
 // put the meshes where the points are
 const _pq2 = new Q(), _tm = new THREE.Matrix4(), _tq = new Q(), _tinv = new Q();

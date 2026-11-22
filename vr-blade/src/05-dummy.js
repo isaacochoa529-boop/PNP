@@ -57,7 +57,7 @@ function buildDummy(opts = {}) {
     parts[name] = P;
   }
   DUM = { id: ++DUM_ID, h, root: h.root, torso: T, parts, face: h.face, gold, blink: 2, faceT: 0, said: 0, empty: false, hs: 0, slams: 0 };
-  buildRag(DUM);
+  buildRag(DUM); POST.off = true;
   if (gold) setTimeout(() => sayDummy('✨ I feel... SHINY ✨'), 400);
 }
 const ownerPart = i => DUM && DUM.parts[RAG.owner[i]];
@@ -124,6 +124,7 @@ function hitDummy(p, vel, who) {
 function unpin(line) {
   if (!RAG.pinned) return;
   RAG.pinned = false; sfx.crunch(); sfx.thud(1);
+  setTimeout(() => { if (!RAG.pinned) POST.off = false; }, 600);
   sayDummy(line || 'WHOA WHOA WHOA!');
 }
 // --- the body hits the floor / a wall ---
@@ -141,7 +142,7 @@ function ragImpact(hit) {
     const flag = new THREE.Mesh(new THREE.PlaneGeometry(.22, .14), new THREE.MeshStandardMaterial({ color: '#ffffff', side: THREE.DoubleSide })); flag.position.set(.11, -.12, .05); hand.add(flag);
     setTimeout(() => sayDummy('OK OK I GIVE UP 🏳️'), 600);
   }
-  sfx.thud(1); sfx.squish(); if (speed > 6) sfx.crunch();
+  sfx.thud(1); sfx.squish(); if (speed > 6) { sfx.crunch(); sfx.crack(); }
   spawnBlood(p, n, Math.min(40, speed * 4 | 0), speed * .3, .8);
   if (n.y < .5) addSplat(p, n, Math.min(.35, .06 + speed * .03));
   if (typeof buzz === 'function') { for (const h of RAG.holds) buzz(h.H.side, Math.min(1, speed / 7), 70); }
@@ -289,6 +290,13 @@ function stepDummy(dt) {
   if (!DUM) return;
   const t = state.t;
   RAG.h = dt / RAG_SUB;
+  // the head turns to watch you while he's standing on the post
+  if (RAG.pinned && DUM.face && RAG.ko <= 0) {
+    const tq = DUM.torso.getWorldQuaternion(_q1), cw = camera.getWorldPosition(_v1), hp = RAG.p[RAG.idx.N] ? RAG.p[RAG.idx.N] : DUM.torso.position;
+    const fw = _v2.set(0, 0, 1).applyQuaternion(tq), toC = _v3.subVectors(cw, hp); toC.y = 0; fw.y = 0;
+    const want = clamp(Math.atan2(fw.x * toC.z - fw.z * toC.x, fw.x * toC.x + fw.z * toC.z) * -1, -.7, .7);
+    RAG.look = (RAG.look || 0) + (want - (RAG.look || 0)) * Math.min(1, dt * 3);
+  } else RAG.look = (RAG.look || 0) * .95;
   stepRag(dt);
   // pulled hard enough by the chest? it rips off the post
   if (RAG.pinned) for (const h of RAG.holds) if (RAG.owner[h.i] === 'torso' && RAG.p[RAG.idx.Ch].distanceTo(RAG.pin[RAG.idx.Ch]) > .1) { unpin(); break; }
