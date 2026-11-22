@@ -395,7 +395,7 @@ canvas.addEventListener('pointerdown', e => {
   dragging = true; lastX = e.clientX; lastY = e.clientY;
 });
 addEventListener('pointerup', () => { dragging = false; });
-document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && state.mode === 'play' && !state.xr && !dragging) openMenu(); });
+document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && state.mode === 'play' && !state.xr && !dragging && !CS.on) openMenu(); });
 
 function openMenu() { if (state.mode === 'play') state.savedPos = rig.position.clone(); state.mode = 'menu'; if ($('touch')) $('touch').hidden = true; state.joy.x = state.joy.y = 0; state.keys = {}; $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true; hands.forEach(h => h.paw.visible = false); }
 function startDesktop() {
@@ -403,6 +403,7 @@ function startDesktop() {
   camera.position.set(0, state.bodyH, 0);
   if (state.done || (!state.running && state.got === 0)) { resetRun(); respawn(); }
   else if (state.savedPos) rig.position.copy(state.savedPos);   // the menu's fly-over moved the camera rig; put you back
+  csMaybe();
   if (state.touch) { $('touch').hidden = false; $('cross').hidden = false; toast('🕹️ Left stick runs, drag to look, tap the buttons to jump, grab and swing!', 5); return; }
   try { const r = canvas.requestPointerLock && canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
   toast('🐾 WASD to run, Space to jump, E to grab, V to see yourself!', 4);
@@ -476,7 +477,7 @@ async function setupVR() {
       await renderer.xr.setSession(s);
       state.xr = true; state.mode = 'play'; $('menu').hidden = true;
       rig.rotation.y = 0; camera.rotation.set(0, 0, 0);
-      resetRun(); respawn();
+      resetRun(); respawn(); csMaybe();
       setTimeout(() => toast('🐾 Arms down + press A to fit the ground to you!', 4.5), 600);
       s.addEventListener('visibilitychange', () => audioOn());
       s.addEventListener('end', () => {
@@ -498,7 +499,7 @@ function update(dt) {
   tAll += dt;
   if (horrorFrozen(dt)) return;   // the fake crash: the world stops dead
   if (state.mode === 'play') {
-    if (state.xr || sim.on) { pollGamepads(); stepArms(dt); } else stepDesktop(dt);
+    if (state.xr || sim.on) { pollGamepads(); if (!CS.on) stepArms(dt); } else if (!CS.on) stepDesktop(dt);
     if (state.area === 'arena' ? rig.position.y < -14 : (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45)) respawn();
     stepProps(dt);
     stepArena(dt);
@@ -512,9 +513,10 @@ function update(dt) {
   animateWorld(dt, tAll); animPortals(dt, tAll); stepFx(dt);
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').style.opacity = 0; }
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
-  sun.position.set(rig.position.x + 12, rig.position.y + 24, rig.position.z + 8); sun.target.position.copy(rig.position);
-  scene.userData.sky.position.copy(rig.position);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); stepWater(dt); stepRoyale(dt);
+  const focus = CS.on && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
+  sun.position.set(focus.x + 12, focus.y + 24, focus.z + 8); sun.target.position.copy(focus);
+  scene.userData.sky.position.copy(focus);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); stepWater(dt); stepRoyale(dt); stepStory(dt);
 
 }
 window.__kg.calibrate = () => calibrate();
@@ -523,5 +525,5 @@ window.__kg.start = () => { state.mode = 'play'; $('menu').hidden = true; resetR
 window.__kg.renderOnce = () => renderer.render(scene, camera); window.__kg.scene = scene; window.__kg.renderer = renderer;
 window.__kg.respawn = respawn; window.__kg.props = props; window.__kg.grab = grabProp; window.__kg.drop = dropProp; window.__kg.pawHit = pawHit; window.__kg.tris = tris;
 updateHud();
-renderer.setAnimationLoop(() => { if (window.__kg.paused) return; update(Math.min(.05, clock.getDelta())); selfie.update(); renderer.render(scene, camera); });
+renderer.setAnimationLoop(() => { if (window.__kg.paused) return; update(Math.min(.05, clock.getDelta())); selfie.update(); csRender(); });
 

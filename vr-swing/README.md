@@ -25,5 +25,6 @@ together and runs them as **one** module. Every file can use everything defined 
 | `src/40-berry-menu.js` | The Berry Menu and its mods, plus the `window.__kg` test hooks |
 | `src/50-water.js` | Water Lab: wavy pool (ripples, slosh, floating/sinking, rising level), CUP button, drinking/pouring, slippery puddles, whetstone that turns glass into a glass sword |
 | `src/60-royale.js` | Battle Royale mode: red start button by the spawn (🏆 on screens), loot (swords, guns, grenades, medkits, shields, jump boots), storm circle, health/shield HUD + wrist HUD, kill feed, bots, net `t:'br'` |
+| `src/70-story.js` | Story intro cutscene (montage of the grove, letterbox, typed Elder Thump lore, VR theater screen), skippable, 🎬 STORY replay pedestal + menu button, black cheek paint |
 
 New file? Add it to `PARTS` in `index.html`.
