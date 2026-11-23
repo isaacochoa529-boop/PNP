@@ -130,9 +130,12 @@ function rdTorsoFrame(rd) {
 const _stC = V();
 function rdStand(rd) {   // a gentle "puppet string" that keeps the dummy standing up (and gets it back up after a flop)
   if (rd.stand <= .01) return;
-  const P = rd.P, c = Math.cos(rd.yaw), sn = Math.sin(rd.yaw);
+  const P = rd.P, yaw = rd.anchor ? rd.anchor.yaw : rd.yaw, c = Math.cos(yaw), sn = Math.sin(yaw);
   _stC.addVectors(P[13].p, P[14].p).multiplyScalar(.5); const by = Math.min(P[13].p.y, P[14].p.y) - RD_REST[13][1];
   const fz = (RD_REST[13][2] + RD_REST[14][2]) / 2; _stC.x -= fz * sn; _stC.z -= fz * c;   // the "feet" sit a bit forward of the body's middle
+  // once it has settled, it stands on a fixed spot (it used to creep along by itself, like it was walking)
+  if (!rd.anchor && rd.calm > 2.5) rd.anchor = { x: _stC.x, z: _stC.z, yaw: rd.yaw };
+  if (rd.anchor) { _stC.x = rd.anchor.x; _stC.z = rd.anchor.z; }
   for (let i = 0; i < 15; i++) {
     const q = P[i]; if (q.pin || rd.det[i]) continue;
     const [x, y, z] = RD_REST[i], k = RD_STAND_K[i] * rd.stand;
@@ -143,7 +146,7 @@ function rdStep(rd, h) {
   const P = rd.P, gdrop = 9.8 * h * h; let mv = 0;
   for (const q of P) {
     if (q.pin) { q.o.copy(q.p); q.p.copy(q.pin); mv = 1; continue; }
-    _rv.subVectors(q.p, q.o).multiplyScalar(.993); if (_rv.lengthSq() > .09) _rv.setLength(.3);
+    _rv.subVectors(q.p, q.o).multiplyScalar(rd.heldNow ? .9 : .993); if (_rv.lengthSq() > .09) _rv.setLength(.3);   // held: calm it down so it can't spin like a top
     q.o.copy(q.p); q.p.add(_rv); q.p.y -= gdrop; mv = Math.max(mv, _rv.lengthSq());
   }
   rdStand(rd);
@@ -168,7 +171,8 @@ function rdStep(rd, h) {
     let e = 0; for (const c of G.cons) e += Math.max(0, rd.P[c.a].p.distanceTo(rd.P[c.b].p) - c.L);
     G.ratio = e / RD_EXTRA;
     // the harder (and longer) you tug, the sooner the seam gives: a big yank rips fast, a steady pull takes a couple of seconds
-    if (G.pulled && G.ratio > .5) G.strain += h * (G.ratio - .5) * 2; else G.strain = Math.max(0, G.strain - h);
+    const thr = gname === 'head' ? .3 : .5, rate = gname === 'head' ? 4 : 2;   // Isaiah: heads were too much of a struggle
+    if (G.pulled && G.ratio > thr) G.strain += h * (G.ratio - thr) * rate; else G.strain = Math.max(0, G.strain - h);
     if (G.strain > .55) rdRip(rd, gname);
   }
 }
@@ -360,7 +364,7 @@ function hmHit() {
     let hit = -1, bd = 1e9;
     rd.P.forEach((q, i) => { const d = q.p.distanceTo(HM.head) - q.r - (state.xr ? .11 : .16); if (d < 0 && d < bd) { bd = d; hit = i; } });
     if (hit < 0) continue;
-    rd.hitCd = .25; rd.asleep = false; rd.sleep = 0; rd.calm = 0; if (sp > 3) rd.stand = 0;
+    rd.hitCd = .25; rd.asleep = false; rd.sleep = 0; rd.calm = 0; rd.anchor = null; if (sp > 3) rd.stand = 0;
     const k = Math.min(sp, 9) * .85 * RD_STEP, hp = rd.P[hit].p;
     for (const q of rd.P) { if (q.pin) continue; const d = q.p.distanceTo(hp), f = d < .01 ? 1 : clamp(1 - d / .45, 0, 1) * .6; if (f > 0) { q.o.copy(q.p).addScaledVector(HM.vel, -k * f / Math.max(sp, 1e-3) * Math.min(sp, 9)); } }
     if (hit === 6) rd.squash = 1;
@@ -576,8 +580,8 @@ function stepRagdolls(dt) {
   let n = 0; while (RD.acc >= RD_STEP) { RD.acc -= RD_STEP; n++; }
   for (const rd of RD.list.slice()) {
     rd.hitCd -= dt;
-    const pl = rdPulled(rd); rd.heavy = pl.any && !pl.pinBody;
-    if (pl.any) { rd.asleep = false; rd.calm = 0; if (pl.pinBody) rd.stand = Math.max(0, rd.stand - dt * 4); else rd.stand = Math.min(rd.stand, .8); }
+    const pl = rdPulled(rd); rd.heavy = pl.any && !pl.pinBody; rd.heldNow = pl.any;
+    if (pl.any) { rd.asleep = false; rd.calm = 0; rd.anchor = null; if (pl.pinBody) rd.stand = Math.max(0, rd.stand - dt * 4); else rd.stand = Math.min(rd.stand, .8); }
     else if ((rd.calm += dt) > 2.5) rd.stand = Math.min(1, rd.stand + dt * .8);
     if (!rd.asleep) for (let i = 0; i < n; i++) rdStep(rd, RD_STEP);
     if (rd.P[0].p.y < -60) { rdKill(rd); continue; }
