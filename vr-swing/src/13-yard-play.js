@@ -162,6 +162,7 @@ function grabAny(h) {
   if (wildGrab(h)) return;
   if (BM.stop && h.side === 'right') { bmStatue(true); return; }   // stop-motion: R grip freezes another you
   if (BM.grab && bmGrabFriend(h)) return;
+  if (rdGrab(h)) return;
   if (toughGrab(h)) return;
   if (holdGrab(h)) return;
   if (state.area === 'arena' && AR.ready && h.tracked) {
@@ -174,6 +175,7 @@ function grabAny(h) {
   if (BM.plat && !h.holding && !h.piece && !h.sword && !h.stuck && !h.hold && h.tracked) bmPlatform(h);
 }
 function dropAny(h) {
+  if (rdDrop(h)) return;
   if (BR.held[h.i] && brDrop(h)) return;
   if (wildDrop(h)) return;
   if (h.plat) { h.plat.userData.fade = .25; h.plat = null; }
@@ -196,6 +198,7 @@ function aimAt(maxD, test) {
 }
 function aimButton() { return aimAt(2.6, f => buttons.forEach(b => f(b, b.top, .09))); }
 function deskInteract() {
+  if (rdDesk()) return;
   if (compDesk()) return;
   if (brDesk()) return;
   if (wildDesk()) return;
