@@ -121,7 +121,9 @@ function clConnect() {
 }
 function clOut(obj) {   // tell Claude in the chat what happened (status replies, pokes)
   if (!CL.code) return; const now = performance.now(); if (now - CL.outT < 1500 && obj.ev !== 'status' && obj.ev !== 'heard') return; CL.outT = now;
-  try { fetch('https://ntfy.sh/' + CL_TOPIC + CL.code + '-out', { method: 'POST', body: JSON.stringify(obj) }).catch(() => {}); } catch (e) {}
+  const body = JSON.stringify(obj), tries = obj.ev === 'heard' ? 4 : 1;   // his words matter most: try again if the relay is busy
+  const go = n => { try { fetch('https://ntfy.sh/' + CL_TOPIC + CL.code + '-out', { method: 'POST', body }).then(r => { if (!r.ok && n > 1) setTimeout(() => go(n - 1), 2000); }).catch(() => { if (n > 1) setTimeout(() => go(n - 1), 2000); }); } catch (e) {} };
+  go(tries);
 }
 function clUi() {
   const b = $('clBtn'); if (!b) return;
@@ -435,3 +437,86 @@ function stepClaudeEars(dt) {
   }
 }
 window.__kg.claude.heard = (t) => clHeard(t, 'test');
+
+/* ---------- Claude's own ears: push-to-talk + a tiny Whisper model that runs right in the browser ----------
+   For browsers with no speech-to-text (the Quest browser). Poke the mic (or tap 🎤): it records; poke again (or wait 10 s)
+   and the clip is turned into words by Whisper tiny.en (transformers.js, WASM, in a Web Worker so VR stays smooth).
+   No account, no key. The model (~40 MB) downloads once the first time, then the browser keeps it. */
+const EARS = { worker: null, ready: false, loading: false, busy: false, rec: null, stream: null, chunks: [], recOn: false, recT: 0, pct: -1, id: 0 };
+const EARS_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.4/dist/transformers.min.js', EARS_MODEL = 'Xenova/whisper-tiny.en';
+const IS_QUEST = /OculusBrowser|Quest/i.test(navigator.userAgent);
+if (IS_QUEST) CLM.broken = true;   // its SpeechRecognition never hears anything: go straight to Claude's own ears
+function earsWorker() {
+  if (EARS.worker) return EARS.worker;
+  const src = `import { pipeline, env } from '${EARS_LIB}';
+env.allowLocalModels = false;
+let asr = null;
+async function load() {
+  if (asr) return asr;
+  asr = await pipeline('automatic-speech-recognition', '${EARS_MODEL}', { dtype: 'q8', device: 'wasm',
+    progress_callback: p => { if (p.status === 'progress' && p.total) self.postMessage({ t: 'pct', file: p.file, pct: p.loaded / p.total }); } });
+  self.postMessage({ t: 'ready' }); return asr;
+}
+self.onmessage = async e => {
+  const d = e.data;
+  try {
+    if (d.t === 'load') { await load(); return; }
+    if (d.t === 'hear') { const a = await load(); const r = await a(d.pcm, { chunk_length_s: 30 }); self.postMessage({ t: 'text', id: d.id, text: (r && r.text) || '' }); }
+  } catch (er) { self.postMessage({ t: 'err', id: d.id, msg: String(er && er.message || er) }); }
+};`;
+  const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), { type: 'module' });
+  w.onmessage = e => {
+    const d = e.data;
+    if (d.t === 'pct') { const p = Math.round(d.pct * 100); if (/decoder/.test(d.file || '') && p !== EARS.pct && p % 10 === 0) { EARS.pct = p; toast(`⏬ Downloading Claude's ears… ${p}% (only the first time)`, 3); } }
+    else if (d.t === 'ready') { EARS.ready = true; EARS.loading = false; }
+    else if (d.t === 'text') { EARS.busy = false; const t = d.text.replace(/\[[^\]]*\]|\([^)]*\)/g, '').trim(); if (t.length > 1) clHeard(t, 'voice'); else toast('🎙️ I didn\'t catch that. Try again a bit louder!', 3); clMicUi(); }
+    else if (d.t === 'err') { EARS.busy = false; EARS.loading = false; toast('😵 Claude\'s ears broke: ' + d.msg.slice(0, 80) + '. Use the quick-talk board!', 6); clBoard(state.xr); clMicUi(); }
+  };
+  w.onerror = () => { EARS.busy = false; toast('😵 Claude\'s ears could not load here. Use the quick-talk board!', 6); clBoard(state.xr); };
+  EARS.worker = w; return w;
+}
+function earsPreload() { if (EARS.ready || EARS.loading) return; EARS.loading = true; try { earsWorker().postMessage({ t: 'load' }); toast("⏬ Getting Claude's ears ready (about 40 MB, only the first time)…", 4); } catch (e) { EARS.loading = false; } }
+async function earsStart() {
+  if (EARS.recOn || EARS.busy) return;
+  try {
+    if (!EARS.stream || !EARS.stream.active) EARS.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    EARS.chunks = []; const r = new MediaRecorder(EARS.stream); EARS.rec = r;
+    r.ondataavailable = e => { if (e.data && e.data.size) EARS.chunks.push(e.data); };
+    r.onstop = () => earsSend(new Blob(EARS.chunks, { type: r.mimeType || 'audio/webm' }));
+    r.start(); EARS.recOn = true; EARS.recT = 0; earsPreload(); clMicUi();
+    toast(state.xr ? '🎙️ Talk now! Poke the mic again when you\'re done.' : '🎙️ Talk now! Tap 🔴 when you\'re done.', 4);
+    if (ac) tone('sine', 520, 780, .08, .15);
+  } catch (e) { toast('🎙️ No mic allowed, so here are quick-talk buttons instead!', 5); clBoard(state.xr); if (!state.xr) clTypeBox(true); }
+}
+function earsStop() { if (!EARS.recOn) return; EARS.recOn = false; try { EARS.rec.stop(); } catch (e) {} clMicUi(); if (ac) tone('sine', 780, 520, .08, .15); }
+async function earsSend(blob) {
+  if (blob.size < 800) return;
+  EARS.busy = true; clMicUi(); toast('🧠 Claude is listening to that…', 3);
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext, tmp = new AC(), buf = await tmp.decodeAudioData(await blob.arrayBuffer()); tmp.close && tmp.close();
+    const len = Math.max(1, Math.ceil(buf.duration * 16000)), off = new OfflineAudioContext(1, len, 16000), s = off.createBufferSource();
+    s.buffer = buf; s.connect(off.destination); s.start(); const out = await off.startRendering(), pcm = out.getChannelData(0).slice();
+    earsWorker().postMessage({ t: 'hear', id: ++EARS.id, pcm }, [pcm.buffer]);
+  } catch (e) { EARS.busy = false; clMicUi(); toast('🎙️ Could not read that recording. Try again!', 4); }
+}
+// the mic button / orb: real-time speech-to-text where it works, otherwise push-to-talk with Claude's own ears
+const _clMicToggleOld = clMicToggle;
+clMicToggle = function () {
+  if (!CL.on) { toast('🤖 Turn on your Claude buddy first!', 3); return; }
+  if (!CLM.broken || CLM.on) return _clMicToggleOld();
+  if (!navigator.mediaDevices || !window.MediaRecorder) { if (state.xr) clBoard(!CLM.boardOn); else clTypeBox(true); return; }
+  if (EARS.busy) { toast('🧠 Still listening to the last one…', 2); return; }
+  if (EARS.recOn) earsStop(); else { earsStart(); if (state.xr && !CLM.boardOn) clBoard(true); }   // the board stays as a backup
+};
+const _clMicUiOld = clMicUi;
+clMicUi = function () {
+  _clMicUiOld();
+  const b = $('clMic'); if (b && CLM.broken) { b.classList.toggle('on', EARS.recOn); b.textContent = EARS.recOn ? '🔴' : EARS.busy ? '🧠' : '🎤'; }
+  if (clMicOrb && CLM.broken) { clMicOrb.m.color.set(EARS.recOn ? 0xff4f6d : EARS.busy ? 0xffd25a : 0x3fb2ff); clMicOrb.m.emissive.copy(clMicOrb.m.color); }
+};
+function stepClaudeEarsRec(dt) {
+  if (!EARS.recOn) return;
+  EARS.recT += dt; if (EARS.recT > 10 || !CL.on) earsStop();
+  clMicOrb.head.scale.setScalar(1 + Math.sin(tAll * 12) * .12);
+}
+window.__kg.claude.ears = { start: () => earsStart(), stop: () => earsStop(), EARS, broken: v => { CLM.broken = v; } };
