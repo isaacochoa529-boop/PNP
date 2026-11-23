@@ -333,6 +333,7 @@ const CL_VERBS = ['walk', 'come', 'follow', 'stay', 'stop', 'say', 'wave', 'nod'
 function clRun(text) {
   if (!CL.on) return;
   CL.lastCmd = tAll;
+  if (CL.thinkT) { CL.thinkT = 0; clScreenDraw(CL.scrRaw || 'free'); }
   if (CL.bubble && CL.bubT > 10) CL.bubT = .1;   // the "tell the chat my code" hello goes away once commands come in
   for (let line of String(text).slice(0, 2000).split(/\n|;/)) {
     line = line.trim(); if (!line) continue;
@@ -532,6 +533,7 @@ const CL_PHRASES = ['👋 Hi Claude!', '🏃 Come here!', '👣 Follow me!', '�
 function clHeard(text, how) {
   text = String(text || '').trim().slice(0, 300); if (!text || !CL.on) return;
   clOut({ ev: 'heard', text, how });
+  if (CL.scr) { clScreenDraw('🤔 THINKING'); CL.thinkT = tAll; }   // Claude got it: show "thinking" until the next command arrives
   toast('🎤 You: ' + text, Math.min(8, 1.5 + text.split(/\s+/).length / 2.3));
   if (!CL.cur && !CL.anim) { CL.anim = 'nod'; CL.animT = 0; }   // the buddy nods: "I heard you"
 }
@@ -785,6 +787,7 @@ const clEarSw = (() => {
 })();
 let _vadI = 0;
 function stepVad(dt) {
+  if (CL.thinkT && tAll - CL.thinkT > 30) { CL.thinkT = 0; clScreenDraw(CL.scrRaw || 'free'); }   // no answer (maybe it wasn't for Claude): back to normal
   const b = $('clEar'); if (b) b.style.display = state.mode === 'play' && !state.xr && CL.on ? 'block' : 'none';
   clEarSw.cool -= dt;
   if (clEarSw.cool <= 0 && (state.area || 'grove') === 'grove') {
