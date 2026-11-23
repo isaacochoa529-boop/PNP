@@ -100,6 +100,20 @@ function buildPlush(h = .32, bloom = false) {
   sg.updateMatrixWorld(true); const wp = V(); sg.getWorldPosition(wp); addCol({ t: 1, x: wp.x, z: wp.z, cy: .26, hy: .26, r: .4, tag: 'wood' });
 })();
 
+/* ---------- a tiny Sprout Bear you can grab, squeeze and throw (Isaiah asked) ---------- */
+(function miniBear() {
+  const at = partyG.localToWorld(V(B_SPOT.x + 2.25, .5, B_SPOT.z + 1.2));
+  const p = makeProp('star', at.x, at.y, at.z); p.kind = 'bear'; p.r = .12;
+  p.g.clear(); const b = buildPlush(.25, PLU.bloom); b.position.y = -.12; p.g.add(b); PLU.mini = p; PLU.miniB = b;
+})();
+function stepMiniBear(dt) {
+  const p = PLU.mini; if (!p) return;
+  if (!!p.held !== !!PLU.miniHeld) { PLU.miniHeld = !!p.held; PLU.miniSq = 1; plushSqueak(); if (p.held) plushHearts(p.g.position, 4); }
+  PLU.miniSq = Math.max(0, (PLU.miniSq || 0) - dt * 1.6);
+  const q = Math.sin(tAll * 18) * .22 * PLU.miniSq; PLU.miniB.scale.set(1 - q * .6, 1 + q, 1 - q * .6);
+  if (PLU.bloom && !PLU.miniBloom) { PLU.miniBloom = true; p.g.remove(PLU.miniB); PLU.miniB = buildPlush(.25, true); PLU.miniB.position.y = -.12; p.g.add(PLU.miniB); }
+}
+
 /* ---------- squish, wobble, hearts (+ a little something) ---------- */
 const heartT = labelTex(64, 64, (c, w, h) => { c.fillStyle = '#ff5fa8'; c.beginPath(); c.moveTo(32, 54); c.bezierCurveTo(-6, 28, 14, 2, 32, 20); c.bezierCurveTo(50, 2, 70, 28, 32, 54); c.fill(); });
 function plushHearts(at, n = 5) {
@@ -119,6 +133,7 @@ function plushWorn(on) {   // called by the booth when the bear goes in / out of
   }
 }
 function stepPlush(dt) {
+  stepMiniBear(dt);
   PLU.squish = Math.max(0, PLU.squish - dt * 1.6); PLU.bigSquish = Math.max(0, PLU.bigSquish - dt * 1.2);
   const held = BO.inst.plush;
   if (held && held.parent) {   // squishy idle wobble in your paw (+ a big squash right after you grab it)

@@ -34,7 +34,7 @@ function stepToyPortal(dt) {
   if (!AR.ready) return;
   for (const p of props) {
     if (p.regrow > 0) { p.regrow = Math.max(0, p.regrow - dt * 1.5); p.g.scale.setScalar(1 - p.regrow); }
-    if (p.held || p.vel.lengthSq() < .25 || !mine(p)) continue;
+    if (p.held || p.kind === 'bear' || p.vel.lengthSq() < .25 || !mine(p)) continue;
     portalGrove.g.worldToLocal(_a2.copy(p.g.position));
     if (Math.abs(_a2.z) < .3 && Math.hypot(_a2.x, _a2.y - 1) < .8) toyToYard(p, false);
   }
