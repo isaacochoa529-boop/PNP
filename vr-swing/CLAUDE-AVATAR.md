@@ -74,7 +74,7 @@ Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
   usually can't), a **quick-talk board** pops up next to the buddy instead: poke "Hi Claude!", "Come here!", "Follow me!",
   "Give me that!", "Dance!", "Throw it!", "Yes", "No".
 - **Quest (and any browser without speech-to-text): push-to-talk with Claude's own ears.** Poke the mic (or tap 🎤), talk,
-  poke again (or it stops after 10 s). A small Whisper model (tiny.en, transformers.js) turns it into words right in the
+  poke again (or it stops after 25 s). A small Whisper model (tiny.en, transformers.js) turns it into words right in the
   browser, no account or key. It downloads about 40 MB the first time, then the browser keeps it. A clip takes a few seconds.
   The mic turns yellow 🧠 while it's thinking. The quick-talk board pops up too, as a backup.
 - **Always listening 👂:** the 👂 button (PC/phone) or the little flip switch on the front of the mic post (VR). It remembers the
@@ -89,7 +89,10 @@ Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
   The relay itself is fast (about a second). Line up a few commands at once so the buddy keeps busy.
 - Only Isaiah sees his own buddy. Friends in a room see toys it moves, but not the buddy itself.
 - Voice: the browser's text-to-speech where it works. On Quest (no text-to-speech) and anywhere the browser voice doesn't start, it
-  switches to a robot voice (eSpeak via meSpeak.js, ~1.2 MB, played through the game's audio).
+  uses a real-sounding neural voice (Piper `en_US-hfc_female-medium`, onnxruntime-web in a Web Worker, ~80 MB the first time,
+  then kept in the browser cache). Lines are split into sentences so the first one starts fast. Until it has downloaded (or if it
+  fails) the robot voice (eSpeak via meSpeak.js, ~1.2 MB) talks instead.
+- Always listening waits for about 1.7 s of quiet before sending, and clips can be up to 25 s long.
 - Grabbing works on the grove toys (balls, cones, stars), not swords, cubes or ragdolls.
 - Speech-to-text works in Chrome / Edge / Safari on PC and phones. The Quest browser doesn't, so there it uses push-to-talk with the in-browser Whisper model (English only).
 - Anyone who knows the code can send commands, so keep it in the chat.
