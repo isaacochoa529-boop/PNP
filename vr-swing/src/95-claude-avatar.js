@@ -302,8 +302,26 @@ function clConnect() {
     const es = new EventSource('https://ntfy.sh/' + CL_TOPIC + CL.code + '/sse'); CL.es = es; CL.net = 'connecting';
     es.onopen = () => { CL.net = 'ok'; clUi(); };
     es.onerror = () => { CL.net = 'retry'; clUi(); };   // EventSource reconnects on its own
-    es.onmessage = e => { try { const d = JSON.parse(e.data); if (d.event === 'message' && d.message) clRun(d.message); } catch (er) {} };
+    es.onmessage = e => { try { const d = JSON.parse(e.data); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} };
   } catch (e) { CL.net = 'off'; }
+  clPollStart();
+}
+// every message runs once, even if it arrives both live (SSE) and from the backup check below
+function clGot(d) {
+  CL.seen = CL.seen || new Set(); if (d.id) { if (CL.seen.has(d.id)) return; CL.seen.add(d.id); if (CL.seen.size > 200) CL.seen.delete(CL.seen.values().next().value); }
+  if (d.time) CL.lastMsgT = Math.max(CL.lastMsgT || 0, d.time);
+  clRun(d.message);
+}
+// BACKUP: the live stream (SSE) can silently go deaf on phones / Quest. Also ask for new messages every 3 s (Isaiah: "you aren't responding").
+function clPollStart() {
+  if (CL.poll) return; CL.lastMsgT = CL.lastMsgT || Math.floor(Date.now() / 1000) - 2;
+  CL.poll = setInterval(async () => {
+    if (!CL.on || !CL.code || document.hidden || CL.polling) return; CL.polling = true;
+    try {
+      const r = await fetch('https://ntfy.sh/' + CL_TOPIC + CL.code + '/json?poll=1&since=' + CL.lastMsgT); if (!r.ok) return;
+      for (const line of (await r.text()).split('\n')) { if (!line.trim()) continue; try { const d = JSON.parse(line); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} }
+    } catch (e) {} finally { CL.polling = false; }
+  }, 3000);
 }
 function clOut(obj) {   // tell Claude in the chat what happened (status replies, pokes)
   if (!CL.code) return; const now = performance.now(); if (now - CL.outT < 1500 && obj.ev !== 'status' && obj.ev !== 'heard') return; CL.outT = now;
