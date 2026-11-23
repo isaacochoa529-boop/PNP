@@ -153,7 +153,7 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
 <script type="module">
 // The game's code lives in src/ as small files by feature (see README.md). They are joined back together
 // here and run as ONE module, exactly like before, so every part still sees every other part.
-const PARTS = ['00-treekit.js', '01-core.js', '02-world.js', '03-player.js', '04-loop.js', '10-yard.js', '11-cubes.js', '12-glass.js', '13-yard-play.js', '20-horror.js', '21-extras.js', '30-multiplayer.js', '31-computer.js', '32-shared-world.js', '33-phones.js', '34-voice.js', '40-berry-menu.js', '41-pc-controls.js', '50-water.js', '60-royale.js', '70-story.js', '80-wilds.js', '85-party.js', '86-photo-booth.js', '90-ragdolls.js', '95-claude-avatar.js'];
+const PARTS = ['00-treekit.js', '01-core.js', '02-world.js', '03-player.js', '04-loop.js', '10-yard.js', '11-cubes.js', '12-glass.js', '13-yard-play.js', '20-horror.js', '21-extras.js', '30-multiplayer.js', '31-computer.js', '32-shared-world.js', '33-phones.js', '34-voice.js', '40-berry-menu.js', '41-pc-controls.js', '50-water.js', '60-royale.js', '70-story.js', '80-wilds.js', '85-party.js', '86-photo-booth.js', '87-plush.js', '90-ragdolls.js', '95-claude-avatar.js'];
 try {
   const txt = await Promise.all(PARTS.map(n => fetch('src/' + n, { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error(n + ' ' + r.status); return r.text(); })));
   await import(URL.createObjectURL(new Blob([txt.join('') + '\n//# sourceURL=knuckle-grove.js'], { type: 'text/javascript' })));
