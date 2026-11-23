@@ -96,13 +96,109 @@ self.onmessage = async e => {
 function clSpeakEs(text) {
   try { CL.speaking = true; CL.spOk = true; CL.spAt = tAll; clEsWorker().postMessage({ t: 'say', id: ++CL_ES.id, text }); CL.esT = tAll; } catch (e) { CL.speaking = false; }
 }
+/* Real-sounding voice (Piper, a small neural voice that runs right in the browser, in a Web Worker so VR stays smooth).
+   ~80 MB the first time (kept in the browser's cache after that). Until it's ready the robot voice talks.
+   Long lines are split into sentences so the first one starts playing fast. */
+const CL_PV = { worker: null, ready: false, loading: false, failed: false, id: 0, q: [], src: null, pct: -1 };
+const CL_PV_SRC = `import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.wasm.min.mjs';
+import { createPiperPhonemize } from 'https://cdn.jsdelivr.net/npm/@diffusionstudio/vits-web@1.0.3/dist/piper-DeOu3H9E.js';
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/'; ort.env.wasm.numThreads = 1;
+const HF = 'https://huggingface.co/diffusionstudio/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx';
+const PW = 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize';
+async function grab(url, big) {
+  let c = null; try { c = await caches.open('kg-claude-voice'); const hit = await c.match(url); if (hit) return await hit.arrayBuffer(); } catch (e) {}
+  const r = await fetch(url); if (!r.ok) throw new Error('download ' + r.status);
+  const total = +(r.headers.get('Content-Length') || 0), rd = r.body.getReader(), parts = []; let got = 0, last = -1;
+  for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length;
+    if (big && total) { const p = Math.floor(got / total * 10) * 10; if (p !== last) { last = p; self.postMessage({ t: 'pct', pct: p }); } } }
+  const blob = new Blob(parts); try { c && await c.put(url, new Response(blob)); } catch (e) {}
+  return await blob.arrayBuffer();
+}
+let cfg = null, sess = null, ph = null, phOut = null, ready = null;
+async function phMod() {
+  const m = await createPiperPhonemize({ print: l => phOut && phOut(l), printErr: () => {},
+    locateFile: f => f.endsWith('.wasm') ? PW + '.wasm' : f.endsWith('.data') ? PW + '.data' : f });
+  return m;
+}
+function load() {
+  return ready = ready || (async () => {
+    cfg = JSON.parse(new TextDecoder().decode(await grab(HF + '.json')));
+    const [buf, m] = await Promise.all([grab(HF, true), phMod()]); ph = m;
+    sess = await ort.InferenceSession.create(buf, { executionProviders: ['wasm'] });
+    self.postMessage({ t: 'ready' });
+  })();
+}
+function phonemes(text) {
+  return new Promise((res, rej) => {
+    phOut = l => { phOut = null; try { res(JSON.parse(l).phoneme_ids); } catch (e) { rej(e); } };
+    try { ph.callMain(['-l', cfg.espeak.voice, '--input', JSON.stringify([{ text }]), '--espeak_data', '/espeak-ng-data']); } catch (e) { phOut = null; rej(e); }
+    setTimeout(() => { if (phOut) { phOut = null; rej(new Error('phonemizer timeout')); } }, 4000);
+  });
+}
+async function speak(text) {
+  await load();
+  let ids; try { ids = await phonemes(text); } catch (e) { ph = await phMod(); ids = await phonemes(text); }   // fresh phonemizer if the old one got stuck
+  const inf = cfg.inference, feeds = { input: new ort.Tensor('int64', BigInt64Array.from(ids.map(BigInt)), [1, ids.length]),
+    input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(ids.length)]), [1]),
+    scales: new ort.Tensor('float32', Float32Array.from([inf.noise_scale, inf.length_scale * .92, inf.noise_w]), [3]) };
+  if (Object.keys(cfg.speaker_id_map || {}).length) feeds.sid = new ort.Tensor('int64', BigInt64Array.from([0n]), [1]);
+  const out = await sess.run(feeds); return { pcm: Float32Array.from(out.output.data), rate: cfg.audio.sample_rate };
+}
+let chain = Promise.resolve();
+self.onmessage = e => {
+  const d = e.data;
+  if (d.t === 'load') { load().catch(er => self.postMessage({ t: 'err', msg: String(er && er.message || er) })); return; }
+  chain = chain.then(async () => {
+    try { const a = await speak(d.text); self.postMessage({ t: 'pcm', id: d.id, n: d.n, last: d.last, pcm: a.pcm, rate: a.rate }, [a.pcm.buffer]); }
+    catch (er) { self.postMessage({ t: 'err', id: d.id, msg: String(er && er.message || er) }); }
+  });
+};`;
+function clPvWorker() {
+  if (CL_PV.worker || CL_PV.failed) return CL_PV.worker;
+  try {
+    const w = new Worker(URL.createObjectURL(new Blob([CL_PV_SRC], { type: 'text/javascript' })), { type: 'module' });
+    w.onmessage = e => {
+      const d = e.data;
+      if (d.t === 'ready') { CL_PV.ready = true; CL_PV.loading = false; toast('🗣️ Claude got a real voice!', 3); return; }
+      if (d.t === 'pct') { if (d.pct !== CL_PV.pct && d.pct % 20 === 0 && d.pct < 100) { CL_PV.pct = d.pct; toast(`⏬ Getting Claude's real voice… ${d.pct}% (only the first time)`, 3); } return; }
+      if (d.t === 'err') { console.warn('Claude real voice', d.msg); if (!CL_PV.ready) { CL_PV.failed = true; CL_PV.loading = false; } if (d.id === CL_PV.id) { CL.speaking = false; if (d.n === undefined) clSpeakEs(CL.spText || ''); } return; }
+      if (d.t === 'pcm' && d.id === CL_PV.id) { CL_PV.q.push(d); clPvPump(); }
+    };
+    w.onerror = () => { CL_PV.failed = true; CL_PV.loading = false; };
+    CL_PV.worker = w;
+  } catch (e) { CL_PV.failed = true; }
+  return CL_PV.worker;
+}
+function clPvPreload() { if (CL_PV.ready || CL_PV.loading || CL_PV.failed) return; const w = clPvWorker(); if (w) { CL_PV.loading = true; w.postMessage({ t: 'load' }); } }
+function clPvPump() {
+  if (CL_PV.src || !CL_PV.q.length) return;
+  CL_PV.q.sort((a, b) => a.n - b.n); if (CL_PV.q[0].n !== CL_PV.next) return;
+  const d = CL_PV.q.shift(); CL_PV.next++;
+  try {
+    const ctx = ac || (window.__clAc = window.__clAc || new (window.AudioContext || window.webkitAudioContext)());
+    if (ctx.state === 'suspended') ctx.resume();
+    const buf = ctx.createBuffer(1, d.pcm.length, d.rate); buf.copyToChannel(d.pcm, 0);
+    const s = ctx.createBufferSource(), g = ctx.createGain(); g.gain.value = 1.5; s.buffer = buf; s.connect(g).connect(ctx.destination); s.start();
+    CL_PV.src = s; CL.speaking = true; CL.spOk = true;
+    s.onended = () => { if (CL_PV.src !== s) return; CL_PV.src = null; if (d.last) CL.speaking = false; else clPvPump(); };
+  } catch (e) { CL.speaking = false; }
+}
+function clPvStop() { CL_PV.id++; CL_PV.q = []; const s = CL_PV.src; CL_PV.src = null; try { s && s.stop(); } catch (e) {} }
+function clSpeakPv(text) {
+  clPvStop(); const id = CL_PV.id, w = clPvWorker(); if (!w) return false;
+  const parts = (text.match(/[^.!?]+[.!?]*\s*/g) || [text]).map(t => t.trim()).filter(t => /[a-z0-9]/i.test(t));
+  if (!parts.length) return false;
+  CL_PV.next = 0; CL.speaking = true; CL.spOk = true; CL.spAt = tAll;
+  parts.forEach((t, n) => w.postMessage({ t: 'say', id, n, last: n === parts.length - 1, text: t }));
+  return true;
+}
 function clSay(text) {
   text = String(text).slice(0, 220); if (!text) return 0;
   clBubble(text); toast('🤖 Claude: ' + text, Math.min(8, CL.bubT));
   CL.speaking = false;
   const clean = text.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '').trim(); if (!clean) return CL.bubT;
-  try { CL_ES.src && CL_ES.src.stop(); } catch (e) {}
-  if (CL.tts === 'espeak') { clSpeakEs(clean); return CL.bubT; }
+  try { CL_ES.src && CL_ES.src.stop(); } catch (e) {} clPvStop(); CL.spText = clean;
+  if (CL.tts === 'espeak') { if (!(CL_PV.ready && clSpeakPv(clean))) { clSpeakEs(clean); clPvPreload(); } return CL.bubT; }
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(clean);
@@ -152,7 +248,7 @@ function clToggle() {
   if (CL.on) { clOff(); return; }
   CL.on = true; CL.code = clCode(); if (!CL.f || (!CL.f.thump && AV.tpl)) clBuild(); CL.f.g.visible = true; CL.f.label.visible = true;
   clSpawnNear(1.6); CL.q = []; CL.cur = null; CL.follow = false; CL.look = 'me';
-  clConnect(); clVoice(); if (CL.tts === 'espeak') clEsWorker();   // warm up the robot voice
+  clConnect(); clVoice(); if (CL.tts === 'espeak') { clEsWorker(); clPvPreload(); }   // warm up the robot voice + start getting the real one
   if (typeof VAD !== 'undefined' && VAD.on) setTimeout(() => vadSet(true), 600);
   const msg = `Hi Isaiah! 👋 Tell the chat my code: ${CL.code.toUpperCase()}`;
   clBubble(msg, 30); toast('🤖 Claude buddy is ON! Code: ' + CL.code.toUpperCase(), 8);
@@ -208,7 +304,7 @@ function clRun(text) {
     line = line.trim(); if (!line) continue;
     const m = line.match(/^(\S+)\s*(.*)$/); const verb = m[1].toLowerCase().replace(/^\//, ''), arg = m[2] || '';
     if (!CL_VERBS.includes(verb)) { clOut({ ev: 'error', msg: 'unknown command: ' + verb, know: CL_VERBS }); continue; }
-    if (verb === 'stop') { CL.q = []; CL.cur = null; CL.follow = false; CL.anim = null; try { speechSynthesis.cancel(); } catch (e) {} try { CL_ES.src && CL_ES.src.stop(); } catch (e) {} continue; }
+    if (verb === 'stop') { CL.q = []; CL.cur = null; CL.follow = false; CL.anim = null; try { speechSynthesis.cancel(); } catch (e) {} try { CL_ES.src && CL_ES.src.stop(); } catch (e) {} clPvStop(); CL.speaking = false; continue; }
     if (verb === 'status') { clStatus(); continue; }
     CL.q.push({ verb, arg, words: arg.split(/\s+/).filter(Boolean) });
   }
@@ -289,7 +385,7 @@ function clStepAction(a, dt) {
     }
     return true;
   }
-  if (CL.speaking && !CL.spOk && tAll - CL.spAt > 1.5) { CL.tts = 'espeak'; try { speechSynthesis.cancel(); } catch (e) {} clSpeakEs(CL.spText || ''); }   // the browser voice never started: use the robot voice from now on
+  if (CL.speaking && !CL.spOk && tAll - CL.spAt > 1.5) { CL.tts = 'espeak'; clPvPreload(); try { speechSynthesis.cancel(); } catch (e) {} clSpeakEs(CL.spText || ''); }   // the browser voice never started: use the robot voice from now on
   return a.t >= (a.dur || 0) && !(a.verb === 'say' && CL.speaking && a.t < a.dur + 8);
 }
 
@@ -502,7 +598,7 @@ function stepClaudeEars(dt) {
 window.__kg.claude.heard = (t) => clHeard(t, 'test');
 
 /* ---------- Claude's own ears: push-to-talk + a tiny Whisper model that runs right in the browser ----------
-   For browsers with no speech-to-text (the Quest browser). Poke the mic (or tap 🎤): it records; poke again (or wait 10 s)
+   For browsers with no speech-to-text (the Quest browser). Poke the mic (or tap 🎤): it records; poke again (or wait 25 s)
    and the clip is turned into words by Whisper tiny.en (transformers.js, WASM, in a Web Worker so VR stays smooth).
    No account, no key. The model (~40 MB) downloads once the first time, then the browser keeps it. */
 const EARS = { worker: null, ready: false, loading: false, busy: false, rec: null, stream: null, chunks: [], recOn: false, recT: 0, pct: -1, id: 0 };
@@ -579,7 +675,7 @@ clMicUi = function () {
 };
 function stepClaudeEarsRec(dt) {
   if (!EARS.recOn) return;
-  const now = performance.now(); EARS.recT += Math.min(.5, (now - (EARS.lastT || now)) / 1000); EARS.lastT = now; if (EARS.recT > 10 || !CL.on) earsStop();
+  const now = performance.now(); EARS.recT += Math.min(.5, (now - (EARS.lastT || now)) / 1000); EARS.lastT = now; if (EARS.recT > 25 || !CL.on) earsStop();
   clMicOrb.head.scale.setScalar(1 + Math.sin(tAll * 12) * .12);
 }
 window.__kg.claude.ears = { start: () => earsStart(), stop: () => earsStop(), EARS, broken: v => { CLM.broken = v; } };
@@ -653,6 +749,6 @@ function stepVad(dt) {
   if (!VAD.talking && VAD.loud > .12 && !EARS.busy && !EARS.recOn) { VAD.talking = true; VAD.len = 0; earsStart(true); }
   if (VAD.talking) {
     VAD.len += step;
-    if (VAD.quiet > .9 || VAD.len > 10 || buddyTalking) { VAD.talking = false; VAD.loud = 0; if (EARS.recOn) { if (VAD.len - VAD.quiet < .35 || buddyTalking) { EARS.skip = true; } earsStop(); } }
+    if (VAD.quiet > 1.7 || VAD.len > 25 || buddyTalking) { VAD.talking = false; VAD.loud = 0; if (EARS.recOn) { if (VAD.len - VAD.quiet < .35 || buddyTalking) { EARS.skip = true; } earsStop(); } }
   }
 }
