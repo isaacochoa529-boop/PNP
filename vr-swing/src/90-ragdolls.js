@@ -530,7 +530,24 @@ function rdTestZone() {   // fill the empty test spots (missing dummies come bac
     at.y = .06; const yaw = Math.atan2(AR_SPAWN.x - sp.x, AR_SPAWN.z - sp.z) * .4;
     const rd = rdSpawnAt(at, yaw); rd.home = at.clone(); rd.homeYaw = yaw; rdTorsoFrame(rd); rdDraw(rd, 0);
   }
+  if (!HM.on) hmPlace(V().copy(ARENA).add(_rv.set(-4.5, .5, .55)));   // the sledgehammer waits by the sign too
   return true;
+}
+// a wrecked or thrown-away test dummy pops back home by itself after a few seconds (Isaiah: "the dummies don't respawn")
+function rdHomeAgain(o) {
+  const base = V(o.home.x, o.home.y, o.home.z), look = o.look, yaw = o.homeYaw, home = o.home; rdKill(o);
+  const rd = rdSpawnAt(base, yaw, look); rd.home = home; rd.homeYaw = yaw; rdTorsoFrame(rd); rdDraw(rd, 0);
+  rdBurst(_rv.copy(base).add(V(0, .6, 0)), V(0, 1, 0), 10, base.y);
+  if (ac) { tone('triangle', 400, 1000, .15, .12); tone('sine', 800, 1600, .1, .06, .08); }
+}
+function rdTestRespawn(dt) {
+  if ((RD.fillT = (RD.fillT || 0) - dt) < 0) { RD.fillT = 2; rdTestZone(); }   // missing ones (fell off the world) come back too
+  for (const rd of RD.list.slice()) {
+    if (!rd.home) continue;
+    const wrecked = Object.values(rd.G).some(G => G.ripped), far = Math.hypot(rd.P[0].p.x - rd.home.x, rd.P[0].p.z - rd.home.z) > 2.5 || rd.P[0].p.y < rd.home.y - 3;
+    const held = RD.held.some(x => x && x.rd === rd);
+    if ((wrecked || far) && !held) { if ((rd.backT = (rd.backT || 0) + dt) > 6) rdHomeAgain(rd); } else rd.backT = 0;
+  }
 }
 
 /* ---------------- per frame ---------------- */
@@ -544,6 +561,7 @@ function stepRagdolls(dt) {
   if (HZ.on !== RD.hz) { RD.hz = HZ.on; for (const rd of RD.list) rd.caps.forEach(m => { m.geometry = rdCapG(); }); }
   if (state.area === 'arena' && RD.area !== 'arena') { if (rdTestZone()) { RD.area = 'arena'; if (!RD.toldTest) { RD.toldTest = true; setTimeout(() => toast('🧸 Test dummies are waiting by the DUMMY TEST sign! Pull them apart 😈', 5), 3500); } } }
   else if (state.area !== 'arena') RD.area = state.area;
+  if (state.area === 'arena' && RD.area === 'arena') rdTestRespawn(dt);
   hmStep(dt); rfxStep(dt); splatStep(dt);
   if (!RD.list.length) return;
   // where each held part should be
