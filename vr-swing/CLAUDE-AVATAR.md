@@ -73,6 +73,10 @@ Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
 - **VR:** poke the blue mic on the little post next to the orange orb. If the browser can't do speech-to-text (the Quest browser
   usually can't), a **quick-talk board** pops up next to the buddy instead: poke "Hi Claude!", "Come here!", "Follow me!",
   "Give me that!", "Dance!", "Throw it!", "Yes", "No".
+- **Quest (and any browser without speech-to-text): push-to-talk with Claude's own ears.** Poke the mic (or tap 🎤), talk,
+  poke again (or it stops after 10 s). A small Whisper model (tiny.en, transformers.js) turns it into words right in the
+  browser, no account or key. It downloads about 40 MB the first time, then the browser keeps it. A clip takes a few seconds.
+  The mic turns yellow 🧠 while it's thinking. The quick-talk board pops up too, as a backup.
 - Everything he says shows as a toast ("🎤 You: ...") and lands on the `-out` topic as `ev: heard`.
 
 ## Honest limits
@@ -82,5 +86,5 @@ Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
 - Only Isaiah sees his own buddy. Friends in a room see toys it moves, but not the buddy itself.
 - Voice uses the browser's built-in text-to-speech. Some browsers (sometimes the Quest browser) have no voice: the bubble still shows.
 - Grabbing works on the grove toys (balls, cones, stars), not swords, cubes or ragdolls.
-- Speech-to-text works in Chrome / Edge / Safari on PC and phones. The Quest browser usually doesn't support it, so VR uses the quick-talk board.
+- Speech-to-text works in Chrome / Edge / Safari on PC and phones. The Quest browser doesn't, so there it uses push-to-talk with the in-browser Whisper model (English only).
 - Anyone who knows the code can send commands, so keep it in the chat.
