@@ -636,6 +636,7 @@ function partyLanded() {
 }
 // hooks the rest of the game calls
 function partyGrab(h) {
+  if (boothTakeOff(h)) return true;   // costumes come off anywhere, not just at the party
   if (!PT.inside || !h.tracked) return false;
   if (boothGrab(h)) return true;
   const near = (o, r) => { const w = V(); o.getWorldPosition(w); return w.distanceTo(h.pos) < r; };
