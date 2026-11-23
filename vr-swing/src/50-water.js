@@ -1,15 +1,20 @@
 /* ======================================================================
    THE WATER LAB (in the Slicing Yard, next to the Glass Lab)
-   - A pool of wavy water: a cheap 2D wave grid (no heavy fluid sim). Anything that goes in makes
-     ripples and waves, the whole pool sloshes, and the water level rises with what's in it.
+   - The pool is full of SLIME-WATER: hundreds of little blobs, each one its own drop. They squish apart,
+     stick together and drag each other along, and the skin drawn around them melts close blobs together,
+     so it moves like goo. Swipe through it and blobs fly; they plop back in or splat on the floor as puddles.
      Cubes float, glass sinks, you get floaty and slow when you jump in.
-   - The CUP button spawns a glass cup: dunk it to scoop water, tip it to your mouth to drink,
-     tip it anywhere else to pour. Water on the floor makes a slippery puddle.
+   - The CUP button spawns a glass cup: dunk it to scoop up blobs, tip it to your mouth to drink,
+     tip it anywhere else to pour them out. Slime on the floor makes a slippery puddle.
    - The WHETSTONE: rub a glass shard on it long enough and it turns into a GLASS SWORD.
-   Net: t:'wat' with e = cs (cup state), cdel, pud (puddle), gsw (glass sword).
+   Net: t:'wat' with e = cs (cup state), cdel, pud (puddle), gsw (glass sword). The slime itself is local.
    ====================================================================== */
-const POOL = { c: V(5.2, 0, 8.3), W: 2.4, rim: .42, base: .3, N: 36, level: .3, disp: 0, sx: 0, sz: 0, svx: 0, svz: 0, acc: 0, mesh: null, h0: null, h1: null, inT: 0, wasIn: false, told: false };
+import { MarchingCubes } from 'three/addons/objects/MarchingCubes.js';
+const POOL = { c: V(5.2, 0, 8.3), W: 2.4, rim: .42, floor: .14, level: .25, mesh: null, wasIn: false, told: false };
 const WATER = { cups: [], puds: [], drops: [], cupN: 0, sharpT: 0, glassy: false, swordM: null, told: {}, sendT: 0 };
+const GOO = { MAX: 400, n: 0, R: .055, H: .13, CS: .21, p: new Float32Array(400 * 3), o: new Float32Array(400 * 3), v: new Float32Array(400 * 3),
+  head: new Int32Array(4096), next: new Int32Array(400), pairs: new Int32Array(400 * 48), np: 0, cols: [], refT: 0, moving: 1, hm: new Float32Array(144), mc: null, out: [], dirty: true };
+const MC_RES = 36, MC_HX = 1.42, MC_Y0 = .08, MC_HY = .62;   // the blob skin lives in a box over the pool (pool-local)
 const WHET = V(6.85, 0, 6.15);                  // the whetstone (arena-local)
 const CUP_BTN = V(3.55, 0, 7.55);               // the cup button pedestal (arena-local)
 const WU = { uTime: { value: 0 }, uLevel: { value: .3 }, uBox: { value: new THREE.Vector3(POOL.c.x + ARENA.x, POOL.c.z + ARENA.z, POOL.W / 2 + .002) } };
@@ -69,20 +74,21 @@ if (vCW.y < uLevel && abs(vCW.x - uBox.x) <= uBox.z && abs(vCW.z - uBox.y) <= uB
   };
   return m;
 }
-const waterM = makeWaterMat({ half: 1.2, alpha: .14 });
+const gooM = makeWaterMat({ color: 0x45b6ea, alpha: .72, amp: .18, freq: 2.2, fres: .3 }); gooM.depthWrite = true; gooM.roughness = .05;   // slime-water: thicker and glossier than plain water
 const cupWaterM = makeWaterMat({ alpha: .3, amp: .25, freq: 2.5, color: 0xc8eef7 });
 const puddleM = makeWaterMat({ alpha: .12, amp: .35, freq: 1.5, color: 0xb8d8e0, fres: .45, soft: 1 }); puddleM.polygonOffset = true; puddleM.polygonOffsetFactor = -3;
-const dropM = new THREE.MeshStandardMaterial({ color: 0xe8fbff, roughness: .02, envMap: ENV, envMapIntensity: 2.2, transparent: true, opacity: .6, depthWrite: false });
+const dropM = new THREE.MeshStandardMaterial({ color: 0x7fd0f0, roughness: .04, envMap: SKY_ENV, envMapIntensity: 1.8, transparent: true, opacity: .8 });   // loose slime blobs
 const cupM = new THREE.MeshStandardMaterial({ color: 0xeef8ff, roughness: .04, metalness: .1, envMap: ENV, envMapIntensity: 1.8, transparent: true, opacity: .32, side: THREE.DoubleSide, depthWrite: false });
 const _w1 = V(), _w2 = V(), _w3 = V(), _wq = new THREE.Quaternion(), _wq2 = new THREE.Quaternion(), _UP = V(0, 1, 0);
-const poolW = () => _w3.copy(POOL.c).add(ARENA);   // pool centre in the world
+const _wpc = V(), poolW = () => _wpc.copy(POOL.c).add(ARENA);   // pool centre in the world
 /* ---------- the pool: a tiled basin with a rim you can climb over ---------- */
 {
   const g = new THREE.Group(); g.position.copy(POOL.c); arena.add(g);
   const W = POOL.W, T = .12, R = POOL.rim, tileTex = labelTex(256, 256, (q, w, h) => { q.fillStyle = '#bfe9f5'; q.fillRect(0, 0, w, h); q.strokeStyle = '#8fcfe2'; q.lineWidth = 6; for (let i = 0; i <= 4; i++) { q.beginPath(); q.moveTo(i * 64, 0); q.lineTo(i * 64, h); q.stroke(); q.beginPath(); q.moveTo(0, i * 64); q.lineTo(w, i * 64); q.stroke(); } });
   tileTex.wrapS = tileTex.wrapT = THREE.RepeatWrapping; tileTex.repeat.set(4, 4);
   const tileM = addCaustics(new THREE.MeshStandardMaterial({ map: tileTex, roughness: .35 })), rimM = addCaustics(new THREE.MeshStandardMaterial({ color: 0xe9eef2, roughness: .5 }));
-  part(new THREE.BoxGeometry(W, .01, W), tileM, 0, .006, 0, g);
+  part(new THREE.BoxGeometry(W, POOL.floor, W), tileM, 0, POOL.floor / 2, 0, g);   // a raised tiled floor, so the slime sits nice and deep
+  addCol({ t: 0, x: ARENA.x + POOL.c.x, y: POOL.floor / 2, z: ARENA.z + POOL.c.z, hx: W / 2, hy: POOL.floor / 2, hz: W / 2, yaw: 0, tag: 'rock' });
   [[0, W / 2 + T / 2, W + 2 * T, T], [0, -W / 2 - T / 2, W + 2 * T, T], [W / 2 + T / 2, 0, T, W], [-W / 2 - T / 2, 0, T, W]].forEach(([x, z, sx, sz]) => {
     part(new THREE.BoxGeometry(sx, R, sz), rimM, x, R / 2, z, g);
     addCol({ t: 0, x: ARENA.x + POOL.c.x + x, y: R / 2, z: ARENA.z + POOL.c.z + z, hx: sx / 2, hy: R / 2, hz: sz / 2, yaw: 0, tag: 'rock' });
@@ -91,10 +97,9 @@ const poolW = () => _w3.copy(POOL.c).add(ARENA);   // pool centre in the world
   const sgT = labelTex(512, 128, (q, w, h) => signText(q, w, h, [['💧 WATER LAB 💧', 64, '#7fd8ff', 80]], 'rgba(14,20,30,.92)', '#3fb2ff'));
   const sg = new THREE.Mesh(new THREE.PlaneGeometry(1.1, .275), new THREE.MeshBasicMaterial({ map: sgT, transparent: true })); sg.position.set(0, R + .32, -W / 2 - T); g.add(sg);
   part(new THREE.CylinderGeometry(.02, .02, .3, 8), smat(0xe9eef2, { roughness: .5 }), 0, R + .15, -W / 2 - T - .01, g);
-  // the water surface: a grid we push up and down every frame
-  const geo = new THREE.PlaneGeometry(W, W, POOL.N - 1, POOL.N - 1); geo.rotateX(-Math.PI / 2);
-  POOL.mesh = new THREE.Mesh(geo, waterM); POOL.mesh.position.y = POOL.base; POOL.mesh.renderOrder = 2; g.add(POOL.mesh);
-  POOL.h0 = new Float32Array(POOL.N * POOL.N); POOL.h1 = new Float32Array(POOL.N * POOL.N);
+  // the slime-water: one blobby skin around all the little blobs (filled in by stepGoo)
+  GOO.mc = new MarchingCubes(MC_RES, gooM, false, false, 26000); GOO.mc.position.set(0, MC_Y0 + MC_HY, 0); GOO.mc.scale.set(MC_HX, MC_HY, MC_HX);
+  GOO.mc.isolation = .5; GOO.mc.frustumCulled = false; GOO.mc.renderOrder = 2; g.add(GOO.mc); POOL.mesh = GOO.mc;
   POOL.g = g;
 }
 /* ---------- the cup button and the whetstone ---------- */
@@ -125,94 +130,185 @@ const poolW = () => _w3.copy(POOL.c).add(ARENA);   // pool centre in the world
 function poolRapier(fixed) {   // the pool rim, the button and the whetstone are solid for cubes too
   const R = AR.R, W = POOL.W, T = .12, h = POOL.rim / 2;
   [[0, W / 2 + T / 2, W / 2 + T, T / 2], [0, -W / 2 - T / 2, W / 2 + T, T / 2], [W / 2 + T / 2, 0, T / 2, W / 2], [-W / 2 - T / 2, 0, T / 2, W / 2]].forEach(([x, z, hx, hz]) => fixed(R.ColliderDesc.cuboid(hx, h, hz), POOL.c.x + x, h, POOL.c.z + z));
+  fixed(R.ColliderDesc.cuboid(W / 2, POOL.floor / 2, W / 2), POOL.c.x, POOL.floor / 2, POOL.c.z);
   fixed(R.ColliderDesc.cylinder(.165, .14), CUP_BTN.x, .165, CUP_BTN.z);
   fixed(R.ColliderDesc.cuboid(.25, .285, .15), WHET.x, .285, WHET.z);
 }
-/* ---------- waves ---------- */
-function inPool(p, pad = 0) { const c = poolW(); return Math.abs(p.x - c.x) < POOL.W / 2 - pad && Math.abs(p.z - c.z) < POOL.W / 2 - pad; }
-function poolPoke(p, amt, rad = .12) {   // push the water at a world point (amt > 0 pushes it down)
-  const c = poolW(), N = POOL.N, cs = POOL.W / (N - 1);
-  const cx = (p.x - c.x + POOL.W / 2) / cs, cz = (p.z - c.z + POOL.W / 2) / cs, r = Math.max(1, rad / cs);
-  for (let j = Math.max(1, Math.floor(cz - r)); j <= Math.min(N - 2, Math.ceil(cz + r)); j++)
-    for (let i = Math.max(1, Math.floor(cx - r)); i <= Math.min(N - 2, Math.ceil(cx + r)); i++) {
-      const d2 = ((i - cx) ** 2 + (j - cz) ** 2) / (r * r); if (d2 < 1) POOL.h0[j * N + i] -= amt * (1 - d2);
+/* ---------- the slime-water: hundreds of little blobs that squish, stick and merge ----------
+   Every bit of water is its own little ball. Balls push apart when squeezed, pull together when close (sticky),
+   and drag their neighbours along (gooey). The surface is drawn as ONE smooth blobby skin around all of them
+   (marching cubes), so close blobs melt together and loose ones stay little round drops. */
+const gooKey = (x, y, z) => (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791)) & 4095;
+function gooAdd(x, y, z, vx = 0, vy = 0, vz = 0) {
+  if (GOO.n >= GOO.MAX) return false; const i = GOO.n++ * 3, p = GOO.p, o = GOO.o, v = GOO.v;
+  p[i] = o[i] = x; p[i + 1] = o[i + 1] = y; p[i + 2] = o[i + 2] = z; v[i] = vx; v[i + 1] = vy; v[i + 2] = vz; GOO.dirty = true; return true;
+}
+function gooKill(k) {   // swap the last blob into this slot
+  const n = --GOO.n, a = k * 3, b = n * 3, p = GOO.p, o = GOO.o, v = GOO.v;
+  for (let c = 0; c < 3; c++) { p[a + c] = p[b + c]; o[a + c] = o[b + c]; v[a + c] = v[b + c]; } GOO.dirty = true;
+}
+const toPool = (w, out) => out.set(w.x - ARENA.x - POOL.c.x, w.y - ARENA.y, w.z - ARENA.z - POOL.c.z);
+function gooPairs() {   // who's next to who (a hash grid, so it's cheap)
+  const { p, head, next, CS } = GOO, n = GOO.n, P = GOO.pairs, lim = P.length - 2, C2 = CS * CS; head.fill(-1); let np = 0;
+  for (let i = 0; i < n; i++) { const k = gooKey(Math.floor(p[i * 3] / CS), Math.floor(p[i * 3 + 1] / CS), Math.floor(p[i * 3 + 2] / CS)); next[i] = head[k]; head[k] = i; }
+  for (let i = 0; i < n; i++) {
+    const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2], cx = Math.floor(x / CS), cy = Math.floor(y / CS), cz = Math.floor(z / CS);
+    for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      let j = head[gooKey(cx + dx, cy + dy, cz + dz)];
+      while (j >= 0) { if (j > i) { const ex = p[j * 3] - x, ey = p[j * 3 + 1] - y, ez = p[j * 3 + 2] - z; if (ex * ex + ey * ey + ez * ez < C2 && np < lim) { P[np++] = i; P[np++] = j; } } j = next[j]; }
     }
-}
-const RING_G = new THREE.RingGeometry(.8, 1, 40); RING_G.rotateX(-Math.PI / 2);
-const RINGS = [];
-function ring(p, s, life = 1.1) {   // a ring that spreads out across the surface
-  if (RINGS.length > 14) { const o = RINGS.shift(); scene.remove(o.m); o.m.material.dispose(); }
-  const m = new THREE.Mesh(RING_G, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .5, depthWrite: false })); m.position.set(p.x, POOL.level + .006, p.z); m.scale.setScalar(.02); m.renderOrder = 3; scene.add(m);
-  RINGS.push({ m, t: 0, s, life });
-}
-function stepRings(dt) {
-  for (let i = RINGS.length - 1; i >= 0; i--) { const r = RINGS[i]; r.t += dt; const a = r.t / r.life; if (a >= 1) { scene.remove(r.m); r.m.material.dispose(); RINGS.splice(i, 1); continue; }
-    r.m.scale.setScalar(.03 + r.s * Math.sqrt(a)); r.m.material.opacity = .45 * (1 - a) ** 1.5; r.m.position.y = POOL.level + .006;
-    const c = poolW(); if (Math.abs(r.m.position.x - c.x) + r.m.scale.x > POOL.W / 2 + .05 || Math.abs(r.m.position.z - c.z) + r.m.scale.x > POOL.W / 2 + .05) r.m.material.opacity *= .5; }
-}
-function splash(p, k) {   // a splash you can see and hear
-  ring(p, .35 + k * .5); if (k > .4) ring(p, .2 + k * .3, 1.4);
-  for (let i = 0; i < Math.round(6 + k * 14); i++) WATER.drops.push({ p: p.clone(), v: V((rnd() - .5) * 2.2 * k, 1.2 + rnd() * 2.6 * k, (rnd() - .5) * 2.2 * k), t: 0, pool: true });
-  if (ac) { const t = ac.currentTime, v = Math.min(.6, .12 + k * .25); noiseHit(t, .18 + k * .25, v, 'bandpass', 900 + rnd() * 500, .6); tone('sine', 700 + rnd() * 300, 180, .18, v * .25); }
-}
-function stepWaves(dt) {
-  const N = POOL.N, a = POOL.h0, b = POOL.h1;
-  for (let j = 1; j < N - 1; j++) for (let i = 1; i < N - 1; i++) {   // ripple tank: the classic two-buffer wave, one step a frame
-    const k = j * N + i; b[k] = ((a[k - 1] + a[k + 1] + a[k - N] + a[k + N]) * .5 - b[k]) * .985;
   }
-  POOL.h0 = b; POOL.h1 = a;
-  // slosh: the whole surface tilts back and forth like a spring
-  POOL.svx += (-POOL.sx * 22 - POOL.svx * 1.2) * dt; POOL.svz += (-POOL.sz * 22 - POOL.svz * 1.2) * dt; POOL.sx += POOL.svx * dt; POOL.sz += POOL.svz * dt;
-  const pos = POOL.mesh.geometry.attributes.position, h = POOL.h0, t = tAll, hw = POOL.W / 2;
-  for (let k = 0; k < N * N; k++) {
-    const x = pos.getX(k), z = pos.getZ(k);
-    pos.setY(k, h[k] * .6 + Math.sin(x * 3.1 + t * 1.3) * .004 + Math.sin(z * 2.7 - t * 1.1) * .004 + (x / hw) * POOL.sx + (z / hw) * POOL.sz);
-  }
-  pos.needsUpdate = true; POOL.mesh.geometry.computeVertexNormals();
+  GOO.np = np;
 }
-/* ---------- what's in the water: cubes, glass, paws, you, friends, cups ---------- */
-const _wPrev = new WeakMap();
-function wetThing(key, p, r, dt) {   // ripples from anything crossing or moving through the surface
-  const pv = _wPrev.get(key); _wPrev.set(key, p.clone()); if (!pv || !inPool(p, .02)) return;
-  const L = POOL.level, vy = (p.y - pv.y) / dt, hs = Math.hypot(p.x - pv.x, p.z - pv.z) / dt;
-  if (Math.abs(p.y - L) > r + .03) return;
-  poolPoke(p, clamp(-vy * .012, -.05, .05) + clamp(hs * .004, 0, .03) * (rnd() < .5 ? 1 : -1), r + .05);
-  if (hs > .5 && rnd() < dt * 7) ring(p, .12 + Math.min(.3, hs * .06), .8);
-  if ((pv.y - r > L && p.y - r <= L && vy < -1.2) || (pv.y + r < L && p.y + r >= L && vy > 1.5)) { splash(V(p.x, L, p.z), clamp(Math.abs(vy) / 5, .2, 1.2) * Math.min(1.5, r * 6)); POOL.svx += (p.x - pv.x) / dt * .02; POOL.svz += (p.z - pv.z) / dt * .02; }
+function gooCols() {   // paws, you, cubes, cups and the sword shove the blobs (and slime sticks to paws a little)
+  const p = GOO.p, v = GOO.v, n = GOO.n, R = GOO.R;
+  for (const c of GOO.cols) {
+    const rr = c.r + R, rr2 = rr * rr, st = c.r + R + .045, st2 = st * st;
+    for (let i = 0; i < n; i++) {
+      const k = i * 3, dx = p[k] - c.x, dy = p[k + 1] - c.y, dz = p[k + 2] - c.z, d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 >= st2) continue;
+      if (d2 < rr2) {   // inside the thing: pop out to its skin and get carried along with it
+        const d = Math.sqrt(d2) || 1e-4, nx = dx / d, ny = dy / d, nz = dz / d, f = rr - d; p[k] += nx * f; p[k + 1] += ny * f; p[k + 2] += nz * f;
+        const vn = (v[k] - c.vx) * nx + (v[k + 1] - c.vy) * ny + (v[k + 2] - c.vz) * nz; if (vn < 0) { v[k] -= nx * vn * 1.15; v[k + 1] -= ny * vn * 1.15; v[k + 2] -= nz * vn * 1.15; }
+      }
+      if (c.stick) { v[k] += (c.vx - v[k]) * .12; v[k + 1] += (c.vy - v[k + 1]) * .12; v[k + 2] += (c.vz - v[k + 2]) * .12; }
+    }
+  }
+}
+function gooBounds() {   // the tiles, the walls and the rim
+  const p = GOO.p, o = GOO.o, v = GOO.v, R = GOO.R, in1 = POOL.W / 2 - R, rimTop = POOL.rim + R, outer = POOL.W / 2 + .12 + R, fl = POOL.floor + R;
+  for (let i = 0; i < GOO.n; i++) {
+    const k = i * 3;
+    if (p[k + 1] < fl) { p[k + 1] = fl; if (v[k + 1] < 0) v[k + 1] *= -.1; v[k] *= .94; v[k + 2] *= .94; }   // sticky on the tiles
+    if ((Math.abs(p[k]) > in1 || Math.abs(p[k + 2]) > in1) && p[k + 1] < rimTop) {
+      if (Math.abs(o[k]) <= in1 + .01 && Math.abs(o[k + 2]) <= in1 + .01) {   // bumps the wall from inside
+        if (Math.abs(p[k]) > in1) { p[k] = Math.sign(p[k]) * in1; v[k] *= -.15; } if (Math.abs(p[k + 2]) > in1) { p[k + 2] = Math.sign(p[k + 2]) * in1; v[k + 2] *= -.15; } }
+      else if (Math.abs(p[k]) < outer && Math.abs(p[k + 2]) < outer) { p[k + 1] = rimTop; if (v[k + 1] < 0) v[k + 1] = 0; v[k] *= .9; v[k + 2] *= .9; }   // landed on top of the rim
+    }
+  }
+}
+const KREP = 1400, KCOH = 160, CDMP = 14;   // squish-apart push, sticky pull, gooey damping
+function gooStep(dt) {
+  const n = GOO.n, p = GOO.p, o = GOO.o, v = GOO.v, H = GOO.H, CS = GOO.CS, damp = Math.exp(-dt * .4);
+  for (let i = 0; i < n * 3; i += 3) { v[i + 1] -= 9.81 * dt; v[i] *= damp; v[i + 1] *= damp; v[i + 2] *= damp; }
+  gooPairs(); const P = GOO.pairs, np = GOO.np;
+  for (let q = 0; q < np; q += 2) {
+    const a = P[q] * 3, b = P[q + 1] * 3, dx = p[b] - p[a], dy = p[b + 1] - p[a + 1], dz = p[b + 2] - p[a + 2], d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (d >= CS || d < 1e-5) continue;
+    const nx = dx / d, ny = dy / d, nz = dz / d, vr = (v[b] - v[a]) * nx + (v[b + 1] - v[a + 1]) * ny + (v[b + 2] - v[a + 2]) * nz;
+    const sp = d < H ? -KREP * (H - d) : KCOH * (d - H) * (1 - (d - H) / (CS - H));   // squished: push apart / close: stick together
+    const f = (sp + CDMP * vr) * dt;
+    v[a] += nx * f; v[a + 1] += ny * f; v[a + 2] += nz * f; v[b] -= nx * f; v[b + 1] -= ny * f; v[b + 2] -= nz * f;
+  }
+  for (let q = 0; q < np; q += 2) {   // gooey: neighbours drag each other along
+    const a = P[q] * 3, b = P[q + 1] * 3;
+    for (let c = 0; c < 3; c++) { const dv = (v[b + c] - v[a + c]) * .04; v[a + c] += dv; v[b + c] -= dv; }
+  }
+  let mv = 0;
+  for (let i = 0; i < n * 3; i += 3) {
+    const s2 = v[i] * v[i] + v[i + 1] * v[i + 1] + v[i + 2] * v[i + 2]; if (s2 > 64) { const s = 8 / Math.sqrt(s2); v[i] *= s; v[i + 1] *= s; v[i + 2] *= s; }
+    o[i] = p[i]; o[i + 1] = p[i + 1]; o[i + 2] = p[i + 2]; p[i] += v[i] * dt; p[i + 1] += v[i + 1] * dt; p[i + 2] += v[i + 2] * dt;
+  }
+  gooCols(); gooBounds();
+  for (let i = 0; i < n * 3; i += 3) { const s2 = v[i] * v[i] + v[i + 1] * v[i + 1] + v[i + 2] * v[i + 2]; if (s2 > mv) mv = s2; }
+  GOO.moving = mv;
+}
+function gooFill() {   // a full pool to start with, settled so it isn't jumpy
+  GOO.n = 0; const S = 16, sp = (POOL.W - .16) / S;
+  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) gooAdd(-POOL.W / 2 + .08 + (i + .5) * sp, POOL.floor + .065, -POOL.W / 2 + .08 + (j + .5) * sp);
+  while (GOO.n < GOO.MAX) gooAdd((Math.random() - .5) * (POOL.W - .3), POOL.floor + .18 + Math.random() * .12, (Math.random() - .5) * (POOL.W - .3));
+  GOO.cols.length = 0; for (let i = 0; i < 400; i++) gooStep(1 / 120);
+  for (let i = 0; i < GOO.n * 3; i++) GOO.v[i] = 0; GOO.dirty = true;
+}
+function gooHeights() {   // a rough height map of the slime top, so things float on the actual blobs
+  const hm = GOO.hm, p = GOO.p, cs = POOL.W / 12; hm.fill(POOL.floor); let s = 0;
+  for (let i = 0; i < GOO.n; i++) { const k = i * 3, y = p[k + 1]; if (y > POOL.rim + .1) continue;
+    const cx = Math.floor((p[k] + POOL.W / 2) / cs), cz = Math.floor((p[k + 2] + POOL.W / 2) / cs); if (cx < 0 || cz < 0 || cx > 11 || cz > 11) continue;
+    const c = cz * 12 + cx; if (y + GOO.R > hm[c]) hm[c] = y + GOO.R; }
+  for (let c = 0; c < 144; c++) s += hm[c];
+  POOL.level = s / 144;
+}
+function levelAt(w) {   // slime height (world y) under a world point
+  const cs = POOL.W / 12, cx = clamp(Math.floor((w.x - ARENA.x - POOL.c.x + POOL.W / 2) / cs), 0, 11), cz = clamp(Math.floor((w.z - ARENA.z - POOL.c.z + POOL.W / 2) / cs), 0, 11);
+  return ARENA.y + GOO.hm[cz * 12 + cx];
+}
+function gooMesh() {   // melt all the blobs into one smooth skin
+  const mc = GOO.mc, S = mc.size, f = mc.field, p = GOO.p, sx = S / (2 * MC_HX), sy = S / (2 * MC_HY), KR = .118, KR2 = KR * KR, ox = KR * sx, oy = KR * sy;
+  f.fill(0); mc.normal_cache.fill(0); GOO.out.length = 0;
+  for (let i = 0; i < GOO.n; i++) {
+    const k = i * 3, gx = (p[k] + MC_HX) * sx, gy = (p[k + 1] - MC_Y0) * sy, gz = (p[k + 2] + MC_HX) * sx;
+    if (Math.abs(p[k]) > POOL.W / 2 + .02 || Math.abs(p[k + 2]) > POOL.W / 2 + .02 || gy > S - 3 - .08 * sy) { GOO.out.push(i); continue; }   // flew out of the box: drawn as a lone blob
+    const x0 = Math.max(1, Math.ceil(gx - ox)), x1 = Math.min(S - 2, Math.floor(gx + ox)), y0 = Math.max(1, Math.ceil(gy - oy)), y1 = Math.min(S - 2, Math.floor(gy + oy)), z0 = Math.max(1, Math.ceil(gz - ox)), z1 = Math.min(S - 2, Math.floor(gz + ox));
+    for (let z = z0; z <= z1; z++) { const dz = (z - gz) / sx, dz2 = dz * dz;
+      for (let y = y0; y <= y1; y++) { const dy = (y - gy) / sy, d2yz = dz2 + dy * dy; if (d2yz >= KR2) continue; const base = S * S * z + S * y;
+        for (let x = x0; x <= x1; x++) { const dx = (x - gx) / sx, d2 = d2yz + dx * dx; if (d2 < KR2) { const w = 1 - d2 / KR2; f[base + x] += w * w; } } } }
+  }
+  mc.update();
+  const g = mc.geometry, cnt = Math.max(3, mc.count);
+  ['position', 'normal'].forEach(a => { const at = g.getAttribute(a); at.clearUpdateRanges(); at.addUpdateRange(0, cnt * 3); });
+}
+/* ---------- the pool talks to the slime ---------- */
+function inPool(p, pad = 0) { const c = poolW(); return Math.abs(p.x - c.x) < POOL.W / 2 - pad && Math.abs(p.z - c.z) < POOL.W / 2 - pad; }
+function poolPoke(p, amt, rad = .12) {   // shove the slime at a world point (amt > 0 pushes it down)
+  toPool(p, _w2); const r2 = (rad + GOO.R) ** 2, P = GOO.p, v = GOO.v;
+  for (let i = 0; i < GOO.n; i++) { const k = i * 3, dx = P[k] - _w2.x, dy = P[k + 1] - _w2.y, dz = P[k + 2] - _w2.z; if (dx * dx + dy * dy + dz * dz < r2) v[k + 1] -= amt * 25; }
+}
+function splash(p, k) {   // a splat you can hear (the blobs fly on their own)
+  if (ac) { const t = ac.currentTime, v = Math.min(.6, .12 + k * .25); noiseHit(t, .16 + k * .22, v, 'lowpass', 700 + Math.random() * 400, .8); tone('sine', 380 + Math.random() * 160, 110, .22, v * .3); }
+}
+const _wPrev = new WeakMap(), _wg = V();
+function gooCol(key, w, r, stick, dt) {   // add a thing as a slime pusher (its speed comes from where it was last frame)
+  const pv = _wPrev.get(key); _wPrev.set(key, w.clone()); if (!inPool(w, -r - .1) || w.y - ARENA.y > 1.4) return;
+  toPool(w, _wg); const c = { x: _wg.x, y: _wg.y, z: _wg.z, r, stick, vx: 0, vy: 0, vz: 0 };
+  if (pv && dt > 0) { c.vx = (w.x - pv.x) / dt; c.vy = (w.y - pv.y) / dt; c.vz = (w.z - pv.z) / dt; if (c.vx * c.vx + c.vy * c.vy + c.vz * c.vz > 225) c.vx = c.vy = c.vz = 0; }   // teleports aren't swipes
+  GOO.cols.push(c);
+  if (pv && inPool(w)) { const L = levelAt(w); if (pv.y - r > L && w.y - r <= L && c.vy < -1.4) { splash(w, clamp(-c.vy / 5, .2, 1.2) * Math.min(1.5, r * 6)); } }
 }
 function stepPoolThings(dt) {
-  const L = POOL.level; let disp = 0;
+  GOO.cols.length = 0;
   // cubes and glass: float or sink by what they're made of
   if (AR.ready) for (const pc of AR.pieces) {
     if (!pc.body || pc.pane || pc.dying) continue;
-    const t = pc.body.translation(); _w1.set(t.x, t.y, t.z).add(ARENA); if (!inPool(_w1)) continue;
-    const r = pc.rad || .1, sub = clamp((L - (_w1.y - r)) / (2 * r), 0, 1); if (sub <= 0) { wetThing(pc, _w1, r, dt); continue; }
-    disp += (pc.vol || r * r * r) * sub; wetThing(pc, _w1, r, dt);
+    const t = pc.body.translation(); _w1.set(t.x, t.y, t.z).add(ARENA); if (!inPool(_w1, -.1)) continue;
+    const r = pc.rad || .1; gooCol(pc, _w1, r, false, dt); if (!inPool(_w1)) continue;
+    const L = levelAt(_w1), sub = clamp((L - (_w1.y - r)) / (2 * r), 0, 1); if (sub <= 0) continue;
     if (pc.held || !mine(pc) || pc.body.bodyType() !== 0) continue;
     const K = KINDS[pc.kind] || {}, B = K.glass ? .45 : K.rub ? 2.6 : 1.8, m = pc.body.mass();
     pc.body.applyImpulse({ x: 0, y: m * 9.81 * dt * sub * B, z: 0 }, true);
-    const lv = pc.body.linvel(), f = Math.exp(-dt * 2.2 * sub), av = pc.body.angvel(), fa = Math.exp(-dt * 1.5 * sub);
+    const lv = pc.body.linvel(), f = Math.exp(-dt * 3.5 * sub), av = pc.body.angvel(), fa = Math.exp(-dt * 2.5 * sub);   // slime is thick: things slow down a lot
     pc.body.setLinvel({ x: lv.x * f, y: lv.y * f, z: lv.z * f }, true); pc.body.setAngvel({ x: av.x * fa, y: av.y * fa, z: av.z * fa }, true);
   }
-  // your paws
-  hands.forEach(h => { if (h.tracked || !state.xr) wetThing(h, h.pos, PAW_R, dt); });
+  // your paws (slime sticks to them a bit)
+  hands.forEach(h => { if (h.tracked || !state.xr) gooCol(h, h.pos, PAW_R, true, dt); });
   // you: jump in and you get floaty and slow
-  headWorld(_w1); const feet = _w1.y - state.bodyH;
+  headWorld(_w1); const feet = _w1.y - state.bodyH, L = levelAt(_w1);
+  if (inPool(_w1, .05) && feet < L + .25) gooCol(POOL, _w2.set(_w1.x, feet + .2 * BM.sc, _w1.z), .2 * BM.sc, false, dt);
   if (inPool(_w1, .05) && feet < L) {
-    const fr = clamp((L - feet) / state.bodyH, 0, 1); disp += .25 * fr * BM.sc ** 3;
-    state.vel.y += 9.81 * 1.15 * fr * dt; const f = Math.exp(-dt * 2.4 * fr); state.vel.multiplyScalar(f);
-    if (!POOL.wasIn) { const vy = state.vel.y; splash(V(_w1.x, L, _w1.z), clamp(-vy / 4, .4, 1.5)); poolPoke(_w1, .09, .35); POOL.svx += state.vel.x * .05; POOL.svz += state.vel.z * .05; if (!POOL.told) { POOL.told = true; toast('💦 SPLASH! You\'re floaty in the water.', 3); } }
-    POOL.wasIn = true; _w2.set(_w1.x, L, _w1.z); wetThing(POOL, _w2.set(_w1.x, feet + .1, _w1.z), .25, dt);
+    const fr = clamp((L - feet) / state.bodyH, 0, 1);
+    state.vel.y += 9.81 * 1.15 * fr * dt; const f = Math.exp(-dt * 3.2 * fr); state.vel.multiplyScalar(f);
+    if (!POOL.wasIn) { splash(_w1, clamp(-state.vel.y / 4, .4, 1.5)); if (!POOL.told) { POOL.told = true; toast('💦 SPLOOSH! The water is all blobby and slimy.', 3); } }
+    POOL.wasIn = true;
   } else POOL.wasIn = false;
   // friends
-  for (const [id, f] of MP.others) { f.paws.forEach((p, i) => wetThing(p, p.getWorldPosition(_w2), PAW_R, dt)); }
-  // cups bob too
-  WATER.cups.forEach(c => wetThing(c, c.g.position, .06, dt));
-  if (sword.g.visible) { sword.g.getWorldPosition(_w1); wetThing(sword, _w1, .08, dt); }
-  POOL.disp += (disp - POOL.disp) * Math.min(1, dt * 3);
-  POOL.level = POOL.base + Math.min(.08, POOL.disp * 2.2 / (POOL.W * POOL.W));   // the water rises with what's in it (a bit extra so you can SEE it)
-  POOL.mesh.position.y = POOL.level;
+  for (const [id, f] of MP.others) f.paws.forEach(p => gooCol(p, p.getWorldPosition(_w3), PAW_R, true, dt));
+  // cups and the sword
+  WATER.cups.forEach(c => gooCol(c, c.g.localToWorld(_w3.set(0, .065, 0)), .06, false, dt));
+  if (sword.g.visible) [.25, .5, .72].forEach((u, i) => gooCol(SW_KEYS[i], sword.g.localToWorld(_w3.copy(BLADE_A).lerp(BLADE_B, u)), .045, false, dt));
 }
+const SW_KEYS = [{}, {}, {}];
+function stepGoo(dt) {
+  const st = dt > .02 ? 4 : 2, sdt = Math.min(dt, 1 / 30) / st;
+  for (let s = 0; s < st; s++) gooStep(sdt);
+  // blobs that flew over the rim and out: they become drops (and puddles where they land)
+  const p = GOO.p, v = GOO.v, ow = POOL.W / 2 + .12 + GOO.R;
+  for (let i = GOO.n - 1; i >= 0; i--) { const k = i * 3; if (Math.abs(p[k]) > ow || Math.abs(p[k + 2]) > ow || p[k + 1] < -1) {
+    WATER.drops.push({ p: V(p[k], p[k + 1], p[k + 2]).add(POOL.c).add(ARENA), v: V(v[k], v[k + 1], v[k + 2]), t: 0, amt: 1 / 9, mine: true, big: true }); gooKill(i); } }
+  // the pool slowly refills, plop by plop
+  if (GOO.n < GOO.MAX && (GOO.refT -= dt) < 0) { GOO.refT = .35; gooAdd((Math.random() - .5) * (POOL.W - .3), .9, (Math.random() - .5) * (POOL.W - .3), 0, -1, 0); }
+  gooHeights();
+  if (GOO.moving > .006 || GOO.dirty) { gooMesh(); GOO.dirty = false; }   // nothing moving = keep last frame's skin
+}
+gooFill();
 /* ---------- cups ---------- */
 function makeCupMesh() {
   const g = new THREE.Group(), pts = [[0, 0], [.036, 0], [.04, .004], [.046, .13], [.042, .13], [.036, .008], [0, .008]].map(([x, y]) => new THREE.Vector2(x, y));
@@ -263,7 +359,7 @@ const DESK_TIP = { drink: false, pour: false };
 canvas.addEventListener('pointerdown', e => { if (state.xr || state.area !== 'arena' || !hands.some(h => h.cup)) return; if (e.button === 0) DESK_TIP.drink = true; if (e.button === 2) DESK_TIP.pour = true; });
 addEventListener('pointerup', e => { if (e.button === 0) DESK_TIP.drink = false; if (e.button === 2) DESK_TIP.pour = false; });
 function stepCups(dt) {
-  const L = POOL.level, tick = (WATER.sendT -= dt) < 0; if (tick) WATER.sendT = .1;
+  const tick = (WATER.sendT -= dt) < 0; if (tick) WATER.sendT = .1;
   for (const c of WATER.cups.slice()) {
     const h = c.held, g = c.g, w = g.userData.water;
     if (h && h.cup === c) {
@@ -280,7 +376,8 @@ function stepCups(dt) {
       if (!c.rest) {   // falling, bouncing, floating
         c.v.y -= 9.81 * dt; g.position.addScaledVector(c.v, dt);
         g.localToWorld(_w1.set(0, .065, 0));
-        if (inPool(_w1, .04) && _w1.y < L + .03) {   // float (sinks lower as it fills up)
+        const L = levelAt(_w1);
+        if (inPool(_w1, .04) && _w1.y < L + .03) {   // float on the blobs (sinks lower as it fills up)
           const want = L - .02 - c.fill * .09; c.v.y += (want - _w1.y) * 40 * dt; c.v.multiplyScalar(Math.exp(-dt * 3));
           g.quaternion.slerp(_wq.identity(), Math.min(1, dt * 2));
         }
@@ -294,9 +391,15 @@ function stepCups(dt) {
     // tipping: spill, drink or scoop
     _w2.set(0, 1, 0).applyQuaternion(g.quaternion); const tilt = Math.acos(clamp(_w2.y, -1, 1));
     g.localToWorld(_w1.set(0, .13, 0));   // rim centre
-    if ((!c.net || mine(c)) && inPool(_w1, .04) && _w1.y < L + .02 && g.localToWorld(_w2.set(0, .03, 0)).y < L && c.fill < 1) { c.fill = Math.min(1, c.fill + dt * (tilt < 1.2 ? 1.8 : .6)); if (rnd() < dt * 12) poolPoke(_w1, .012, .08); if (c.fill >= 1 && !c.toldFull && c.held) { c.toldFull = true; buzz(c.held, .4, 40); } }
+    const L = levelAt(_w1), dunk = inPool(_w1, .04) && _w1.y < L + .02;
+    if ((!c.net || mine(c)) && dunk && c.fill < .99 && (c.scoopT = (c.scoopT || 0) - dt) < 0) {   // scoop: blobs near the mouth go in the cup (9 make a full cup)
+      toPool(_w1, _w2); let best = -1, bd = .15 * .15; const P = GOO.p;
+      for (let i = 0; i < GOO.n; i++) { const k = i * 3, d = (P[k] - _w2.x) ** 2 + (P[k + 1] - _w2.y) ** 2 + (P[k + 2] - _w2.z) ** 2; if (d < bd) { bd = d; best = i; } }
+      if (best >= 0) { gooKill(best); c.fill = Math.min(1, c.fill + 1 / 9); c.scoopT = tilt < 1.2 ? .07 : .2; if (ac && Math.random() < .5) tone('sine', 300 + Math.random() * 200, 160, .07, .05); }
+      if (c.fill >= .99 && !c.toldFull && c.held) { c.toldFull = true; buzz(c.held, .4, 40); }
+    }
     const thr = 1.45 - c.fill * 1.05;   // a full cup spills with a small tip, an almost-empty one needs a big one
-    if (c.fill > .01 && tilt > thr && !(inPool(_w1, .04) && _w1.y < L)) {
+    if (c.fill > .01 && tilt > thr && !dunk) {
       const rate = Math.min(1.2, (tilt - thr) * 1.4 + .15) * dt, out = Math.min(c.fill, rate); c.fill -= out;
       headWorld(_w3); _w3.y -= .07;
       if (c.held && c.held.cup === c && !c.net && _w1.distanceTo(_w3) < .16) {   // at your mouth: GULP
@@ -306,7 +409,10 @@ function stepCups(dt) {
       } else {   // pour: a little stream from the low side of the rim
         _w2.set(0, 1, 0).applyQuaternion(g.quaternion); const side = V(_w2.x, 0, _w2.z); if (side.lengthSq() < 1e-4) side.set(1, 0, 0); side.normalize();
         const lip = _w1.clone().addScaledVector(side, .044); c.pourAcc = (c.pourAcc || 0) + out;
-        if ((c.pourT -= dt) < 0) { c.pourT = .03; WATER.drops.push({ p: lip, v: side.multiplyScalar(.5 + rnd() * .3).add(c.v.clone().multiplyScalar(.5)), t: 0, amt: c.pourAcc, mine: !c.net || mine(c) }); c.pourAcc = 0; }
+        if (c.pourAcc >= 1 / 9 || (c.fill < .01 && c.pourAcc > .005)) {   // it glops out one blob at a time
+          WATER.drops.push({ p: lip, v: side.multiplyScalar(.35 + Math.random() * .25).add(c.v.clone().multiplyScalar(.5)), t: 0, amt: c.pourAcc, mine: !c.net || mine(c), big: true }); c.pourAcc = 0;
+          if (ac) tone('sine', 520 + Math.random() * 200, 200, .09, .06);
+        }
       }
     }
     w.visible = c.fill > .01; w.scale.set(1, Math.max(.001, c.fill * .118), 1);
@@ -315,19 +421,27 @@ function stepCups(dt) {
   }
 }
 /* ---------- drops and puddles ---------- */
-const DROP_G = new THREE.SphereGeometry(.012, 6, 4);
+const DROP_G = new THREE.SphereGeometry(1, 10, 8);
 let DROP_M = null;
+const _bM = new THREE.Matrix4(), _bQ = new THREE.Quaternion(), _bS = V(), _bP = V(), _bV = V();
+function blobAt(n, p, v, r) {   // a lone blob, stretched a bit in the way it's flying (like a gummy drop)
+  const sp = v.length(), st = Math.min(.9, sp * .1);
+  if (sp > .05) _bQ.setFromUnitVectors(_UP, _bV.copy(v).divideScalar(sp)); else _bQ.identity();
+  _bS.set(r * (1 - st * .3), r * (1 + st), r * (1 - st * .3)); _bM.compose(p, _bQ, _bS); DROP_M.setMatrixAt(n, _bM);
+}
 function stepDrops(dt) {
-  if (!DROP_M) { DROP_M = new THREE.InstancedMesh(DROP_G, dropM, 220); DROP_M.frustumCulled = false; DROP_M.renderOrder = 2; scene.add(DROP_M); }
-  const L = POOL.level, m = new THREE.Matrix4(); let n = 0;
+  if (!DROP_M) { DROP_M = new THREE.InstancedMesh(DROP_G, dropM, 260); DROP_M.frustumCulled = false; DROP_M.renderOrder = 2; scene.add(DROP_M); }
+  let n = 0;
   for (let i = WATER.drops.length - 1; i >= 0; i--) {
     const d = WATER.drops[i]; d.t += dt; d.v.y -= 9.81 * dt; d.p.addScaledVector(d.v, dt);
-    let gone = d.t > 2.5;
-    if (!gone && inPool(d.p) && d.p.y < L) { gone = true; if (!d.pool) poolPoke(d.p, .006, .06); }
-    else if (!gone && d.v.y < 0) { const hit = pawHit(d.p, .012); if (hit) { gone = true; if (d.amt && d.mine && hit.n.y > .7) addPuddle(d.p.clone().setY(d.p.y - .012 + .004), d.amt, true); } }
+    let gone = d.t > 4;
+    if (!gone && inPool(d.p) && d.p.y < levelAt(d.p) + .03) { gone = true; if (d.mine || !d.amt) { toPool(d.p, _bP); gooAdd(_bP.x, Math.max(_bP.y, POOL.floor + .07), _bP.z, d.v.x, d.v.y, d.v.z); } }   // plops back in and joins the slime
+    else if (!gone && d.v.y < 0) { const hit = pawHit(d.p, d.big ? .04 : .012); if (hit) { gone = true; if (d.amt && d.mine && hit.n.y > .7) addPuddle(d.p.clone().setY(d.p.y - (d.big ? .04 : .012) + .004), d.amt, true); if (d.big && ac && Math.random() < .6) noiseHit(ac.currentTime, .1, .07, 'lowpass', 900, .8); } }
     if (gone) { WATER.drops.splice(i, 1); continue; }
-    if (n < 220) { m.makeTranslation(d.p.x, d.p.y, d.p.z); DROP_M.setMatrixAt(n++, m); }
+    if (n < 200) blobAt(n++, d.p, d.v, d.big ? .045 : .014);
   }
+  if (state.area === 'arena') for (const i of GOO.out) { if (i >= GOO.n || n >= 260) continue; const k = i * 3;   // slime blobs flying high above the pool
+    _bP.set(GOO.p[k], GOO.p[k + 1], GOO.p[k + 2]).add(POOL.c).add(ARENA); blobAt(n++, _bP, _bV.set(GOO.v[k], GOO.v[k + 1], GOO.v[k + 2]), .06); }
   DROP_M.count = n; DROP_M.instanceMatrix.needsUpdate = true;
 }
 const PUD_G = new THREE.CircleGeometry(1, 20); PUD_G.rotateX(-Math.PI / 2);
@@ -384,13 +498,13 @@ function glassToSword(h, pc) {
 /* ---------- every frame ---------- */
 function stepWater(dt) {
   if (!POOL.mesh) return;
-  const near = state.area === 'arena';
+  headWorld(_w1); const near = state.area === 'arena' && _w1.distanceTo(poolW()) < 30;   // only simulate the slime when you could see it
   WU.uTime.value = tAll; WU.uLevel.value = POOL.level + .004;
-  if (near) { stepPoolThings(dt); stepWaves(dt); stepRings(dt); }
+  if (near) { stepPoolThings(dt); stepGoo(dt); }
   stepCups(dt); stepDrops(dt); stepPuddles(dt); stepSharpen(dt);
   if (WATER.glassy && sword.mode === 'stone') setGlassSword(false);   // back in the stone = the normal sword again
 }
-function waterReset() { WATER.cups.slice().forEach(c => killCup(c, false)); WATER.puds.forEach(p => scene.remove(p.m)); WATER.puds.length = 0; WATER.drops.length = 0; }
+function waterReset() { gooFill(); WATER.cups.slice().forEach(c => killCup(c, false)); WATER.puds.forEach(p => scene.remove(p.m)); WATER.puds.length = 0; WATER.drops.length = 0; }
 function watNet(d) {
   if (d.e === 'cs') {
     let c = WATER.cups.find(x => x.id === d.id); if (!c) { c = spawnCup(false, d); }
@@ -400,4 +514,4 @@ function watNet(d) {
   else if (d.e === 'pud') addPuddle(V(...d.p), +d.a || .05, false);
   else if (d.e === 'gsw') setGlassSword(true);
 }
-window.__kg.water = { POOL, WATER, spawnCup, holdCup, cupDrop, addPuddle, onPuddle, setGlassSword, glassToSword, poolPoke, stepWater, watNet, WHET, CUP_BTN };
+window.__kg.water = { POOL, WATER, GOO, gooAdd, gooFill, levelAt, spawnCup, holdCup, cupDrop, addPuddle, onPuddle, setGlassSword, glassToSword, poolPoke, stepWater, watNet, WHET, CUP_BTN };
