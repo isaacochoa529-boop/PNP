@@ -84,22 +84,7 @@ function rwStrain(rd, h) {   // from rdStep: how far the waist is stretched, and
   W.ratio = n ? e / n / (RW.EM * RD_DS) : 0;
   if (W.pulled && W.ratio > .45) W.strain += h * ((W.ratio - .45) * 2.5 + .3); else W.strain = Math.max(0, W.strain - h);
   for (const s of W.str) if (!s.snap && W.ratio > s.brk + .08) { s.snap = true; s.k = 0; if (ac) tone('sine', 900 + Math.random() * 500, 300, .07, .05); }   // a string snaps early
-  if (W.pulled) rwAlign(rd);
   if (W.strain > .6) rwRip(rd);
-}
-// Isaiah: "not go sideways": while you pull, both halves turn to line up with the pull, so it stretches straight like a long body
-const _alQ = new THREE.Quaternion(), _alI = new THREE.Quaternion(), _alA = V(), _alU = V(), _alO = V();
-function rwAlign(rd) {
-  const P = rd.P, pp = P.map(q => q.p);
-  _wa.set(0, 0, 0); for (const i of RW.U) _wa.add(P[i].p); _wa.multiplyScalar(1 / RW.U.length);
-  _wb.addVectors(P[2].p, P[3].p).multiplyScalar(.5);
-  _alA.subVectors(_wa, _wb); if (_alA.lengthSq() < 1e-6) return; _alA.normalize();
-  for (const [set, frame, q0] of [[RW.U, rwFrameU, RW.qU0i], [RW.L, rwFrameL, RW.qL0i]]) {
-    frame(pp, _alO, _alQ).multiply(q0); _alU.set(0, 1, 0).applyQuaternion(_alQ);
-    _alQ.setFromUnitVectors(_alU, _alA); _alQ.slerpQuaternions(_alI.identity(), _alQ, .15);
-    const pin = set.find(i => P[i].pin); _wc.set(0, 0, 0); if (pin !== undefined) _wc.copy(P[pin].p); else { for (const i of set) _wc.add(P[i].p); _wc.multiplyScalar(1 / set.length); }
-    for (const i of set) { const q = P[i]; if (q.pin) continue; q.p.sub(_wc).applyQuaternion(_alQ).add(_wc); q.o.sub(_wc).applyQuaternion(_alQ).add(_wc); }
-  }
 }
 function rwRip(rd) {
   const W = rd.W; W.ripped = true; W.pulled = false;
@@ -352,7 +337,6 @@ addEventListener('pointerup', e => { if (e.button === 0) SAW.mouse = false; });
 /* ---------------- every frame ---------------- */
 const _sawE = new THREE.Euler(), _sawX = V(), _sawY = V(), _sawZ = V(), _sawP = V(), _sawL = V(), _sawN = V();
 function sawStep(dt) {
-  if (SLC.list.length) slcStep();
   if (!SAW.on) { if (state.area === 'arena' && AR.ready) sawHome(); return; }
   const h = SAW.held;
   if (h && state.xr && !h.tracked) sawDrop();
@@ -373,7 +357,7 @@ function sawStep(dt) {
     SAW.g.position.copy(_rv.set(.25 - SAW.push * .06 + (Math.random() - .5) * sh, -.3 + SAW.push * .08 + (Math.random() - .5) * sh, -.32 - SAW.push * .4).applyQuaternion(_hmQ)).add(_hp);
     _cwq.setFromRotationMatrix(_wm.makeBasis(_sawX.set(0, -1, 0), _sawY.set(-.2, -.05 + SAW.push * .05, -1).normalize(), _sawZ.set(1, 0, 0)));
     _sawZ.crossVectors(_sawX, _sawY).normalize(); _sawX.crossVectors(_sawY, _sawZ); _cwq.setFromRotationMatrix(_wm.makeBasis(_sawX, _sawY, _sawZ));
-    if (SAW.roll) _cwq.multiply(_alQ.setFromAxisAngle(_wY, Math.PI / 2));
+    if (SAW.roll) _cwq.multiply(_cwq2.setFromAxisAngle(_wY, Math.PI / 2));
     SAW.g.quaternion.copy(_hmQ).multiply(_cwq);
   } else if (SAW.falling) {   // dropped: it falls and lies down on its side
     SAW.v.y -= 9.8 * dt; SAW.g.position.addScaledVector(SAW.v, dt);
@@ -410,34 +394,28 @@ function sawGrind(p, fur, floor, dt, o) {   // stuffing / gore spraying off the 
     if (HZ.on) rfxAdd(p, _rfV, .01, .008, .01, pick([0x7a0f14, 0x9b1b1f, 0xb83a3a]), 6, 9.8, .3, floor, 1); else rfxAdd(p, _rfV, .012, .01, .012, j ? 0xffffff : fur, 8, 3.2, 1.6, floor); }
 }
 function sawDummies(dt) {
+  const sp = Math.max(SAW.rpm, .45);   // even at idle it chews (just slower); revving is faster
   for (const rd of RD.list.slice()) {
+    if (tAll - (rd.cutT || -9) < .35) continue;
     let hit = -1, bd = 1e9;
-    rd.P.forEach((q, i) => { const d = distToSeg(q.p, SAW.A, SAW.B) - q.r - .03; if (d < 0 && d < bd) { bd = d; hit = i; } });
+    // the hit zone is the whole bar + chain (with a bit of slack), against every body ball (made a bit fatter, like the fluffy mesh)
+    rd.P.forEach((q, i) => { const d = distToSeg(q.p, SAW.A, SAW.B) - q.r * 1.3 - .05; if (d < 0 && d < bd) { bd = d; hit = i; } });
     if (hit < 0) { if (tAll - (rd.sawLast || -9) > .5) rd.sawT = 0; continue; }
-    rd.sawLast = tAll; rd.sawT = (rd.sawT || 0) + dt * SAW.rpm; SAW.load = 1;
+    rd.sawLast = tAll; rd.sawT = (rd.sawT || 0) + dt * sp; SAW.load = 1;
     rd.asleep = false; rd.sleep = 0; rd.calm = 0;
     const hp = rd.P[hit].p;
-    for (const q of rd.P) { if (q.pin) continue; const k = clamp(1 - q.p.distanceTo(hp) / .5, 0, 1) * .006; if (k > 0) q.p.add(_rv.set(Math.random() - .5, Math.random() - .5, Math.random() - .5).multiplyScalar(k * 2)); }
+    for (const q of rd.P) { if (q.pin) continue; const k = clamp(1 - q.p.distanceTo(hp) / .5, 0, 1) * .005; if (k > 0) q.p.add(_rv.set(Math.random() - .5, Math.random() - .5, Math.random() - .5).multiplyScalar(k * 2)); }
     sawGrind(hp, rd.look.fur, rd.floor, dt, rd);
-    if (rd.sawT > .3) sawSplitDummy(rd);
-  }
-  for (const ch of SLC.list.slice()) {
-    if (tAll - ch.born < .35 || ch.r < .045) continue;
-    let at = null;
-    _cwq.copy(ch.mesh.quaternion).invert();
-    for (let k = 0; k <= 8 && !at; k++) {
-      _sawP.lerpVectors(SAW.A, SAW.B, k / 8); _sawL.copy(_sawP).sub(ch.mesh.position).applyQuaternion(_cwq);
-      const b = ch.box; if (_sawL.x > b.min.x + .01 && _sawL.x < b.max.x - .01 && _sawL.y > b.min.y + .01 && _sawL.y < b.max.y - .01 && _sawL.z > b.min.z + .01 && _sawL.z < b.max.z - .01) at = _sawP.clone();
-    }
-    if (!at) { if (tAll - (ch.sawLast || -9) > .4) ch.sawT = 0; continue; }
-    ch.sawLast = tAll; ch.sawT = (ch.sawT || 0) + dt * SAW.rpm; SAW.load = 1; ch.body.wakeUp();
-    sawGrind(at, ch.fur, ARENA.y + .005, dt, ch);
-    if (ch.sawT > .18) slcCut(ch);
+    if (rd.sawT > .28) sawCutRagdoll(rd);
   }
 }
 
-/* ---------------- sliced halves: rigid plush chunks with a real cut face (Rapier, in the yard) ---------------- */
-const SLC = { list: [], MAX: 28, mat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .8, side: THREE.DoubleSide }) };
+/* ---------------- sawing a ragdoll in two: the pieces STAY floppy ragdolls ----------------
+   The dummy's look becomes one triangle soup that is cut along the blade (with a stuffed cut face). The body balls are
+   split by the same plane and every joint that crosses it is removed, so each side keeps its own joints and physics:
+   still floppy, grabbable, throwable, bonkable, and you can saw it again. Each point of the soup rides on the 3 nearest
+   body balls of its own piece (a little triangle frame), so the pieces bend and flop with their balls. */
+const SLC = { mat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .8, side: THREE.DoubleSide }) };
 const _slN3 = new THREE.Matrix3(), _slv0 = V(), _slv1 = V(), _slv2 = V(), _slCol = new THREE.Color();
 // read a mesh into a world-space triangle soup: positions, normals, colors (9 floats per triangle each)
 function slcRead(m, P, N, C) {
@@ -488,32 +466,94 @@ function slcClip(P, N, C, n, d, inside) {
   return { side, cut: segs.length > 0 };
 }
 const slcInside = () => () => HZ.on ? _slCol.setHex(Math.random() < .2 ? 0xe9dcc4 : Math.random() < .5 ? 0x9b1b1f : 0x7a0f14) : _slCol.setHex(Math.random() < .5 ? 0xffffff : 0xf1ebdd);
-// a new rigid chunk from a world-space soup
-function slcMake(S, fur, lv, av) {
-  const nV = S.P.length / 3; if (nV < 12) return null;
-  const c = V(); for (let i = 0; i < S.P.length; i += 3) { c.x += S.P[i]; c.y += S.P[i + 1]; c.z += S.P[i + 2]; } c.multiplyScalar(1 / nV);
-  const pos = new Float32Array(S.P.length); let r = 0;
-  for (let i = 0; i < S.P.length; i += 3) { pos[i] = S.P[i] - c.x; pos[i + 1] = S.P[i + 1] - c.y; pos[i + 2] = S.P[i + 2] - c.z; r = Math.max(r, Math.hypot(pos[i], pos[i + 1], pos[i + 2])); }
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(S.N, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(S.C, 3));
-  g.computeBoundingBox(); g.computeBoundingSphere();
-  // the physics shape: a convex hull of every 4th point (plenty for a plush half, cheap for Rapier)
-  const step = Math.max(1, Math.floor(nV / 400)), hp = []; for (let i = 0; i < nV; i += step) hp.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
-  const R = AR.R, body = AR.world.createRigidBody(R.RigidBodyDesc.dynamic().setTranslation(c.x - ARENA.x, c.y - ARENA.y, c.z - ARENA.z).setLinvel(lv.x, lv.y, lv.z).setAngvel({ x: av.x, y: av.y, z: av.z }).setAngularDamping(.6).setLinearDamping(.1));
-  const cd = R.ColliderDesc.convexHull(new Float32Array(hp)); if (!cd) { AR.world.removeRigidBody(body); g.dispose(); return null; }
-  cd.setFriction(.8).setRestitution(.05).setDensity(250); AR.world.createCollider(cd, body);
-  const mesh = new THREE.Mesh(g, SLC.mat); mesh.castShadow = true; mesh.position.copy(c); scene.add(mesh);
-  const ch = { mesh, body, box: g.boundingBox, r, fur, born: tAll }; SLC.list.push(ch);
-  while (SLC.list.length > SLC.MAX) slcKill(SLC.list[0]);
-  return ch;
+function rdSoup(rd) {   // what the dummy looks like right now, as a world-space triangle soup
+  if (rd.cut) { const g = rd.cut.mesh.geometry; return { P: Array.from(g.attributes.position.array), N: Array.from(g.attributes.normal.array), C: Array.from(g.attributes.color.array) }; }
+  rd.g.updateMatrixWorld(true); const P = [], N = [], C = [];
+  rd.g.traverse(m => { if (m.isMesh && m.geometry) { let v = true; for (let o = m; o && o !== rd.g; o = o.parent) if (!o.visible) v = false; if (v) slcRead(m, P, N, C); } });
+  return { P, N, C };
 }
-function slcKill(ch) { const i = SLC.list.indexOf(ch); if (i >= 0) SLC.list.splice(i, 1); scene.remove(ch.mesh); ch.mesh.geometry.dispose(); if (ch.body && AR.world) AR.world.removeRigidBody(ch.body); ch.body = null; }
-function slcClear() { while (SLC.list.length) slcKill(SLC.list[0]); }
-function slcStep() {
-  for (const ch of SLC.list.slice()) {
-    const t = ch.body.translation(), q = ch.body.rotation();
-    ch.mesh.position.set(t.x + ARENA.x, t.y + ARENA.y, t.z + ARENA.z); ch.mesh.quaternion.set(q.x, q.y, q.z, q.w);
-    if (t.y < -30) slcKill(ch);
+const _cb1 = V(), _cb2 = V(), _cb3 = V(), _cbM = new THREE.Matrix3(), _cbD = V();
+function sawCutRagdoll(rd) {
+  const S = rdSoup(rd), { n, d } = sawPlane(), cut = slcClip(S.P, S.N, S.C, n, d, slcInside());
+  const nA = cut.side[0].P.length, nB = cut.side[1].P.length, tot = S.P.length;
+  if (!cut.cut || nA < tot * .02 || nB < tot * .02) { rd.sawT = 0; return; }   // only nicked the edge: keep sawing
+  const P = rd.P, side = P.map(q => q.p.dot(n) - d >= 0 ? 0 : 1);
+  // every side needs body balls: a piece of mesh with none (an ear, a slice of belly) gets its own little balls
+  for (const s of [0, 1]) if (!side.includes(s)) { const SP = cut.side[s].P; const c = V(); for (let i = 0; i < SP.length; i += 3) c.add(_cbD.set(SP[i], SP[i + 1], SP[i + 2])); c.multiplyScalar(3 / SP.length); P.push({ p: c.clone(), o: c.clone(), r: .04, im: 1, pin: null }); side.push(s); }
+  rd.C = rd.C.filter(c => side[c.a] === side[c.b]);   // joints across the cut are gone
+  // which balls still hang together (pieces)
+  const par = P.map((_, i) => i), f = i => { while (par[i] !== i) i = par[i] = par[par[i]]; return i; };
+  for (const c of rd.C) par[f(c.a)] = f(c.b);
+  // a piece with fewer than 3 balls gets helper balls (needed to know how it turns), stiffly joined to it
+  const groups = new Map(); P.forEach((_, i) => { const r = f(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(i); });
+  for (const g of [...groups.values()]) {
+    if (g.length >= 3) continue;
+    const s = side[g[0]], SP = cut.side[s].P, base = P[g[0]].p; let far = null, fd = -1;
+    for (let i = 0; i < SP.length; i += 3) { const dd = base.distanceToSquared(_cbD.set(SP[i], SP[i + 1], SP[i + 2])); if (dd > fd && dd < .16) { fd = dd; far = _cbD.clone(); } }
+    if (!far) far = base.clone().add(V(.05, 0, 0));
+    const mid = base.clone().lerp(far, .6), side2 = V().crossVectors(_cbD.subVectors(far, base), n).setLength(.04);
+    const add = [mid.clone().add(side2), mid.clone().sub(side2), base.clone().addScaledVector(n, s ? -.03 : .03)].slice(0, 3 - g.length + 1);
+    for (const p of add) { const i = P.length; P.push({ p: p.clone(), o: p.clone(), r: .03, im: 1, pin: null }); side.push(s); par.push(i); for (const j of g) rd.C.push({ a: i, b: j, L: P[i].p.distanceTo(P[j].p), k: 'h' }); g.push(i); }
+    for (let x = 0; x < g.length; x++) for (let y = x + 1; y < g.length; y++) if (!rd.C.some(c => (c.a === g[x] && c.b === g[y]) || (c.a === g[y] && c.b === g[x]))) rd.C.push({ a: g[x], b: g[y], L: P[g[x]].p.distanceTo(P[g[y]].p), k: 'h' });
   }
+  // glue the two sides' soups into one mesh, each point riding on 3 nearby balls of its own side
+  const nv = (nA + nB) / 3, pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), col = new Float32Array(nv * 3);
+  const bi = new Uint16Array(nv * 3), bw = new Float32Array(nv * 6);
+  let o = 0;
+  const ballsOf = s => P.map((q, i) => i).filter(i => side[i] === s);
+  for (const s of [0, 1]) {
+    const SD = cut.side[s], B = ballsOf(s);
+    for (let i = 0; i < SD.P.length; i += 3, o++) {
+      pos.set([SD.P[i], SD.P[i + 1], SD.P[i + 2]], o * 3); nrm.set([SD.N[i], SD.N[i + 1], SD.N[i + 2]], o * 3); col.set([SD.C[i], SD.C[i + 1], SD.C[i + 2]], o * 3);
+      _cbD.set(SD.P[i], SD.P[i + 1], SD.P[i + 2]);
+      // nearest ball, then the nearest balls of the SAME piece that make a good (not flat) triangle with it
+      let a = B[0], ad = 1e9; for (const j of B) { const dd = P[j].p.distanceToSquared(_cbD); if (dd < ad) { ad = dd; a = j; } }
+      const ra = f(a), mates = B.filter(j => j !== a && f(j) === ra && P[j].p.distanceToSquared(P[a].p) > 4e-4).sort((x, y) => P[x].p.distanceToSquared(_cbD) - P[y].p.distanceToSquared(_cbD));
+      if (mates.length < 2) for (const j of B.filter(j => j !== a && !mates.includes(j)).sort((x, y) => P[x].p.distanceToSquared(_cbD) - P[y].p.distanceToSquared(_cbD))) { if (mates.length >= 2) break; mates.push(j); }
+      let b = mates[0], c = mates[1], best = -1;
+      for (let x = 0; x < Math.min(mates.length, 5); x++) for (let y = x + 1; y < Math.min(mates.length, 6); y++) {
+        _cb1.subVectors(P[mates[x]].p, P[a].p); _cb2.subVectors(P[mates[y]].p, P[a].p);
+        const q = _cb3.crossVectors(_cb1, _cb2).length() / (_cb1.length() * _cb2.length() + 1e-9) - (x + y) * .05;
+        if (q > best) { best = q; b = mates[x]; c = mates[y]; }
+      }
+      bi[o * 3] = a; bi[o * 3 + 1] = b; bi[o * 3 + 2] = c;
+      rdFrame(P, a, b, c); _cbM.invert();
+      _cb1.subVectors(_cbD, P[a].p).applyMatrix3(_cbM); bw[o * 6] = _cb1.x; bw[o * 6 + 1] = _cb1.y; bw[o * 6 + 2] = _cb1.z;
+      _cb1.set(SD.N[i], SD.N[i + 1], SD.N[i + 2]).applyMatrix3(_cbM); bw[o * 6 + 3] = _cb1.x; bw[o * 6 + 4] = _cb1.y; bw[o * 6 + 5] = _cb1.z;
+    }
+  }
+  // swap the old look for the new one
+  const old = rd.cut; rd.g.clear(); if (old) old.mesh.geometry.dispose();
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage)); g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3).setUsage(THREE.DynamicDrawUsage)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const mesh = new THREE.Mesh(g, SLC.mat); mesh.castShadow = true; mesh.frustumCulled = false; rd.g.add(mesh);
+  rd.cut = { mesh, bi, bw, n: nv };
+  rd.W.ripped = true; rd.W.pulled = false; rd.C = rd.C.filter(c => c.k !== 'w' || side[c.a] === side[c.b]); for (const c of rd.C) if (c.k === 'w') c.k = 'h';
+  for (const g2 in rd.G) rd.G[g2].pulled = false;
+  P.forEach((_, i) => { rd.det[i] = true; }); rd.stand = 0; rd.anchor = null; rd.pairs = null; rd.cutT = tAll; rd.sawT = 0; rd.asleep = false; rd.sleep = 0;
+  // the two sides spring apart a little
+  P.forEach((q, i) => { if (!q.pin) q.o.addScaledVector(n, side[i] ? .006 : -.006); });
+  slcSplitFx(_rv.copy(SAW.A).lerp(SAW.B, .5), n, rd.look.fur, rd.floor, true);
+  if (!SAW.toldCut) { SAW.toldCut = true; toast(HZ.on ? '🪚 SLICED! The pieces are still floppy... keep cutting!' : '🪚 SLICED IN HALF! Grab the floppy pieces, throw them, or saw them again! 🧸', 5); }
+}
+// a little frame from 3 balls: the first two edges plus their (scaled) normal, as columns of _cbM
+function rdFrame(P, a, b, c) {
+  _cb1.subVectors(P[b].p, P[a].p); _cb2.subVectors(P[c].p, P[a].p); _cb3.crossVectors(_cb1, _cb2);
+  const l = _cb3.length() || 1e-9; _cb3.multiplyScalar(Math.sqrt((_cb1.length() * _cb2.length()) || 1e-6) / l);
+  _cbM.set(_cb1.x, _cb2.x, _cb3.x, _cb1.y, _cb2.y, _cb3.y, _cb1.z, _cb2.z, _cb3.z); return _cbM;
+}
+function rdCutDraw(rd) {   // from rdDraw: move every point with its 3 balls
+  const C = rd.cut, P = rd.P, pa = C.mesh.geometry.attributes.position, na = C.mesh.geometry.attributes.normal, A = pa.array, Nn = na.array, bi = C.bi, bw = C.bw;
+  let la = -1, lb = -1, lc = -1, e;
+  for (let v = 0; v < C.n; v++) {
+    const a = bi[v * 3], b = bi[v * 3 + 1], c = bi[v * 3 + 2];
+    if (a !== la || b !== lb || c !== lc) { rdFrame(P, a, b, c); e = _cbM.elements; la = a; lb = b; lc = c; }
+    const pa0 = P[a].p, u = bw[v * 6], w = bw[v * 6 + 1], z = bw[v * 6 + 2], k = v * 3;
+    A[k] = pa0.x + e[0] * u + e[3] * w + e[6] * z; A[k + 1] = pa0.y + e[1] * u + e[4] * w + e[7] * z; A[k + 2] = pa0.z + e[2] * u + e[5] * w + e[8] * z;
+    const nu = bw[v * 6 + 3], nw = bw[v * 6 + 4], nz = bw[v * 6 + 5];
+    let x = e[0] * nu + e[3] * nw + e[6] * nz, y = e[1] * nu + e[4] * nw + e[7] * nz, q = e[2] * nu + e[5] * nw + e[8] * nz; const l = Math.hypot(x, y, q) || 1;
+    Nn[k] = x / l; Nn[k + 1] = y / l; Nn[k + 2] = q / l;
+  }
+  pa.needsUpdate = true; na.needsUpdate = true;
 }
 function slcSplitFx(p, n, fur, floor, big) {
   rdBurst(p, n, HZ.on ? 12 : 16, floor); rdBurst(p, _rv.copy(n).negate(), HZ.on ? 12 : 16, floor);
@@ -523,33 +563,6 @@ function slcSplitFx(p, n, fur, floor, big) {
 }
 // the plane goes along the bar, through the chain
 function sawPlane() { const n = _sawZ.clone().normalize(); return { n, d: n.dot(SAW.A) }; }
-function sawSplitDummy(rd) {
-  if (!(state.area === 'arena' && AR.ready)) return;
-  rd.g.updateMatrixWorld(true);
-  const P = [], N = [], C = []; rd.g.traverse(m => { if (m.isMesh && m.visible && m.geometry) slcRead(m, P, N, C); });
-  const { n, d } = sawPlane(), cut = slcClip(P, N, C, n, d, slcInside());
-  const nA = cut.side[0].P.length, nB = cut.side[1].P.length;
-  if (!cut.cut || nA < P.length * .04 || nB < P.length * .04) { rd.sawT = 0; return; }   // only nicked the edge: keep sawing
-  const mid = V().copy(SAW.A).lerp(SAW.B, .5), floor = rd.floor, fur = rd.look.fur;
-  rdKill(rd); RD.cubeT = tAll + 2;   // the zone waits a few seconds before a fresh dummy pops in
-  const sp = .7;
-  slcMake(cut.side[0], fur, V(n.x * sp, .6, n.z * sp), V((Math.random() - .5) * 2, (Math.random() - .5) * 2, (Math.random() - .5) * 2));
-  slcMake(cut.side[1], fur, V(-n.x * sp, .6, -n.z * sp), V((Math.random() - .5) * 2, (Math.random() - .5) * 2, (Math.random() - .5) * 2));
-  slcSplitFx(mid, n, fur, floor, true);
-  if (!SAW.toldCut) { SAW.toldCut = true; toast(HZ.on ? '🪚 SLICED IN HALF! ...that is a lot of meat. Keep cutting the pieces!' : '🪚 SLICED IN HALF! Cotton everywhere! Keep cutting the pieces! 🧸', 5); }
-}
-function slcCut(ch) {
-  ch.mesh.updateMatrixWorld(true);
-  const P = [], N = [], C = []; slcRead(ch.mesh, P, N, C);
-  const { n, d } = sawPlane(), cut = slcClip(P, N, C, n, d, slcInside());
-  const nA = cut.side[0].P.length, nB = cut.side[1].P.length;
-  if (!cut.cut || nA < P.length * .03 || nB < P.length * .03) { ch.sawT = 0; return; }
-  const lv = ch.body.linvel(), av = ch.body.angvel(), fur = ch.fur, sp = .5;
-  slcKill(ch);
-  slcMake(cut.side[0], fur, V(lv.x + n.x * sp, lv.y + .4, lv.z + n.z * sp), V(av.x, av.y, av.z));
-  slcMake(cut.side[1], fur, V(lv.x - n.x * sp, lv.y + .4, lv.z - n.z * sp), V(av.x, av.y, av.z));
-  slcSplitFx(_rv.copy(SAW.A).lerp(SAW.B, .5), n, fur, ARENA.y, false);
-}
 // the saw cuts the yard's cubes too (straight along the bar), and knocks them about
 function sawWorld() {
   if (state.area !== 'arena' || typeof AR === 'undefined' || !AR.pieces) return;
@@ -572,4 +585,4 @@ function sawWorld() {
     if (ac) noiseHit(ac.currentTime, .12, .08, 'bandpass', 3200, 1);
   }
 }
-window.__kg.saw = { SAW, RW, take: sawTake, drop: sawDrop, home: sawHome, split: sawSplitDummy, SLC, slcClear, pin: rwPin, rip: rwRip };
+window.__kg.saw = { SAW, RW, take: sawTake, drop: sawDrop, home: sawHome, cut: sawCutRagdoll, pin: rwPin, rip: rwRip };
