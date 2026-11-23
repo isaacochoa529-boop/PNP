@@ -35,6 +35,7 @@ function toast(msg, secs = 3) { const el = $('toast'); el.textContent = msg; el.
 function updateHud() { $('hudB').textContent = `🫐 ${state.got} / ${BERRIES_TOTAL}`; drawWrist(); }
 
 function respawn() {
+  if (typeof RC !== 'undefined' && RC.ride) return;   // no bailing out mid-coaster
   if (typeof PT !== 'undefined' && PT && PT.inside) return partyRespawn();
   if (state.area === 'arena') return arenaRespawn();
   if (state.area === 'wilds') return wildRespawn();
@@ -502,7 +503,7 @@ function update(dt) {
   tAll += dt;
   if (horrorFrozen(dt)) return;   // the fake crash: the world stops dead
   if (state.mode === 'play') {
-    if (state.xr || sim.on) { pollGamepads(); if (!CS.on) stepArms(dt); } else if (!CS.on) stepDesktop(dt);
+    if (state.xr || sim.on) { pollGamepads(); if (!CS.on && !rcRiding()) stepArms(dt); } else if (!CS.on && !rcRiding()) stepDesktop(dt);
     if (state.area === 'wilds' ? rig.position.y < -40 : state.area === 'arena' ? rig.position.y < -14 : (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45)) respawn();
     stepProps(dt);
     stepArena(dt);
