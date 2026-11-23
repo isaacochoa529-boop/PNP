@@ -663,7 +663,7 @@ self.onmessage = async e => {
     const d = e.data;
     if (d.t === 'pct') { const p = Math.round(d.pct * 100); if (store.get('kg-ears-ok') !== '1' && /decoder/.test(d.file || '') && p !== EARS.pct && p % 10 === 0) { EARS.pct = p; toast(`⏬ Downloading Claude's ears… ${p}% (only the first time)`, 3); } }
     else if (d.t === 'ready') { EARS.ready = true; EARS.loading = false; store.set('kg-ears-ok', '1'); }
-    else if (d.t === 'text') { EARS.busy = false; const t = d.text.replace(/\[[^\]]*\]|\([^)]*\)/g, '').trim(); if (t.length > 1) clHeard(t, 'voice'); else toast('🎙️ I didn\'t catch that. Try again a bit louder!', 3); clMicUi(); }
+    else if (d.t === 'text') { EARS.busy = false; const t = d.text.replace(/\[[^\]]*\]|\([^)]*\)/g, '').replace(/\b(clod|clawed|claud|clawd|cloud|clot|klaud|klawd|clyde)\b/gi, 'Claude').trim(); if (t.length > 1) clHeard(t, 'voice'); else toast('🎙️ I didn\'t catch that. Try again a bit louder!', 3); clMicUi(); }
     else if (d.t === 'err') { EARS.busy = false; EARS.loading = false; toast('😵 Claude\'s ears broke: ' + d.msg.slice(0, 80) + '. Use the quick-talk board!', 6); clBoard(state.xr); clMicUi(); }
   };
   w.onerror = () => { EARS.busy = false; toast('😵 Claude\'s ears could not load here. Use the quick-talk board!', 6); clBoard(state.xr); };
@@ -683,6 +683,16 @@ async function earsStart(quiet) {
   } catch (e) { toast('🎙️ No mic allowed, so here are quick-talk buttons instead!', 5); clBoard(state.xr); if (!state.xr) clTypeBox(true); }
 }
 function earsStop() { if (!EARS.recOn) return; EARS.recOn = false; try { EARS.rec.stop(); } catch (e) {} clMicUi(); if (ac && !VAD.on) tone('sine', 780, 520, .08, .15); }
+async function vadSendPcm(chunks) {   // always-listening: raw sound (with the pre-roll) -> 16 kHz -> Claude's ears
+  let n = 0; for (const c of chunks) n += c.length; if (n < VAD.rate * .3) return;
+  EARS.busy = true; clMicUi(); earsPreload();
+  try {
+    const all = new Float32Array(n); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
+    const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(n / VAD.rate * 16000)), 16000), b = off.createBuffer(1, n, VAD.rate); b.copyToChannel(all, 0);
+    const s = off.createBufferSource(); s.buffer = b; s.connect(off.destination); s.start(); const pcm = (await off.startRendering()).getChannelData(0).slice();
+    earsWorker().postMessage({ t: 'hear', id: ++EARS.id, pcm }, [pcm.buffer]);
+  } catch (e) { EARS.busy = false; clMicUi(); }
+}
 async function earsSend(blob) {
   if (blob.size < 800) return;
   EARS.busy = true; clMicUi(); if (!VAD.on) toast('🧠 Claude is listening to that…', 3);
@@ -706,7 +716,7 @@ const _clMicUiOld = clMicUi;
 clMicUi = function () {
   _clMicUiOld();
   const b = $('clMic'); if (b && CLM.broken) { b.classList.toggle('on', EARS.recOn); b.textContent = EARS.recOn ? '🔴' : EARS.busy ? '🧠' : '🎤'; }
-  if (clMicOrb && CLM.broken) { clMicOrb.m.color.set(EARS.recOn ? 0xff4f6d : EARS.busy ? 0xffd25a : VAD.on ? 0x5fd94a : 0x3fb2ff); clMicOrb.m.emissive.copy(clMicOrb.m.color); }
+  if (clMicOrb && CLM.broken) { clMicOrb.m.color.set(EARS.recOn || EARS.vadRec ? 0xff4f6d : EARS.busy ? 0xffd25a : VAD.on ? 0x5fd94a : 0x3fb2ff); clMicOrb.m.emissive.copy(clMicOrb.m.color); }
 };
 function stepClaudeEarsRec(dt) {
   if (!EARS.recOn) return;
@@ -734,10 +744,23 @@ async function vadStart() {
     const ctx = ac || (window.__clAc = window.__clAc || new (window.AudioContext || window.webkitAudioContext)());
     if (VAD.src) try { VAD.src.disconnect(); } catch (e) {}
     VAD.src = ctx.createMediaStreamSource(EARS.stream); VAD.an = ctx.createAnalyser(); VAD.an.fftSize = 1024; VAD.src.connect(VAD.an);
+    // keep the last ~0.9 s of sound all the time, so a sentence starts a bit BEFORE the loudness check notices you talking
+    // (Isaiah: "it usually forgets the first words")
+    try {
+      const sp = ctx.createScriptProcessor(4096, 1, 1), mute = ctx.createGain(); mute.gain.value = 0;
+      VAD.rate = ctx.sampleRate; VAD.ring = []; VAD.ringLen = 0; VAD.clip = null;
+      sp.onaudioprocess = e => {
+        const d = new Float32Array(e.inputBuffer.getChannelData(0));
+        if (VAD.clip) { VAD.clip.push(d); return; }
+        VAD.ring.push(d); VAD.ringLen += d.length;
+        while (VAD.ringLen - VAD.ring[0].length > VAD.rate * .9) VAD.ringLen -= VAD.ring.shift().length;
+      };
+      VAD.src.connect(sp); sp.connect(mute).connect(ctx.destination); VAD.sp = sp;
+    } catch (e) { VAD.sp = null; }
     VAD.buf = new Float32Array(VAD.an.fftSize); earsPreload();
   } catch (e) { VAD.on = false; vadUi(); toast('👂 No mic allowed, so always listening can\'t work. Poke buttons instead!', 5); clBoard(state.xr); }
 }
-function vadStop() { if (VAD.src) try { VAD.src.disconnect(); } catch (e) {} VAD.src = VAD.an = null; if (VAD.talking && EARS.recOn) earsStop(); VAD.talking = false; }
+function vadStop() { if (VAD.sp) try { VAD.sp.disconnect(); VAD.sp.onaudioprocess = null; } catch (e) {} VAD.sp = null; VAD.clip = null; EARS.vadRec = false; if (VAD.src) try { VAD.src.disconnect(); } catch (e) {} VAD.src = VAD.an = null; if (VAD.talking && EARS.recOn) earsStop(); VAD.talking = false; }
 function vadUi() {
   const b = $('clEar'); if (b) b.classList.toggle('on', VAD.on);
   if (clEarSw) { clEarSw.m.color.set(VAD.on ? 0x5fd94a : 0x777777); clEarSw.knob.position.y = VAD.on ? .035 : -.035; }
@@ -781,9 +804,12 @@ function stepVad(dt) {
   if (!VAD.talking) VAD.floor += (Math.min(rms, .05) - VAD.floor) * Math.min(1, step * .3);   // learn the room's background noise
   const thr = Math.max(.012, VAD.floor * 2.6), buddyTalking = CL.speaking;
   if (rms > thr && !buddyTalking) { VAD.loud += step; VAD.quiet = 0; } else { VAD.quiet += step; if (!VAD.talking) VAD.loud = 0; }
-  if (!VAD.talking && VAD.loud > .12 && !EARS.busy && !EARS.recOn) { VAD.talking = true; VAD.len = 0; earsStart(true); }
+  if (!VAD.talking && VAD.loud > .12 && !EARS.busy && !EARS.recOn && VAD.sp) { VAD.talking = true; VAD.len = 0; VAD.clip = VAD.ring.slice(); VAD.ring = []; VAD.ringLen = 0; EARS.vadRec = true; clMicUi(); }
+  else if (!VAD.talking && VAD.loud > .12 && !EARS.busy && !EARS.recOn && !VAD.sp) { VAD.talking = true; VAD.len = 0; earsStart(true); }
   if (VAD.talking) {
     VAD.len += step;
-    if (VAD.quiet > 1.7 || VAD.len > 25 || buddyTalking) { VAD.talking = false; VAD.loud = 0; if (EARS.recOn) { if (VAD.len - VAD.quiet < .35 || buddyTalking) { EARS.skip = true; } earsStop(); } }
+    if (VAD.quiet > 1.7 || VAD.len > 25 || buddyTalking) { VAD.talking = false; VAD.loud = 0;
+      if (VAD.clip) { const ch = VAD.clip; VAD.clip = null; EARS.vadRec = false; clMicUi(); if (!(VAD.len - VAD.quiet < .35 || buddyTalking)) vadSendPcm(ch); }
+      if (EARS.recOn) { if (VAD.len - VAD.quiet < .35 || buddyTalking) { EARS.skip = true; } earsStop(); } }
   }
 }
