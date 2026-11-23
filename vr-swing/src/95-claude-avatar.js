@@ -902,6 +902,7 @@ async function vadStart() {
 function vadStop() { if (VAD.sp) try { VAD.sp.disconnect(); VAD.sp.onaudioprocess = null; } catch (e) {} VAD.sp = null; VAD.clip = null; EARS.vadRec = false; if (VAD.src) try { VAD.src.disconnect(); } catch (e) {} VAD.src = VAD.an = null; if (VAD.talking && EARS.recOn) earsStop(); VAD.talking = false; }
 function vadUi() {
   const b = $('clEar'); if (b) b.classList.toggle('on', VAD.on);
+  try { if (CP.page === 'claude') compDraw(); } catch (e) {}
   if (clEarSw) { clEarSw.m.color.set(VAD.on ? 0x5fd94a : 0x777777); clEarSw.knob.position.y = VAD.on ? .035 : -.035; }
 }
 (() => {
@@ -920,14 +921,16 @@ const clEarSw = (() => {
   const knob = new THREE.Mesh(new THREE.BoxGeometry(.05, .045, .04), m); knob.position.z = -.02; g.add(knob);
   const tag = textPanel(256, 96, (c) => { c.fillStyle = '#fff'; c.font = '600 40px Fredoka, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('👂 ALWAYS', 128, 48); });
   const lab = new THREE.Mesh(new THREE.PlaneGeometry(.12, .045), new THREE.MeshBasicMaterial({ map: tag.t, transparent: true })); lab.position.set(0, -.095, -.012); lab.rotation.y = Math.PI; g.add(lab);
+  g.visible = false;   // the on/off switch is now an option on the grove computer (🤖 Claude tab), Isaiah asked
   return { g, knob, m, cool: 0 };
 })();
+window.__clOpts = { on: () => CL.on, ear: () => VAD.on, setEar: v => vadSet(v) };
 let _vadI = 0;
 function stepVad(dt) {
   if (CL.thinkT && tAll - CL.thinkT > 30) { CL.thinkT = 0; clScreenDraw(CL.scrRaw || 'free'); }   // no answer (maybe it wasn't for Claude): back to normal
   const b = $('clEar'); if (b) b.style.display = state.mode === 'play' && !state.xr && CL.on ? 'block' : 'none';
   clEarSw.cool -= dt;
-  if (clEarSw.cool <= 0 && (state.area || 'grove') === 'grove') {
+  if (clEarSw.g.visible && clEarSw.cool <= 0 && (state.area || 'grove') === 'grove') {
     clEarSw.knob.getWorldPosition(_cT);
     let near = null; for (const h of hands) if (h.tracked && h.pos.distanceTo(_cT) < (clEarSw.armed === false ? .15 : .09)) { near = h; break; }
     if (near && clEarSw.armed !== false) { clEarSw.armed = false; clEarSw.cool = .4; buzz(near, .6, 40); if (ac) tone('square', 300, 300, .04, .1); if (!CL.on) toast('🤖 Turn on your Claude buddy first!', 3); else vadSet(!VAD.on); }
