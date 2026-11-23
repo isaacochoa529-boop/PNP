@@ -518,7 +518,7 @@ function update(dt) {
   const focus = CS.on && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
   sun.position.set(focus.x + 12, focus.y + 24, focus.z + 8); sun.target.position.copy(focus);
   scene.userData.sky.position.copy(focus);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepRagdolls(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepRagdolls(dt); stepClaude(dt);
 
 }
 window.__kg.calibrate = () => calibrate();
