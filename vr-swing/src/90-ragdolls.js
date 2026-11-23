@@ -476,6 +476,7 @@ function rdReset() {
   for (let i = 0; i < SPL.N; i++) SPL.life[i] = Math.min(SPL.life[i], 1.5);
   if (HM.on && !HM.held) { headWorld(_hp); camera.getWorldDirection(_rd); _rd.y = 0; _rd.normalize(); const p = _hp.clone().addScaledVector(_rd, .7); p.y = (rdGround(p.x, _hp.y, p.z) ?? _hp.y - 1) + .3; hmPlace(p); }
   if (ac) [523, 659, 784].forEach((f, i) => tone('triangle', f, f, .15, .1, i * .07));
+  slcClear();
   toast('🔧 All dummies fixed!', 2);
 }
 function rdClear() {
@@ -483,7 +484,7 @@ function rdClear() {
   while (RD.list.length) rdKill(RD.list[0]);
   for (let i = 0; i < RFX.N; i++) RFX.life[i] = Math.min(RFX.life[i], .3);
   for (let i = 0; i < SPL.N; i++) SPL.life[i] = Math.min(SPL.life[i], 1);
-  if (HM.held) hmDrop(V()); HM.on = false; HM.g.visible = false;
+  if (HM.held) hmDrop(V()); HM.on = false; HM.g.visible = false; slcClear();
   if (ac) tone('sine', 600, 150, .25, .12); toast('🗑️ Dummies cleared!', 2);
 }
 
