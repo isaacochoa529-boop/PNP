@@ -637,6 +637,7 @@ function partyLanded() {
 // hooks the rest of the game calls
 function partyGrab(h) {
   if (!PT.inside || !h.tracked) return false;
+  if (boothGrab(h)) return true;
   const near = (o, r) => { const w = V(); o.getWorldPosition(w); return w.distanceTo(h.pos) < r; };
   if ((PT.hat === 'float' || PT.hat === 'pick') && near(PH.pickHat, .22)) { putOn('hat'); buzz(h, .7, 50); return true; }
   if ((PT.blow === 'float' || PT.blow === 'pick') && near(PH.pickBlow.g, .22)) { putOn('blow'); buzz(h, .7, 50); return true; }
@@ -645,6 +646,7 @@ function partyGrab(h) {
 }
 function partyDesk() {
   if (!PT.inside) return false;
+  if (boothDesk()) return true;
   const ok = (o, st) => { if (st !== 'float' && st !== 'pick') return false; const w = V(); o.getWorldPosition(w); headWorld(_tA); return w.distanceTo(_tA) < (st === 'float' ? 3 : 2.2); };
   const a = ok(PH.pickHat, PT.hat), b = ok(PH.pickBlow.g, PT.blow); if (!a && !b) return false;
   if (a) putOn('hat'); if (b) putOn('blow'); return true;
@@ -697,6 +699,7 @@ function stepParty(dt) {
   const ptb = $('ptOff'), ptw = $('ptBlow'); const showB = PT.inside && !state.xr && state.mode === 'play' && PT.blow === 'worn';
   if (ptb) ptb.style.display = showB ? 'block' : 'none'; if (ptw) ptw.style.display = showB ? 'block' : 'none';
   stepBlower(dt);
+  stepBooth(dt);
   if (!PT.inside) { if ($('ptHud')) $('ptHud').style.display = 'none'; return; }
   if (AR.ready && !PT.phys) { partyPhys(); swordToParty(); newCake(false); }
   if (PT.fall) {
