@@ -440,6 +440,8 @@ labelFns.push(() => { BO.ovKey = ''; });
 
 /* ---------- taking the photos: SNAP = a strip of 4 ---------- */
 const STRIP_N = 4;
+const _bsW = new THREE.Vector3(), _bsC = new THREE.Vector3(), _bsD = new THREE.Vector3();
+function boothSeen() { booth.live.getWorldPosition(_bsW); camera.getWorldPosition(_bsC); camera.getWorldDirection(_bsD); return _bsW.sub(_bsC).normalize().dot(_bsD) > .25; }
 function boothRender(rt) {
   const xrOn = renderer.xr.enabled, sa = renderer.shadowMap.autoUpdate, prev = renderer.getRenderTarget();
   renderer.xr.enabled = false; renderer.shadowMap.autoUpdate = false; booth.sg.visible = false;
@@ -638,7 +640,7 @@ function stepBooth(dt) {
   if (BO.snap && BO.show > 0) BO.snap.t += dt;   // countdown waits while the last photo is on screen
   booth.bulbs.forEach((m, i) => m.material.emissiveIntensity = (Math.sin(tAll * (BO.snap ? 14 : 4) - i * .6) > 0) ? 1.3 : .25);
   // live view (only when you're close, every 2nd frame (3rd in VR), and not while a photo is on screen)
-  if (dS < 9 && !booth.photo.visible && BO.frame++ % (state.xr ? 3 : 2) === 0) boothRender(booth.liveRT);
+  if (dS < 9 && !booth.photo.visible && BO.frame++ % (state.xr ? 4 : 2) === 0 && boothSeen()) boothRender(booth.liveRT);   // the live screen only redraws when you can see it (it's a whole extra picture of the party)
   stepPolas(dt); stepPlush(dt);
 }
 // put your saved outfit back on once your avatar has loaded
