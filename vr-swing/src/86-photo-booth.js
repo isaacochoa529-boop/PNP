@@ -223,6 +223,9 @@ function boothFit() {
   atRest(AV.torso, () => {
     const t = AV.torso, box = boxOf(t), c = box.getCenter(V()), sz = box.getSize(V()), y = box.max.y - sz.y * .12, fz = frontZ(t, c.x, y, box.min.z);
     BO.neckR = Math.max(.3, Math.abs(c.z - fz) * 1.04 / BO.W);
+    // how far the round belly sticks out in front of the neck, every .05 (in head widths) going down: neck props hang over it, not through it
+    BO.belly = []; for (let i = 0; i <= 16; i++) BO.belly.push((frontZ(t, c.x, y - i * .05 * BO.W, fz) - fz) / BO.W);
+    BO.neckR = Math.max(BO.neckR, (c.z - fz) / BO.W - Math.min(0, BO.belly[2] + BO.belly[3]) / 2 + .06);   // the lei's front dips ~.12 down
     const a = new THREE.Group(); a.userData.accRoot = true; a.position.set(c.x, y, fz); a.scale.setScalar(BO.W); t.add(a); BO.anch.neck = a;
     const b = new THREE.Group(); b.userData.accRoot = true; b.position.set(c.x, y + .01, c.z); b.scale.setScalar(BO.W); t.add(b); BO.anch.neckC = b;
   });
@@ -236,8 +239,18 @@ function wearShow(id, on) {
   if (on) {
     let g = BO.inst[id]; if (!g) { g = BO.inst[id] = buildProp(id, false); if (P.slot !== 'hand') g.traverse(c => { if (c.isMesh) c.layers.set(SELF_LAYER); }); }
     const an = BO.anch[ANCHOR_OF[id] || ANCHOR_OF[P.slot]]; an.add(g); g.visible = true;
+    if (id === 'medal' || id === 'bowtie') neckFit(id, g);
   } else if (BO.inst[id]) BO.inst[id].removeFromParent();
   if (P.slot === 'head') PH.wornHat.visible = !BO.worn.head && PT.hat === 'worn';
+}
+// tilt the medal out (and nudge the bow tie forward) until it clears the belly
+function bellyAt(dy) { const B = BO.belly; if (!B || !B.length) return 0; const f = Math.min(B.length - 1, Math.max(0, -dy / .05)), i = Math.floor(f), j = Math.min(B.length - 1, i + 1); return B[i] + (B[j] - B[i]) * (f - i); }
+function neckFit(id, g) {
+  if (!BO.belly) return;
+  if (id === 'bowtie') { const need = bellyAt(-.12) - .05 + .045; g.position.z = Math.min(-.02, -.02 + need); return; }
+  const pts = [[-.27, -.12], [-.405, -.12], [-.2, -.06]].map(([y, z]) => [y * 1.5, z * 1.5 - .03]);   // disc middle, disc bottom, ribbon (scaled 1.5, minus a bit of thickness)
+  let th = 0; for (; th < 1.3; th += .04) { const c = Math.cos(th), sn = Math.sin(th); if (pts.every(([y, z]) => { const y2 = y * c - z * sn, z2 = y * sn + z * c; return z2 <= bellyAt(y2) - .03; })) break; }
+  g.rotation.x = th;
 }
 function wear(id, quiet) {
   const P = BP[id], cur = BO.worn[P.slot];
