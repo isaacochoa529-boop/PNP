@@ -151,6 +151,7 @@ function rdStep(rd, h) {
   }
   rdStand(rd);
   for (let it = 0; it < 6; it++) for (const c of rd.C) rdSolve(rd, c);
+  rdSelfHit(rd);
   let low = 1e9;
   for (const q of P) {
     if (q.pin) continue;
@@ -174,6 +175,36 @@ function rdStep(rd, h) {
     const thr = gname === 'head' ? .3 : .5, rate = gname === 'head' ? 4 : 2;   // Isaiah: heads were too much of a struggle
     if (G.pulled && G.ratio > thr) G.strain += h * (G.ratio - thr) * rate; else G.strain = Math.max(0, G.strain - h);
     if (G.strain > .55) rdRip(rd, gname);
+  }
+}
+// Isaiah: "each part of the dummy's bodies should have collision so they don't go through each other"
+// every body ball keeps out of the others (except ones that are joined, or that already overlap when standing normally)
+function rdPairs(rd) {
+  if (rd.pairs && rd.pairsN === rd.P.length + rd.C.length) return rd.pairs;
+  const P = rd.P, n = P.length, joined = new Set(rd.C.map(c => Math.min(c.a, c.b) * 64 + Math.max(c.a, c.b))), out = [];
+  for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+    if (a < 6 && b < 6) continue;                              // the torso is one solid piece already
+    if (joined.has(a * 64 + b)) continue;
+    let m = P[a].r + P[b].r;
+    if (a < RD_REST.length && b < RD_REST.length) { const A = RD_REST[a], B = RD_REST[b], rest = Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); m = Math.min(m, rest * .9); }
+    if (m > .02) out.push(a, b, m);
+  }
+  rd.pairs = out; rd.pairsN = n + rd.C.length; return out;
+}
+function rdPush(A, B, m) {
+  _rd.subVectors(B.p, A.p); const d2 = _rd.lengthSq(); if (d2 >= m * m || d2 < 1e-10) return;
+  const d = Math.sqrt(d2), wa = A.pin ? 0 : A.im, wb = B.pin ? 0 : B.im, w = wa + wb; if (!w) return;
+  const k = (m - d) / d / w; A.p.addScaledVector(_rd, -k * wa); B.p.addScaledVector(_rd, k * wb);
+}
+function rdSelfHit(rd) { const pr = rdPairs(rd), P = rd.P; for (let i = 0; i < pr.length; i += 3) rdPush(P[pr[i]], P[pr[i + 1]], pr[i + 2]); }
+function rdBetween() {   // dummies bump into each other too
+  const L = RD.list;
+  for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
+    const a = L[i], b = L[j]; if (a.asleep && b.asleep) continue;
+    if (a.P[0].p.distanceToSquared(b.P[0].p) > 4) continue;
+    let hit = false;
+    for (const p of a.P) for (const q of b.P) { const m = p.r + q.r; if (p.p.distanceToSquared(q.p) < m * m) { rdPush(p, q, m); hit = true; } }
+    if (hit) { a.asleep = b.asleep = false; a.sleep = b.sleep = 0; }
   }
 }
 function rdRip(rd, gname) {
@@ -598,6 +629,7 @@ function stepRagdolls(dt) {
   });
   RD.acc = Math.min(RD.acc + dt, RD_STEP * 3);
   let n = 0; while (RD.acc >= RD_STEP) { RD.acc -= RD_STEP; n++; }
+  if (n) rdBetween();
   for (const rd of RD.list.slice()) {
     rd.hitCd -= dt;
     const pl = rdPulled(rd); rd.heavy = pl.any && !pl.pinBody; rd.heldNow = pl.any;
