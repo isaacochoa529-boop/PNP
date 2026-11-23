@@ -248,6 +248,7 @@ function stepDesktop(dt) {
   if (k.Space && BM.nograv && !state.grounded) v.y = 3;
   if (k.Space && state.grounded) { v.y = 5.3 * brJump(); state.grounded = false; sfxTap('grass', .3); }
   v.y -= G * bmGrav() * dt;
+  pcClimb(dt, f);
   rig.position.addScaledVector(v, dt);
   resolveBody(false);
   if (L > 0 && !state.running && !state.done) state.running = true;
@@ -261,7 +262,7 @@ function stepDesktop(dt) {
   hands.forEach((h, i) => {
     const sd = i ? 1 : -1, ph = t * (sp > 5 ? 11 : 8) + i * Math.PI, sw = moving ? Math.sin(ph) : 0, bob = moving ? Math.cos(ph) * .03 : Math.sin(t * 2 + i) * .006;
     if (state.third) { h.pos.set(sd * .3 * avSc(), .14 * avSc() + bob + (state.grounded ? 0 : .35), -.1 - sw * .22).applyQuaternion(rig.quaternion); h.pos.add(rig.position); h.paw.quaternion.copy(rig.quaternion); }
-    else { camera.localToWorld(h.pos.set(sd * .2, -.2 + bob, -.42 + sw * .04)); camera.getWorldQuaternion(h.paw.quaternion).multiply(_q.setFromEuler(_eul.set(.5, 0, 0))); }
+    else { const pu = pcPunchOff(i); camera.localToWorld(h.pos.set(sd * (.2 - pu * .45), -.2 + bob + pu * .2, -.42 + sw * .04 - pu)); camera.getWorldQuaternion(h.paw.quaternion).multiply(_q.setFromEuler(_eul.set(.5, 0, 0))); }
     h.paw.position.copy(h.pos); h.paw.visible = true; clutch(h, dt);
   });
 }
@@ -396,7 +397,7 @@ canvas.addEventListener('pointerdown', e => {
   dragging = true; lastX = e.clientX; lastY = e.clientY;
 });
 addEventListener('pointerup', () => { dragging = false; });
-document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && state.mode === 'play' && !state.xr && !dragging && !CS.on) openMenu(); });
+document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && state.mode === 'play' && !state.xr && !dragging && !CS.on && !state.freeMouse && !BM.open) openMenu(); });   // U / Berry Menu free the mouse without pausing
 
 function openMenu() { if (state.mode === 'play') state.savedPos = rig.position.clone(); state.mode = 'menu'; if ($('touch')) $('touch').hidden = true; state.joy.x = state.joy.y = 0; state.keys = {}; $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true; hands.forEach(h => h.paw.visible = false); }
 function startDesktop() {
@@ -517,7 +518,7 @@ function update(dt) {
   const focus = CS.on && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
   sun.position.set(focus.x + 12, focus.y + 24, focus.z + 8); sun.target.position.copy(focus);
   scene.userData.sky.position.copy(focus);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt);
 
 }
 window.__kg.calibrate = () => calibrate();

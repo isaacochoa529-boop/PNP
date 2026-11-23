@@ -258,6 +258,7 @@ function bmNet(d) {
   else if (d.e === 'unstat') { BM.remote = (BM.remote || []).filter(r => { if (r.from === d.from) { scene.remove(r.g); return false; } return true; }); }
   else if (d.e === 'pg' && d.to === MP.me) { if (!BM.held) { toast('🤏 You got grabbed!', 2); if (ac) tone('sine', 700, 300, .15, .12); } BM.held = { p: d.p, t: tAll }; }
   else if (d.e === 'pr' && d.to === MP.me) { BM.held = null; state.vel.set(...d.v); }
+  else if (d.e === 'pu' && d.to === MP.me) { state.vel.add(V(...d.v)); state.grounded = false; if (ac) tone('square', 160, 60, .12, .12); toast('👊 You got punched!', 1.5); }
 }
 window.__kg.bm = { BM, BOOM, bmSet, bmToggle, bmUnlock, bmStatue, bmBoom, bmNet, stepBerryMenu };
 window.__kg.voice = { VC, micOn, setMute, voiceMeet, micLevel, setMouth, AV };
