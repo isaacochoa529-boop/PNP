@@ -8,6 +8,9 @@ KINDS.push({ out: 0xff4f6d, ins: 0xffb3c0, size: .28, rub: true }, { out: 0x7a4d
   { out: 0xffc4e1, ins: 0xf6d59a, size: .22 });   // 10: cake (pink frosting, sprinkles, sponge + cream + jam inside)
 KINDS.push({ out: 0xcdefff, ins: 0x9fe8d0, size: .3, glass: true }, { out: 0xffffff, ins: 0xffffff, size: .3, glass: true, rainbow: true });   // 11 glass, 12 rainbow glass
 KINDS.push({ out: 0xff9ec7, ins: 0xf6d59a, size: .7, cake: true }, { out: 0xfff1e0, ins: 0xf6d59a, size: .42, cake: true });   // 13 + 14: Vivan's giant birthday cake (bottom + top tier, 85-party.js)
+// 15-22 + 23-30: test dummies the chainsaw turned into cubes (91-cheese-saw.js): fur outside, cotton inside (meat in horror mode)
+[0x2fc6a3, 0xff8a3d, 0x8b6bff, 0xff5f9e, 0x3fa0ff, 0xffd25a, 0x5ad36b, 0xe8e8f0].forEach((c, i, A) => { KINDS.push({ out: c, ins: 0xf6f1e6, size: .17, dummy: c }); });
+[0x2fc6a3, 0xff8a3d, 0x8b6bff, 0xff5f9e, 0x3fa0ff, 0xffd25a, 0x5ad36b, 0xe8e8f0].forEach(c => { KINDS.push({ out: c, ins: 0x9b1b1f, size: .17, dummy: c, meat: true }); });
 KINDS.forEach(k => { k.size = k.size || CUBE; });
 const VS = 11;   // vis soup stride: [px py pz nx ny nz ox oy oz cap hot] per vertex; phys soups are a sharp box, [px py pz]
 let CUT_T = -1e4;   // cap faces made by the cut happening right now remember this time, so they glow hot and cool down
@@ -51,8 +54,8 @@ pileMat.onBeforeCompile = sh => {
     .replace('#include <common>', `#include <common>\nuniform vec3 uOut[${NK}]; uniform vec3 uIns[${NK}]; uniform float uHalf[${NK}]; uniform float uTime; varying vec4 vOrig; varying float vHot; varying float vKind;\n${NOISE}`)
     .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `int kk = int(vKind + .5); vec3 kOut = uOut[kk]; float kHalf = uHalf[kk];
       vec4 diffuseColor = vec4( kOut, opacity ); vec3 kgHot = vec3(0.);
-      if ((kk == 10 || kk >= 13) && vOrig.w < .5) { float sp = kgHs(floor(vOrig.xyz * 70.) + 3.); if (sp > .92) diffuseColor.rgb = sp > .973 ? vec3(.3, .7, 1.) : (sp > .946 ? vec3(1., .9, .2) : vec3(.4, .9, .5)); }
-      if (kk >= 13 && vOrig.w < .5) {   // Vivan's birthday cake: frosting drips on top, piped beads round the bottom, a ribbon
+      if ((kk == 10 || kk == 13 || kk == 14) && vOrig.w < .5) { float sp = kgHs(floor(vOrig.xyz * 70.) + 3.); if (sp > .92) diffuseColor.rgb = sp > .973 ? vec3(.3, .7, 1.) : (sp > .946 ? vec3(1., .9, .2) : vec3(.4, .9, .5)); }
+      if ((kk == 13 || kk == 14) && vOrig.w < .5) {   // Vivan's birthday cake: frosting drips on top, piped beads round the bottom, a ribbon
         vec3 co = vOrig.xyz; vec3 cream = kk == 13 ? vec3(1., .97, .92) : vec3(1., .52, .74);
         if (co.y > kHalf - (.03 + .055 * pow(abs(sin((co.x + co.z) * 21.)), 3.))) diffuseColor.rgb = cream;
         if (co.y < -kHalf + .035) diffuseColor.rgb = cream * (sin((co.x + co.z) * 95.) > 0. ? 1. : .84);
@@ -65,7 +68,7 @@ pileMat.onBeforeCompile = sh => {
         float sw = sin(o.x * 61. + sin(o.y * 47. + o.z * 13.) * 2.4 + o.z * 39.) * .5 + .5;
         float rind = smoothstep(kHalf - .017, kHalf - .008, mx);
         diffuseColor.rgb = mix(uIns[kk] * (.92 + .12 * sw), kOut * .92, rind);
-        if (kk == 10 || kk >= 13) { float L = fract(o.y * (kk == 10 ? 14. : 6.) + .3); vec3 lay = L < .6 ? vec3(.96, .8, .5) * (.93 + .1 * sw) : (L < .8 ? vec3(1., .97, .92) : vec3(.8, .1, .22)); diffuseColor.rgb = mix(lay, kOut, rind); }
+        if (kk == 10 || kk == 13 || kk == 14) { float L = fract(o.y * (kk == 10 ? 14. : 6.) + .3); vec3 lay = L < .6 ? vec3(.96, .8, .5) * (.93 + .1 * sw) : (L < .8 ? vec3(1., .97, .92) : vec3(.8, .1, .22)); diffuseColor.rgb = mix(lay, kOut, rind); }
         float age = max(uTime - vHot, 0.), h = (kk == 10 || kk >= 13) ? 0. : exp(-age * .5);
         if (h > .01) {
           // the lava flows fast at first, then slows and sets as it cools
