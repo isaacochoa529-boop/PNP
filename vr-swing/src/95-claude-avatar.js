@@ -478,7 +478,10 @@ function stepClaudeEars(dt) {
   clMicOrb.cool -= dt; clMicOrb.head.position.y = .92 + (CLM.on ? Math.sin(tAll * 10) * .01 : 0);
   if (clMicOrb.cool <= 0 && (state.area || 'grove') === 'grove') {
     clMicOrb.head.getWorldPosition(_cT);
-    for (const h of hands) if (h.tracked && h.pos.distanceTo(_cT) < .15) { clMicOrb.cool = 1.5; buzz(h, .6, 40); clMicToggle(); break; }
+    // only counts as a NEW poke after the paw has left the mic (holding it there used to flip it on, then off again)
+    let near = null; for (const h of hands) if (h.tracked && h.pos.distanceTo(_cT) < (clMicOrb.armed === false ? .22 : .15)) { near = h; break; }
+    if (near && clMicOrb.armed !== false) { clMicOrb.armed = false; clMicOrb.cool = .4; buzz(near, .6, 40); clMicToggle(); }
+    else if (!near) clMicOrb.armed = true;
   }
   const B = CLM.board; if (!B || !CLM.boardOn) return;
   // keep it beside the buddy, turned toward Isaiah
@@ -632,7 +635,9 @@ function stepVad(dt) {
   clEarSw.cool -= dt;
   if (clEarSw.cool <= 0 && (state.area || 'grove') === 'grove') {
     clEarSw.knob.getWorldPosition(_cT);
-    for (const h of hands) if (h.tracked && h.pos.distanceTo(_cT) < .09) { clEarSw.cool = 1.2; buzz(h, .6, 40); if (ac) tone('square', 300, 300, .04, .1); if (!CL.on) toast('🤖 Turn on your Claude buddy first!', 3); else vadSet(!VAD.on); break; }
+    let near = null; for (const h of hands) if (h.tracked && h.pos.distanceTo(_cT) < (clEarSw.armed === false ? .15 : .09)) { near = h; break; }
+    if (near && clEarSw.armed !== false) { clEarSw.armed = false; clEarSw.cool = .4; buzz(near, .6, 40); if (ac) tone('square', 300, 300, .04, .1); if (!CL.on) toast('🤖 Turn on your Claude buddy first!', 3); else vadSet(!VAD.on); }
+    else if (!near) clEarSw.armed = true;
   }
   if (!CL.on) { if (VAD.an) vadStop(); return; }
   if (VAD.on && !CLM.broken && !CLM.on && !CLM.rec) clMicStart();   // real speech-to-text: keep it running
