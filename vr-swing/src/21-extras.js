@@ -15,7 +15,7 @@ function toyTpl(kind) {
 }
 // a toy that goes into the yard leaves the grove and comes out of the yard's portal as a piece you can slice
 function toyToYard(p, carried) {
-  if (!AR.ready) return false;
+  if (!AR.ready || p.spawned) return false;   // Claude-made toys stay where they are
   const t = toyTpl(p.kind), sp = Math.min(9, p.vel.length());
   const pos = V().copy(AR_PORTAL).add(V(0, 1, -.7)), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rnd() * 3, rnd() * 3, rnd() * 3));
   if (carried) { headWorld(_a1); pos.set(AR_SPAWN.x + .25, 1.2, AR_SPAWN.z - .7); }

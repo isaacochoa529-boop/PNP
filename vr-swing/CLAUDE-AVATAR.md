@@ -49,6 +49,30 @@ send hzf7bn "wave"
 | `status` | The game posts where everyone is (see below) |
 | `screen busy` / `screen free` / `screen <text>` / `screen <color> <text>` | The little screen on the buddy's tummy: 🛠️ BUSY (orange), ✅ FREE (green) or any text with emoji (blue, up to 48 letters, wraps to 2 lines). Start with a color name, #hex or `rainbow` to paint it, e.g. `screen pink 🍕 pizza time`. Instant. Claude sets busy while building, free when done. The game itself shows 🤔 THINKING from when Isaiah says something until the next command arrives (or 30 s) |
 
+## ✨ Materialize powers: spawn anything
+
+Claude can make things appear with a sparkly poof + chime (lines run in order with the other commands):
+
+| Command | What happens |
+|---|---|
+| `spawn <thing> [count] [color] [size] [at ...]` | Poofs things in. Count 1-10. Color: red orange yellow gold green lime teal cyan blue navy purple violet pink hotpink white black gray brown silver `rainbow` or `#ff8800`. Size: `tiny` `small` `big` `huge` `giant` or `size 2.5` (0.3-4). Where: `at me` (default, 1.5 m in front of Isaiah), `at buddy`, `at X Z` or `at X Y Z`. Words can go in any order: `spawn 3 big pink ducks at buddy` |
+| `despawn <thing>` / `despawn last` / `despawn all` | Poofs away Claude-made things only (never the game's own stuff) |
+| `spawnables` | The game posts `ev: spawnables` with the full list, colors and sizes |
+
+What you can spawn:
+
+- **Toys** (Isaiah can grab + throw them, and the buddy can `grab duck` / `throw` / `give` them too): `ball` `cone` `star` `duck` `donut` `pizza` `burger` `apple` `heart` `crown` `present` `cupcake` `cake` `icecream` `diamond` `trophy` `pumpkin` `snowman` `rock` `sword` (a foam toy, it doesn't cut) `plush` (the sprout bear), plus plain shapes `box` `sphere` `pillar` `pyramid` `ring` to build anything else
+- **Critters** (animated, they wander around Isaiah; petting gives hearts): `bunny` (hops) `puppy` (trots, wags) `chick` (waddles, pecks) `ghost` (floats) `butterfly` (flutters)
+- **Floaty:** `balloon` (bobs, pops when poked, drifts off after ~45 s)
+- **Effects:** `firework` (launches + bursts) `confetti` `rainbow` (big arc for 30 s)
+- **Slicing Yard / party only** (their physics lives there): `cube` (color picks the cube), `megacube`, `butter`, `glasscube`, `rainbowcube`. Elsewhere the buddy says to go to the yard.
+- **Dummies:** `dummy` ALWAYS appears in the Slicing Yard's DUMMY TEST zone, never in the lobby, wherever Isaiah is.
+
+Limits (Quest performance): 24 live things at once, 10 cubes. Going over poofs the oldest away. Plurals and lots of nicknames
+work (`bunnies`, `rabbit`, `dog`, `teddy`, `gift`, `rocket`...). An unknown thing posts `ev: error` with the known list: build it
+from shapes instead, e.g. `spawn box brown big; spawn pyramid red at buddy`.
+The game posts `ev: spawned` `{what, n, at, area, live, cap}` and `ev: despawned` `{n, live}`. Only Isaiah sees spawned things (not friends in a room).
+
 ## Reading what happens in the game
 
 The game posts JSON to the `-out` topic. Read the last few minutes with:
