@@ -379,6 +379,7 @@ function rdKill(rd) { scene.remove(rd.g);   // shapes are cached per fur color a
 function rdSpawn() {
   if (state.mode !== 'play') return;
   if (!AV.tpl) { toast('🧸 Dummies are still loading, try again in a sec!', 2.5); return; }
+  if (state.area === 'grove') { toast('🧸 No dummies in the lobby! Go to the Slicing Yard (DUMMY TEST sign).', 3.5); return; }   // Isaiah: keep the lobby dummy-free
   audioOn();
   if (RD.list.length >= RD.MAX) rdKill(RD.list[0]);
   headWorld(_hp); camera.getWorldDirection(_rd); _rd.y = 0; if (_rd.lengthSq() < 1e-4) _rd.set(0, 0, -1); _rd.normalize();
@@ -538,7 +539,7 @@ function stepRagdolls(dt) {
   if (state.mode !== 'play') return;
   if (state.xr) rdSticks(dt);
   if (!RD.told && store.get('kg-rd') !== '1' && !CS.on && (RD.hintT += dt) > 30) {
-    RD.told = true; toast(state.xr ? '🧸 NEW: Dummies! Click the LEFT stick to spawn one (right stick fixes them).' : IS_TOUCH ? '🧸 NEW: Dummies! Tap 🧸 to spawn one.' : '🧸 NEW: Dummies! Press G to spawn one (H fixes them, J clears).', 6);
+    RD.told = true; toast('🧸 NEW: Test dummies are waiting in the Slicing Yard, by the DUMMY TEST sign!', 6);
   }
   if (HZ.on !== RD.hz) { RD.hz = HZ.on; for (const rd of RD.list) rd.caps.forEach(m => { m.geometry = rdCapG(); }); }
   if (state.area === 'arena' && RD.area !== 'arena') { if (rdTestZone()) { RD.area = 'arena'; if (!RD.toldTest) { RD.toldTest = true; setTimeout(() => toast('🧸 Test dummies are waiting by the DUMMY TEST sign! Pull them apart 😈', 5), 3500); } } }
