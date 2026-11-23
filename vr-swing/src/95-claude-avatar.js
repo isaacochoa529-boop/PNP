@@ -120,7 +120,7 @@ function clConnect() {
   } catch (e) { CL.net = 'off'; }
 }
 function clOut(obj) {   // tell Claude in the chat what happened (status replies, pokes)
-  if (!CL.code) return; const now = performance.now(); if (now - CL.outT < 1500 && obj.ev !== 'status') return; CL.outT = now;
+  if (!CL.code) return; const now = performance.now(); if (now - CL.outT < 1500 && obj.ev !== 'status' && obj.ev !== 'heard') return; CL.outT = now;
   try { fetch('https://ntfy.sh/' + CL_TOPIC + CL.code + '-out', { method: 'POST', body: JSON.stringify(obj) }).catch(() => {}); } catch (e) {}
 }
 function clUi() {
@@ -330,3 +330,108 @@ function stepClaude(dt) {
   if (CL.es) clUi();
 }
 window.__kg.claude = { run: t => clRun(t), toggle: () => clToggle(), CL };
+
+/* ---------- Isaiah talks to Claude: speech-to-text (🎤 / blue mic orb), or a type box / quick-talk board ----------
+   Whatever he says goes to the -out topic as {ev:'heard', text} so Claude in the chat can read it. */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+const CLM = { on: false, rec: null, broken: !SR, board: null, boardOn: false, last: '' };
+const CL_PHRASES = ['👋 Hi Claude!', '🏃 Come here!', '👣 Follow me!', '🎁 Give me that!', '💃 Dance!', '⚾ Throw it!', '👍 Yes', '👎 No'];
+function clHeard(text, how) {
+  text = String(text || '').trim().slice(0, 300); if (!text || !CL.on) return;
+  clOut({ ev: 'heard', text, how });
+  toast('🎤 You: ' + text, Math.min(8, 1.5 + text.split(/\s+/).length / 2.3));
+  if (!CL.cur && !CL.anim) { CL.anim = 'nod'; CL.animT = 0; }   // the buddy nods: "I heard you"
+}
+function clMicUi() {
+  const b = $('clMic'); if (b) { b.classList.toggle('on', CLM.on); b.textContent = CLM.on ? '🔴' : '🎤'; }
+  if (clMicOrb) { clMicOrb.m.color.set(CLM.on || CLM.boardOn ? 0xff4f6d : 0x3fb2ff); clMicOrb.m.emissive.copy(clMicOrb.m.color); }
+}
+function clMicStart() {
+  if (!SR || CLM.broken) return false;
+  try {
+    const r = new SR(); r.lang = 'en-US'; r.continuous = true; r.interimResults = false; CLM.rec = r;
+    r.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) clHeard(e.results[i][0].transcript, 'voice'); };
+    r.onerror = e => { if (/not-allowed|service-not-allowed|network|audio-capture|language-not-supported/.test(e.error)) { CLM.broken = true; CLM.on = false; clMicUi(); toast(state.xr ? '🎤 This browser can\'t do speech-to-text. Poke the blue orb for quick-talk buttons!' : '🎤 This browser can\'t do speech-to-text. Type in the box instead (your phone keyboard\'s mic works there!)', 7); clTypeBox(true); clBoard(state.xr); } };
+    r.onend = () => { if (CLM.on && CLM.rec === r) try { r.start(); } catch (er) {} };
+    r.start(); CLM.on = true; clMicUi(); toast('🎤 Claude is listening! Just talk.', 3); return true;
+  } catch (e) { CLM.broken = true; return false; }
+}
+function clMicStop() { CLM.on = false; const r = CLM.rec; CLM.rec = null; try { r && r.stop(); } catch (e) {} clMicUi(); }
+function clMicToggle() {
+  if (!CL.on) { toast('🤖 Turn on your Claude buddy first!', 3); return; }
+  if (CLM.on) { clMicStop(); clTypeBox(false); toast('🎤 Mic off.', 2); return; }
+  if (clMicStart()) { clTypeBox(true); return; }   // screens also get a type box (handy when it's noisy)
+  if (state.xr) { clBoard(!CLM.boardOn); clMicUi(); } else clTypeBox(!($('clType').style.display === 'flex'));
+}
+function clTypeBox(show) {
+  const el = $('clType'); if (!el) return; el.style.display = show && CL.on && !state.xr ? 'flex' : 'none';
+  if (show) setTimeout(() => { try { $('clTypeIn').focus(); } catch (e) {} }, 50);
+}
+(() => {
+  const st = document.createElement('style');
+  st.textContent = `#clMic{position:fixed;left:12px;bottom:208px;z-index:20;width:52px;height:52px;border-radius:50%;border:0;font-size:24px;background:#3fb2ff;box-shadow:0 4px 0 #1a6a9a;cursor:pointer;display:none}
+  #clMic.on{background:#ff4f6d;box-shadow:0 4px 0 #9a1a30}
+  #clType{position:fixed;left:72px;bottom:212px;z-index:21;display:none;gap:6px}
+  #clType input{width:min(56vw,320px);padding:10px 12px;border-radius:16px;border:3px solid #d97757;font:500 16px Fredoka,sans-serif}
+  #clType button{border:0;border-radius:16px;padding:0 14px;background:#d97757;color:#fff;font:600 16px Fredoka,sans-serif}`;
+  document.head.appendChild(st);
+  const b = document.createElement('button'); b.id = 'clMic'; b.textContent = '🎤'; b.title = 'Talk to Claude'; b.onclick = e => { e.stopPropagation(); clMicToggle(); b.blur(); }; document.body.appendChild(b);
+  const d = document.createElement('form'); d.id = 'clType'; d.innerHTML = '<input id="clTypeIn" maxlength="300" placeholder="Say something to Claude…" autocomplete="off"><button>Send</button>';
+  d.onsubmit = e => { e.preventDefault(); const i = $('clTypeIn'); clHeard(i.value, 'typed'); i.value = ''; };
+  d.addEventListener('keydown', e => e.stopPropagation()); d.addEventListener('keyup', e => e.stopPropagation()); document.body.appendChild(d);
+})();
+// VR: a blue mic orb on its own little post next to the orange one
+const clMicOrb = (() => {
+  const at = V(CL_ORB_AT.x + .45, 0, CL_ORB_AT.z), g = new THREE.Group(); g.position.copy(at);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(.04, .07, .8, 8), mat(0x6b4426)); post.position.y = .4; g.add(post);
+  const m = new THREE.MeshStandardMaterial({ color: 0x3fb2ff, emissive: 0x3fb2ff, emissiveIntensity: .5, roughness: .3 });
+  const head = new THREE.Mesh(new THREE.CapsuleGeometry(.045, .07, 4, 10), m); head.position.y = .92; g.add(head);
+  const grill = new THREE.Mesh(new THREE.TorusGeometry(.05, .008, 6, 16), mat(0x2a2a33)); grill.rotation.x = Math.PI / 2; grill.position.y = .9; g.add(grill);
+  const tag = textPanel(512, 128, (c) => { c.fillStyle = 'rgba(10,30,50,.8)'; c.beginPath(); c.roundRect(6, 14, 500, 100, 50); c.fill(); c.fillStyle = '#9adcff'; c.font = '600 54px Fredoka, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('🎤 Talk to Claude', 256, 66); });
+  const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: tag.t, transparent: true })); lab.scale.set(.46, .115, 1); lab.position.y = 1.15; g.add(lab);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; }); scene.add(g);
+  addCol({ t: 1, x: at.x, z: at.z, cy: .4, hy: .4, r: .07, tag: 'wood' });
+  return { g, head, m, cool: 0 };
+})();
+// VR quick-talk board: floats beside the buddy, poke a phrase to say it
+function clBoard(show) {
+  CLM.boardOn = !!show && CL.on;
+  if (CLM.boardOn && !CLM.board) {
+    const p = textPanel(640, 520, () => {});
+    const g = p.g; g.fillStyle = 'rgba(255,250,240,.95)'; g.beginPath(); g.roundRect(0, 0, 640, 520, 36); g.fill();
+    g.strokeStyle = '#d97757'; g.lineWidth = 10; g.stroke(); g.fillStyle = '#2a1a10'; g.font = '600 40px Fredoka, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('Poke to talk to Claude', 320, 46);
+    CL_PHRASES.forEach((t, i) => { const x = 24 + (i % 2) * 304, y = 92 + Math.floor(i / 2) * 104; g.fillStyle = '#d97757'; g.beginPath(); g.roundRect(x, y, 288, 88, 22); g.fill(); g.fillStyle = '#fff'; g.font = '600 34px Fredoka, sans-serif'; g.fillText(t, x + 144, y + 46); });
+    p.t.needsUpdate = true;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(.5, .40625), new THREE.MeshBasicMaterial({ map: p.t, transparent: true, side: THREE.DoubleSide }));
+    scene.add(mesh); CLM.board = { mesh, cool: 0 };
+  }
+  if (CLM.board) CLM.board.mesh.visible = CLM.boardOn;
+}
+const _bL = V();
+function stepClaudeEars(dt) {
+  const b = $('clMic'); if (b) b.style.display = state.mode === 'play' && !state.xr && CL.on ? 'block' : 'none';
+  if (!CL.on) { if (CLM.on) clMicStop(); if (CLM.boardOn) clBoard(false); clTypeBox(false); return; }
+  if (state.xr && $('clType').style.display === 'flex') clTypeBox(false);
+  clMicOrb.cool -= dt; clMicOrb.head.position.y = .92 + (CLM.on ? Math.sin(tAll * 10) * .01 : 0);
+  if (clMicOrb.cool <= 0 && (state.area || 'grove') === 'grove') {
+    clMicOrb.head.getWorldPosition(_cT);
+    for (const h of hands) if (h.tracked && h.pos.distanceTo(_cT) < .15) { clMicOrb.cool = 1.5; buzz(h, .6, 40); clMicToggle(); break; }
+  }
+  const B = CLM.board; if (!B || !CLM.boardOn) return;
+  // keep it beside the buddy, turned toward Isaiah
+  clPlayer(_cP); _cD.subVectors(_cP, CL.B).setY(0); const d = _cD.length() || 1; _cD.multiplyScalar(1 / d);
+  B.mesh.position.set(CL.B.x - _cD.z * .55 + _cD.x * .25, CL.B.y - CL_R + .95, CL.B.z + _cD.x * .55 + _cD.z * .25);
+  B.mesh.lookAt(_cP.x, B.mesh.position.y, _cP.z);
+  B.cool -= dt; if (B.cool > 0) return;
+  for (const h of hands) {
+    if (!h.tracked) continue; B.mesh.worldToLocal(_bL.copy(h.pos));
+    if (Math.abs(_bL.z) > .04 || Math.abs(_bL.x) > .25 || Math.abs(_bL.y) > .203) continue;
+    const px = (_bL.x + .25) / .5 * 640, py = (.203 - _bL.y) / .40625 * 520;
+    for (let i = 0; i < CL_PHRASES.length; i++) {
+      const x = 24 + (i % 2) * 304, y = 92 + Math.floor(i / 2) * 104;
+      if (px > x && px < x + 288 && py > y && py < y + 88) { B.cool = 1; buzz(h, .5, 30); if (ac) tone('sine', 600, 900, .08, .15); clHeard(CL_PHRASES[i].replace(/^\S+\s/, ''), 'button'); break; }
+    }
+  }
+}
+window.__kg.claude.heard = (t) => clHeard(t, 'test');

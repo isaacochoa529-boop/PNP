@@ -60,10 +60,20 @@ Each line's `message` is JSON with `ev`:
 
 - `hello`: the buddy was just switched on.
 - `status`: `{area, isaiah:{x,y,z}, claude:{x,y,z,holding,doing,queue}, toys:[{id,kind,x,y,z,dist,held}]}` (6 nearest toys).
+- `heard`: **Isaiah talked to you!** `{text, how}`. `how` is `voice` (speech-to-text), `typed` (type box) or `button` (VR quick-talk board). Answer with `say`.
 - `poke`: Isaiah poked / high-fived the buddy. `taken`: he took the toy you were giving. `stuck`: a walk or grab failed.
 - `error`: unknown command (lists the ones it knows).
 
 Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
+
+## Isaiah talking to Claude 🎤
+
+- **PC / phone:** the blue **🎤** button (shows once the buddy is on). It listens with the browser's speech-to-text and also opens a type box.
+  On a phone, the keyboard's own mic button works in the type box too.
+- **VR:** poke the blue mic on the little post next to the orange orb. If the browser can't do speech-to-text (the Quest browser
+  usually can't), a **quick-talk board** pops up next to the buddy instead: poke "Hi Claude!", "Come here!", "Follow me!",
+  "Give me that!", "Dance!", "Throw it!", "Yes", "No".
+- Everything he says shows as a toast ("🎤 You: ...") and lands on the `-out` topic as `ev: heard`.
 
 ## Honest limits
 
@@ -72,4 +82,5 @@ Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
 - Only Isaiah sees his own buddy. Friends in a room see toys it moves, but not the buddy itself.
 - Voice uses the browser's built-in text-to-speech. Some browsers (sometimes the Quest browser) have no voice: the bubble still shows.
 - Grabbing works on the grove toys (balls, cones, stars), not swords, cubes or ragdolls.
+- Speech-to-text works in Chrome / Edge / Safari on PC and phones. The Quest browser usually doesn't support it, so VR uses the quick-talk board.
 - Anyone who knows the code can send commands, so keep it in the chat.
