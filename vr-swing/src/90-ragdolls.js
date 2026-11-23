@@ -417,11 +417,21 @@ function hmWorld(sp) {
     if (HM.held && r !== 'miss') buzz(HM.held, r === 'break' ? 1 : .6, 50);
   }
   if (typeof AR !== 'undefined' && AR.pieces) for (const pc of AR.pieces) {
-    if (!pc.body || pc.dying || pc.held || tAll - (pc.hmT || 0) < .25) continue;
-    const t = pc.body.translation(); if ((t.x - HM.head.x) ** 2 + (t.y - HM.head.y) ** 2 + (t.z - HM.head.z) ** 2 > (pc.rad + .07) ** 2) continue;
+    if (!pc.body || pc.dying || pc.held || pc.pane || tAll - (pc.hmT || 0) < .25) continue;
+    _hmP.copy(HM.head).sub(ARENA);   // cube bodies live in yard coordinates
+    const t = pc.body.translation(); if ((t.x - _hmP.x) ** 2 + (t.y - _hmP.y) ** 2 + (t.z - _hmP.z) ** 2 > (pc.rad + .07) ** 2) continue;
     if (typeof mine === 'function' && !mine(pc)) continue;
-    pc.hmT = tAll; const m = pc.body.mass() * Math.min(sp, 10) * .7, d = _hmP.copy(HM.vel).normalize();
-    pc.body.applyImpulseAtPoint({ x: d.x * m, y: d.y * m + m * .15, z: d.z * m }, { x: HM.head.x, y: HM.head.y, z: HM.head.z }, true);
+    // only a real touch counts (the bounding ball is bigger than the cube)
+    toLocal(pc, _hmP, _hmL); if (outside(pc.parts, _hmL) > .07) continue;
+    pc.hmT = tAll;
+    // a hard smash knocks a chunk out of it where the hammer lands (Isaiah: "make a hole in the cubes")
+    if (sp > 4.5 && !pc.inQ && pc.pop >= 1) {
+      toLocal(pc, _hmN.copy(_hmP).addScaledVector(HM.vel, 1 / sp), _hmN); const n = _hmN.sub(_hmL).normalize();
+      const w = widthAlong(pc, n), e = _hmL.clone().addScaledVector(n, Math.max(0, -outside(pc.parts, _hmL)) + clamp(w * .3, .03, .12));
+      pc.inQ = true; AR.cutQ.push({ pc, lines: [[n.clone(), n.dot(e)]], bis: [], nMain: n.clone(), e, sp, extreme: false });
+    }
+    const m = pc.body.mass() * Math.min(sp, 10) * .7, d = _hmN.copy(HM.vel).normalize();
+    pc.body.applyImpulseAtPoint({ x: d.x * m, y: d.y * m + m * .15, z: d.z * m }, { x: _hmP.x, y: _hmP.y, z: _hmP.z }, true);
     if (ac) { tone('sine', 220, 80, .14, clamp(sp / 20, .06, .25)); noiseHit(ac.currentTime, .06, clamp(sp / 30, .04, .2), 'bandpass', 1400, 1); }
     if (HM.held) buzz(HM.held, clamp(sp / 8, .3, 1), 40);
   }

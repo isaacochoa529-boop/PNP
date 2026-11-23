@@ -266,6 +266,7 @@ function gooCol(key, w, r, stick, dt) {   // add a thing as a slime pusher (its 
 }
 function stepPoolThings(dt) {
   GOO.cols.length = 0;
+  if (HM.on && HM.held) gooCol(HM, HM.head, .09, false, dt);   // slam the sledgehammer into the slime: it splashes and ripples
   // cubes and glass: float or sink by what they're made of
   if (AR.ready) for (const pc of AR.pieces) {
     if (!pc.body || pc.pane || pc.dying) continue;
