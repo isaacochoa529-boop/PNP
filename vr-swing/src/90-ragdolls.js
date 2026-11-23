@@ -170,7 +170,7 @@ function rdStep(rd, h) {
   if (mv < 4e-7 && !RD.held.some(x => x && x.rd === rd)) { if (++rd.sleep > 90) rd.asleep = true; } else rd.sleep = 0;
   // stretch + rip
   for (const gname in rd.G) {
-    const G = rd.G[gname]; if (G.ripped) continue;
+    const G = rd.G[gname]; if (G.ripped || rd.cut) continue;
     let e = 0; for (const c of G.cons) e += Math.max(0, rd.P[c.a].p.distanceTo(rd.P[c.b].p) - c.L);
     G.ratio = e / RD_EXTRA;
     // the harder (and longer) you tug, the sooner the seam gives: a big yank rips fast, a steady pull takes a couple of seconds
@@ -186,7 +186,7 @@ function rdPairs(rd) {
   if (rd.pairs && rd.pairsN === rd.P.length + rd.C.length) return rd.pairs;
   const P = rd.P, n = P.length, joined = new Set(rd.C.map(c => Math.min(c.a, c.b) * 64 + Math.max(c.a, c.b))), out = [];
   for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
-    if (a < 6 && b < 6) continue;                              // the torso is one solid piece already
+    if (a < 6 && b < 6 && !rd.cut) continue;                   // the torso is one solid piece already (not after a chainsaw cut)
     if (joined.has(a * 64 + b)) continue;
     let m = P[a].r + P[b].r;
     if (a < RD_REST.length && b < RD_REST.length) { const A = RD_REST[a], B = RD_REST[b], rest = Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); m = Math.min(m, rest * .9); }
@@ -256,6 +256,7 @@ function rdOrient(m, pa, pb, fwd, L, stretch, out) {
 function rdTransport(pf, a, b) { _ry.subVectors(b, a).normalize(); pf.addScaledVector(_ry, -pf.dot(_ry)); if (pf.lengthSq() < 1e-6) pf.set(1, 0, 0).cross(_ry); pf.normalize(); return pf; }
 function rdDraw(rd, dt) {
   const P = rd.P; rdTorsoFrame(rd);
+  if (rd.cut) { rdCutDraw(rd); return; }   // chainsawed: one cut-up soup that rides on the balls (91-cheese-saw.js)
   rwPlace(rd);
   for (const s of rd.segs) {
     const f = s.pf ? rdTransport(s.pf, P[s.a].p, P[s.b].p) : rd.fwd;
@@ -443,7 +444,7 @@ function hmWorld(sp) {
 
 /* ---------------- spawning, fixing, clearing ---------------- */
 function rdGround(x, y0, z) { for (let y = y0 + .6; y > y0 - 5; y -= .05) { const h = pawHit(_rfP.set(x, y, z), .05); if (h && h.n.y > .5) return y - .05; } return null; }
-function rdKill(rd) { scene.remove(rd.g); if (rd.W) rd.W.tube.geometry.dispose();   // shapes are cached per fur color and shared, nothing to free
+function rdKill(rd) { scene.remove(rd.g); if (rd.W) rd.W.tube.geometry.dispose(); if (rd.cut) rd.cut.mesh.geometry.dispose();   // shapes are cached per fur color and shared, nothing to free
   RD.held.forEach((x, i) => { if (x && x.rd === rd) RD.held[i] = null; }); RD.list.splice(RD.list.indexOf(rd), 1); }
 function rdSpawn() {
   if (state.mode !== 'play') return;
@@ -476,7 +477,6 @@ function rdReset() {
   for (let i = 0; i < SPL.N; i++) SPL.life[i] = Math.min(SPL.life[i], 1.5);
   if (HM.on && !HM.held) { headWorld(_hp); camera.getWorldDirection(_rd); _rd.y = 0; _rd.normalize(); const p = _hp.clone().addScaledVector(_rd, .7); p.y = (rdGround(p.x, _hp.y, p.z) ?? _hp.y - 1) + .3; hmPlace(p); }
   if (ac) [523, 659, 784].forEach((f, i) => tone('triangle', f, f, .15, .1, i * .07));
-  slcClear();
   toast('🔧 All dummies fixed!', 2);
 }
 function rdClear() {
@@ -484,7 +484,7 @@ function rdClear() {
   while (RD.list.length) rdKill(RD.list[0]);
   for (let i = 0; i < RFX.N; i++) RFX.life[i] = Math.min(RFX.life[i], .3);
   for (let i = 0; i < SPL.N; i++) SPL.life[i] = Math.min(SPL.life[i], 1);
-  if (HM.held) hmDrop(V()); HM.on = false; HM.g.visible = false; slcClear();
+  if (HM.held) hmDrop(V()); HM.on = false; HM.g.visible = false;
   if (ac) tone('sine', 600, 150, .25, .12); toast('🗑️ Dummies cleared!', 2);
 }
 
@@ -619,9 +619,9 @@ function rdTestRespawn(dt) {
   if ((RD.fillT = (RD.fillT || 0) - dt) < 0) { RD.fillT = 2; rdTestZone(); }   // missing ones (fell off the world) come back too
   for (const rd of RD.list.slice()) {
     if (!rd.home) continue;
-    const wrecked = Object.values(rd.G).some(G => G.ripped) || rd.W.ripped, far = Math.hypot(rd.P[0].p.x - rd.home.x, rd.P[0].p.z - rd.home.z) > 2.5 || rd.P[0].p.y < rd.home.y - 3;
+    const wrecked = Object.values(rd.G).some(G => G.ripped) || rd.W.ripped || !!rd.cut, far = Math.hypot(rd.P[0].p.x - rd.home.x, rd.P[0].p.z - rd.home.z) > 2.5 || rd.P[0].p.y < rd.home.y - 3;
     const held = RD.held.some(x => x && x.rd === rd);
-    if ((wrecked || far) && !held) { if ((rd.backT = (rd.backT || 0) + dt) > 6) rdHomeAgain(rd); } else rd.backT = 0;
+    if ((wrecked || far) && !held) { if ((rd.backT = (rd.backT || 0) + dt) > (rd.cut ? 25 : 6)) rdHomeAgain(rd); } else rd.backT = 0;   // sawn pieces stay a while so you can play with them
   }
 }
 
