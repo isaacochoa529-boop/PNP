@@ -59,19 +59,57 @@ function clVoice() {
   CL.voice = vs.find(v => /en[-_]US/i.test(v.lang) && /google|natural|samantha|aria|jenny/i.test(v.name)) || vs.find(v => /^en/i.test(v.lang)) || vs[0];
   return CL.voice;
 }
+// Robot voice that works everywhere (the Quest browser has no text-to-speech): eSpeak (meSpeak.js) in a Web Worker,
+// played through the game's own audio. Only downloaded (~1.2 MB) the first time it is needed.
+const CL_ES = { worker: null, ready: false, id: 0, src: null };
+const CL_ES_BASE = 'https://cdn.jsdelivr.net/npm/mespeak@2.0.2/';
+if (/OculusBrowser|Quest/i.test(navigator.userAgent) || !window.speechSynthesis) CL.tts = 'espeak';
+function clEsWorker() {
+  if (CL_ES.worker) return CL_ES.worker;
+  const src = `import ms from '${CL_ES_BASE}+esm';
+const go = (async () => {
+  const [cfg, voice] = await Promise.all([fetch('${CL_ES_BASE}src/mespeak_config.json').then(r => r.json()), fetch('${CL_ES_BASE}voices/en/en-us.json').then(r => r.json())]);
+  ms.loadConfig(cfg); ms.loadVoice(voice); self.postMessage({ t: 'ready' });
+})();
+self.onmessage = async e => {
+  try { await go; const a = ms.speak(e.data.text, { rawdata: 'array', pitch: 62, speed: 158, variant: 'f2', amplitude: 120 }); self.postMessage({ t: 'wav', id: e.data.id, wav: a }); }
+  catch (er) { self.postMessage({ t: 'err', id: e.data.id, msg: String(er && er.message || er) }); }
+};`;
+  const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), { type: 'module' });
+  w.onmessage = async e => {
+    const d = e.data; if (d.t === 'ready') { CL_ES.ready = true; return; }
+    if (d.t === 'err' || !d.wav) { CL.speaking = false; console.warn('Claude voice', d.msg); return; }
+    if (d.id !== CL_ES.id) return;   // a newer line already started
+    try {
+      const ctx = ac || (window.__clAc = window.__clAc || new (window.AudioContext || window.webkitAudioContext)());
+      if (ctx.state === 'suspended') ctx.resume();
+      const u8 = d.wav instanceof Uint8Array ? d.wav : new Uint8Array(d.wav), buf = await ctx.decodeAudioData(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
+      if (d.id !== CL_ES.id) return;
+      try { CL_ES.src && CL_ES.src.stop(); } catch (er) {}
+      const s = ctx.createBufferSource(), g = ctx.createGain(); g.gain.value = 1.4; s.buffer = buf; s.connect(g).connect(ctx.destination); s.start();
+      CL_ES.src = s; CL.speaking = true; CL.spOk = true; s.onended = () => { if (CL_ES.src === s) CL.speaking = false; };
+    } catch (er) { CL.speaking = false; }
+  };
+  w.onerror = () => { CL.speaking = false; };
+  CL_ES.worker = w; return w;
+}
+function clSpeakEs(text) {
+  try { CL.speaking = true; CL.spOk = true; CL.spAt = tAll; clEsWorker().postMessage({ t: 'say', id: ++CL_ES.id, text }); CL.esT = tAll; } catch (e) { CL.speaking = false; }
+}
 function clSay(text) {
   text = String(text).slice(0, 220); if (!text) return 0;
   clBubble(text); toast('🤖 Claude: ' + text, Math.min(8, CL.bubT));
   CL.speaking = false;
+  const clean = text.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '').trim(); if (!clean) return CL.bubT;
+  try { CL_ES.src && CL_ES.src.stop(); } catch (e) {}
+  if (CL.tts === 'espeak') { clSpeakEs(clean); return CL.bubT; }
   try {
-    if (window.speechSynthesis) {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ''));
-      const v = clVoice(); if (v) u.voice = v; u.pitch = 1.25; u.rate = 1.05; u.volume = 1;
-      u.onstart = () => { CL.speaking = true; CL.spOk = true; }; u.onend = u.onerror = () => { CL.speaking = false; };
-      CL.speaking = true; CL.spOk = false; CL.spAt = tAll; speechSynthesis.speak(u);
-    }
-  } catch (e) { CL.speaking = false; }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(clean);
+    const v = clVoice(); if (v) u.voice = v; u.pitch = 1.25; u.rate = 1.05; u.volume = 1;
+    u.onstart = () => { CL.speaking = true; CL.spOk = true; }; u.onend = u.onerror = () => { CL.speaking = false; };
+    CL.speaking = true; CL.spOk = false; CL.spAt = tAll; CL.spText = clean; speechSynthesis.speak(u);
+  } catch (e) { CL.tts = 'espeak'; clSpeakEs(clean); }
   return CL.bubT;
 }
 
@@ -83,8 +121,25 @@ function clBuild() {
   const ant = new THREE.Group(), stick = new THREE.Mesh(new THREE.CylinderGeometry(.008, .008, .12, 6), mat(0x3a2a20)); stick.position.y = .06; ant.add(stick);
   const bulb = new THREE.Mesh(new THREE.SphereGeometry(.03, 10, 8), new THREE.MeshStandardMaterial({ color: 0xffd25a, emissive: 0xffb020, emissiveIntensity: .8 })); bulb.position.y = .13; ant.add(bulb);
   ant.position.set(0, .2, 0); f.head.add(ant); f.bulb = bulb;
+  clEyes(f.head);
   CL.hand = { paw: f.paws[1], tracked: false, holding: CL.hand && CL.hand.holding || null, vel: V(), pos: V(), isClaude: true };
   if (CL.hand.holding) CL.hand.holding.held = CL.hand;
+}
+// big shiny cartoon pupils in front of the eye whites (on the Quest the model's own pupils hide inside the whites)
+const CL_PUP = new THREE.MeshBasicMaterial({ color: 0x15100c }), CL_SHINE = new THREE.MeshBasicMaterial({ color: 0xffffff }), CL_IRIS = new THREE.MeshBasicMaterial({ color: 0x6b3a1e });
+function clEyes(head) {
+  head.updateMatrixWorld(true); const inv = head.matrixWorld.clone().invert();
+  ['EyeL', 'EyeR'].forEach((n, k) => {
+    const pv = head.getObjectByName(n); if (!pv || !pv.children[0]) return;
+    const bb = new THREE.Box3().setFromObject(pv.children[0]).applyMatrix4(inv), c = bb.getCenter(V()), sz = bb.getSize(V());
+    const r = Math.min(sz.x, sz.y) * .36, front = bb.min.z;
+    const g = new THREE.Group(); g.position.set(c.x, c.y - r * .1, front + r * .2); head.add(g);
+    const iris = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), CL_IRIS); iris.scale.z = .35; g.add(iris);
+    const pup = new THREE.Mesh(new THREE.SphereGeometry(r * .62, 14, 10), CL_PUP); pup.scale.z = .35; pup.position.z = -r * .08; g.add(pup);
+    const sh = new THREE.Mesh(new THREE.SphereGeometry(r * .26, 10, 8), CL_SHINE); sh.scale.z = .4; sh.position.set(r * .32 * (k ? 1 : 1), r * .34, -r * .16); g.add(sh);
+    const sh2 = new THREE.Mesh(new THREE.SphereGeometry(r * .12, 8, 6), CL_SHINE); sh2.position.set(-r * .3, -r * .3, -r * .14); g.add(sh2);
+    g.traverse(o => { if (o.isMesh) o.userData.keep = true; }); pv.userData.clPupil = g;
+  });
 }
 function clPlayer(out) { headWorld(out); out.y -= state.bodyH; return out; }   // Isaiah's feet
 function clSpawnNear(dist) {
@@ -97,7 +152,8 @@ function clToggle() {
   if (CL.on) { clOff(); return; }
   CL.on = true; CL.code = clCode(); if (!CL.f || (!CL.f.thump && AV.tpl)) clBuild(); CL.f.g.visible = true; CL.f.label.visible = true;
   clSpawnNear(1.6); CL.q = []; CL.cur = null; CL.follow = false; CL.look = 'me';
-  clConnect(); clVoice();
+  clConnect(); clVoice(); if (CL.tts === 'espeak') clEsWorker();   // warm up the robot voice
+  if (typeof VAD !== 'undefined' && VAD.on) setTimeout(() => vadSet(true), 600);
   const msg = `Hi Isaiah! 👋 Tell the chat my code: ${CL.code.toUpperCase()}`;
   clBubble(msg, 30); toast('🤖 Claude buddy is ON! Code: ' + CL.code.toUpperCase(), 8);
   if (ac) [523, 659, 784].forEach((q, i) => tone('triangle', q, q, .15, .15, i * .08));
@@ -152,7 +208,7 @@ function clRun(text) {
     line = line.trim(); if (!line) continue;
     const m = line.match(/^(\S+)\s*(.*)$/); const verb = m[1].toLowerCase().replace(/^\//, ''), arg = m[2] || '';
     if (!CL_VERBS.includes(verb)) { clOut({ ev: 'error', msg: 'unknown command: ' + verb, know: CL_VERBS }); continue; }
-    if (verb === 'stop') { CL.q = []; CL.cur = null; CL.follow = false; CL.anim = null; try { speechSynthesis.cancel(); } catch (e) {} continue; }
+    if (verb === 'stop') { CL.q = []; CL.cur = null; CL.follow = false; CL.anim = null; try { speechSynthesis.cancel(); } catch (e) {} try { CL_ES.src && CL_ES.src.stop(); } catch (e) {} continue; }
     if (verb === 'status') { clStatus(); continue; }
     CL.q.push({ verb, arg, words: arg.split(/\s+/).filter(Boolean) });
   }
@@ -182,7 +238,7 @@ function clStart(a) {
   switch (a.verb) {
     case 'walk': { const x = num(0), z = num(1); if (x === null || z === null) return null; a.tgt = V(x, 0, z); a.near = .35; break; }
     case 'come': a.me = true; a.near = 1.4; break;
-    case 'follow': CL.follow = true; return null;
+    case 'follow': CL.follow = true; CL.fa = null; if (!CL.speaking) clBubble('Following you! 👣', 2.5); return null;
     case 'stay': CL.follow = false; return null;
     case 'say': a.dur = clSay(a.arg); a.dur = Math.max(a.dur, 1); break;
     case 'wave': case 'nod': case 'dance': case 'spin': CL.anim = a.verb; CL.animT = 0; a.dur = { wave: 2.2, nod: 1.3, dance: 4.5, spin: 1.4 }[a.verb]; break;
@@ -202,7 +258,7 @@ function clWalkTo(a, tx, tz, near, dt, fast) {   // returns 'go' | 'there' | 'st
   _cD.set(tx - CL.B.x, 0, tz - CL.B.z); const d = _cD.length();
   if (d < near) return 'there';
   if (d < a.prog - .05) { a.prog = d; a.stuckT = 0; } else if ((a.stuckT += dt) > 3) return 'stuck';
-  const sp = fast || d > 7 ? 3.6 : 1.9; _cD.multiplyScalar(Math.min(sp, d * 3) / d);
+  const sp = fast || d > 7 ? Math.min(5, 3 + d * .25) : 1.9; _cD.multiplyScalar(Math.min(sp, d * 3) / d);
   CL.vel.x += (_cD.x - CL.vel.x) * Math.min(1, dt * 8); CL.vel.z += (_cD.z - CL.vel.z) * Math.min(1, dt * 8);
   CL.wantYaw = Math.atan2(-_cD.x, -_cD.z); return 'go';
 }
@@ -233,7 +289,7 @@ function clStepAction(a, dt) {
     }
     return true;
   }
-  if (CL.speaking && !CL.spOk && tAll - CL.spAt > 2) CL.speaking = false;   // no voice on this device (or it never started): the bubble still shows
+  if (CL.speaking && !CL.spOk && tAll - CL.spAt > 1.5) { CL.tts = 'espeak'; try { speechSynthesis.cancel(); } catch (e) {} clSpeakEs(CL.spText || ''); }   // the browser voice never started: use the robot voice from now on
   return a.t >= (a.dur || 0) && !(a.verb === 'say' && CL.speaking && a.t < a.dur + 8);
 }
 
@@ -254,10 +310,14 @@ function stepClaude(dt) {
   if (!CL.cur && CL.q.length) { const a = CL.q.shift(); CL.cur = clStart(a); }
   CL.wantYaw = null; let moving = false;
   if (CL.cur) { if (clStepAction(CL.cur, dt)) { CL.cur = null; if (CL.anim !== 'throw') CL.anim = CL.anim === 'give' ? null : CL.anim; } else moving = !!(CL.cur.tgt || CL.cur.me || CL.cur.prop) && !CL.cur.arrived; }
-  else if (CL.follow) {
-    clPlayer(_cP); if (CL.B.distanceTo(_cP) > 35) clSpawnNear(2.5);
-    const fa = CL.fa || (CL.fa = { prog: 1e9, stuckT: 0 }); const r = clWalkTo(fa, _cP.x, _cP.z, 1.6, dt, CL.B.distanceTo(_cP) > 4);
-    if (r !== 'go') { fa.prog = 1e9; fa.stuckT = 0; } else moving = true;
+  // follow mode keeps walking after Isaiah, even while the buddy talks, waves or waits
+  if (CL.follow && !moving && !(CL.cur && (CL.cur.tgt || CL.cur.me || CL.cur.prop))) {
+    clPlayer(_cP); const far = Math.hypot(_cP.x - CL.B.x, _cP.z - CL.B.z);
+    if (far > 22 || Math.abs(_cP.y - (CL.B.y - CL_R)) > 6) { clSpawnNear(2); CL.fa = null; }
+    const fa = CL.fa || (CL.fa = { prog: 1e9, stuckT: 0, hop: 0 }); const r = clWalkTo(fa, _cP.x, _cP.z, 1.3, dt, far > 3);
+    if (r === 'go') moving = true;
+    else if (r === 'stuck') { fa.prog = 1e9; fa.stuckT = 0; if (CL.info.ground) CL.vel.y = 4.2; if (++fa.hop > 2 && far > 3) { clSpawnNear(1.6); fa.hop = 0; } }
+    else { fa.prog = 1e9; fa.stuckT = 0; fa.hop = 0; }
   }
   if (!moving) { CL.vel.x *= Math.exp(-dt * 10); CL.vel.z *= Math.exp(-dt * 10); }
   // physics: a ball that walks (gravity + collisions, so it climbs the stump steps and the Wilds hills)
@@ -331,7 +391,7 @@ function stepClaude(dt) {
   if (CL.hand) CL.hand.pos.copy(f.paws[1].position);
   if (CL.es) clUi();
 }
-window.__kg.claude = { run: t => clRun(t), toggle: () => clToggle(), CL };
+window.__kg.claude = { run: t => clRun(t), toggle: () => clToggle(), CL, robotVoice: () => { CL.tts = 'espeak'; } };
 
 /* ---------- Isaiah talks to Claude: speech-to-text (🎤 / blue mic orb), or a type box / quick-talk board ----------
    Whatever he says goes to the -out topic as {ev:'heard', text} so Claude in the chat can read it. */
@@ -476,22 +536,22 @@ self.onmessage = async e => {
   EARS.worker = w; return w;
 }
 function earsPreload() { if (EARS.ready || EARS.loading) return; EARS.loading = true; try { earsWorker().postMessage({ t: 'load' }); toast("⏬ Getting Claude's ears ready (about 40 MB, only the first time)…", 4); } catch (e) { EARS.loading = false; } }
-async function earsStart() {
+async function earsStart(quiet) {
   if (EARS.recOn || EARS.busy) return;
   try {
     if (!EARS.stream || !EARS.stream.active) EARS.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
     EARS.chunks = []; const r = new MediaRecorder(EARS.stream); EARS.rec = r;
     r.ondataavailable = e => { if (e.data && e.data.size) EARS.chunks.push(e.data); };
-    r.onstop = () => earsSend(new Blob(EARS.chunks, { type: r.mimeType || 'audio/webm' }));
-    r.start(); EARS.recOn = true; EARS.recT = 0; earsPreload(); clMicUi();
-    toast(state.xr ? '🎙️ Talk now! Poke the mic again when you\'re done.' : '🎙️ Talk now! Tap 🔴 when you\'re done.', 4);
-    if (ac) tone('sine', 520, 780, .08, .15);
+    r.onstop = () => { if (EARS.skip) { EARS.skip = false; return; } earsSend(new Blob(EARS.chunks, { type: r.mimeType || 'audio/webm' })); };
+    r.start(); EARS.recOn = true; EARS.recT = 0; EARS.lastT = performance.now(); EARS.skip = false; earsPreload(); clMicUi();
+    if (!quiet) toast(state.xr ? '🎙️ Talk now! Poke the mic again when you\'re done.' : '🎙️ Talk now! Tap 🔴 when you\'re done.', 4);
+    if (ac && !quiet) tone('sine', 520, 780, .08, .15);
   } catch (e) { toast('🎙️ No mic allowed, so here are quick-talk buttons instead!', 5); clBoard(state.xr); if (!state.xr) clTypeBox(true); }
 }
-function earsStop() { if (!EARS.recOn) return; EARS.recOn = false; try { EARS.rec.stop(); } catch (e) {} clMicUi(); if (ac) tone('sine', 780, 520, .08, .15); }
+function earsStop() { if (!EARS.recOn) return; EARS.recOn = false; try { EARS.rec.stop(); } catch (e) {} clMicUi(); if (ac && !VAD.on) tone('sine', 780, 520, .08, .15); }
 async function earsSend(blob) {
   if (blob.size < 800) return;
-  EARS.busy = true; clMicUi(); toast('🧠 Claude is listening to that…', 3);
+  EARS.busy = true; clMicUi(); if (!VAD.on) toast('🧠 Claude is listening to that…', 3);
   try {
     const AC = window.AudioContext || window.webkitAudioContext, tmp = new AC(), buf = await tmp.decodeAudioData(await blob.arrayBuffer()); tmp.close && tmp.close();
     const len = Math.max(1, Math.ceil(buf.duration * 16000)), off = new OfflineAudioContext(1, len, 16000), s = off.createBufferSource();
@@ -512,11 +572,82 @@ const _clMicUiOld = clMicUi;
 clMicUi = function () {
   _clMicUiOld();
   const b = $('clMic'); if (b && CLM.broken) { b.classList.toggle('on', EARS.recOn); b.textContent = EARS.recOn ? '🔴' : EARS.busy ? '🧠' : '🎤'; }
-  if (clMicOrb && CLM.broken) { clMicOrb.m.color.set(EARS.recOn ? 0xff4f6d : EARS.busy ? 0xffd25a : 0x3fb2ff); clMicOrb.m.emissive.copy(clMicOrb.m.color); }
+  if (clMicOrb && CLM.broken) { clMicOrb.m.color.set(EARS.recOn ? 0xff4f6d : EARS.busy ? 0xffd25a : VAD.on ? 0x5fd94a : 0x3fb2ff); clMicOrb.m.emissive.copy(clMicOrb.m.color); }
 };
 function stepClaudeEarsRec(dt) {
   if (!EARS.recOn) return;
-  EARS.recT += dt; if (EARS.recT > 10 || !CL.on) earsStop();
+  const now = performance.now(); EARS.recT += Math.min(.5, (now - (EARS.lastT || now)) / 1000); EARS.lastT = now; if (EARS.recT > 10 || !CL.on) earsStop();
   clMicOrb.head.scale.setScalar(1 + Math.sin(tAll * 12) * .12);
 }
 window.__kg.claude.ears = { start: () => earsStart(), stop: () => earsStop(), EARS, broken: v => { CLM.broken = v; } };
+
+/* ---------- ALWAYS LISTENING (👂 button / the green switch on the mic post) ----------
+   Real speech-to-text keeps running where the browser has it. Otherwise a tiny loudness check (voice-activity detection)
+   starts a clip when you talk and sends it to Claude's ears after you stop. It ignores the buddy's own voice. */
+const VAD = { on: store.get('kg-claude-ear') === '1', an: null, src: null, buf: null, loud: 0, quiet: 0, talking: false, t: 0, len: 0, floor: .006 };
+function vadSet(on) {
+  VAD.on = on; store.set('kg-claude-ear', on ? '1' : '0'); vadUi();
+  if (!CL.on) return;
+  if (on) {
+    toast(state.xr ? '👂 Always listening is ON. Just talk to Claude!' : '👂 Always listening is ON. Just talk to Claude! (tap 👂 to stop)', 4);
+    if (!CLM.broken) { if (!CLM.on) clMicStart(); return; }
+    vadStart();
+  } else { toast('👂 Always listening is off. Poke the mic to talk.', 3); if (CLM.on) clMicStop(); vadStop(); }
+}
+async function vadStart() {
+  try {
+    if (!EARS.stream || !EARS.stream.active) EARS.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    const ctx = ac || (window.__clAc = window.__clAc || new (window.AudioContext || window.webkitAudioContext)());
+    if (VAD.src) try { VAD.src.disconnect(); } catch (e) {}
+    VAD.src = ctx.createMediaStreamSource(EARS.stream); VAD.an = ctx.createAnalyser(); VAD.an.fftSize = 1024; VAD.src.connect(VAD.an);
+    VAD.buf = new Float32Array(VAD.an.fftSize); earsPreload();
+  } catch (e) { VAD.on = false; vadUi(); toast('👂 No mic allowed, so always listening can\'t work. Poke buttons instead!', 5); clBoard(state.xr); }
+}
+function vadStop() { if (VAD.src) try { VAD.src.disconnect(); } catch (e) {} VAD.src = VAD.an = null; if (VAD.talking && EARS.recOn) earsStop(); VAD.talking = false; }
+function vadUi() {
+  const b = $('clEar'); if (b) b.classList.toggle('on', VAD.on);
+  if (clEarSw) { clEarSw.m.color.set(VAD.on ? 0x5fd94a : 0x777777); clEarSw.knob.position.y = VAD.on ? .035 : -.035; }
+}
+(() => {
+  const st = document.createElement('style');
+  st.textContent = `#clEar{position:fixed;left:12px;bottom:270px;z-index:20;width:52px;height:52px;border-radius:50%;border:0;font-size:24px;background:#9a9a9a;box-shadow:0 4px 0 #555;cursor:pointer;display:none}
+  #clEar.on{background:#5fd94a;box-shadow:0 4px 0 #2a7a1a;animation:clEarP 1.2s infinite}
+  @keyframes clEarP{50%{transform:scale(1.08)}}`;
+  document.head.appendChild(st);
+  const b = document.createElement('button'); b.id = 'clEar'; b.textContent = '👂'; b.title = 'Always listening'; b.onclick = e => { e.stopPropagation(); vadSet(!VAD.on); b.blur(); }; document.body.appendChild(b);
+})();
+// VR: a little flip switch on the front of the mic post
+const clEarSw = (() => {
+  const g = new THREE.Group(); clMicOrb.g.add(g); g.position.set(0, .62, -.07);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(.09, .13, .02), mat(0x2a2a33)); g.add(plate);
+  const m = new THREE.MeshStandardMaterial({ color: 0x777777, emissive: 0x111111, roughness: .4 });
+  const knob = new THREE.Mesh(new THREE.BoxGeometry(.05, .045, .04), m); knob.position.z = -.02; g.add(knob);
+  const tag = textPanel(256, 96, (c) => { c.fillStyle = '#fff'; c.font = '600 40px Fredoka, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('👂 ALWAYS', 128, 48); });
+  const lab = new THREE.Mesh(new THREE.PlaneGeometry(.12, .045), new THREE.MeshBasicMaterial({ map: tag.t, transparent: true })); lab.position.set(0, -.095, -.012); lab.rotation.y = Math.PI; g.add(lab);
+  return { g, knob, m, cool: 0 };
+})();
+let _vadI = 0;
+function stepVad(dt) {
+  const b = $('clEar'); if (b) b.style.display = state.mode === 'play' && !state.xr && CL.on ? 'block' : 'none';
+  clEarSw.cool -= dt;
+  if (clEarSw.cool <= 0 && (state.area || 'grove') === 'grove') {
+    clEarSw.knob.getWorldPosition(_cT);
+    for (const h of hands) if (h.tracked && h.pos.distanceTo(_cT) < .09) { clEarSw.cool = 1.2; buzz(h, .6, 40); if (ac) tone('square', 300, 300, .04, .1); if (!CL.on) toast('🤖 Turn on your Claude buddy first!', 3); else vadSet(!VAD.on); break; }
+  }
+  if (!CL.on) { if (VAD.an) vadStop(); return; }
+  if (VAD.on && !CLM.broken && !CLM.on && !CLM.rec) clMicStart();   // real speech-to-text: keep it running
+  if (!VAD.on || !CLM.broken) return;
+  if (!VAD.an) { if (!VAD.starting) { VAD.starting = true; vadStart().finally(() => { VAD.starting = false; }); } return; }
+  if (++_vadI % 3) return;   // check loudness ~20 times a second: very cheap
+  const now = performance.now(), rdt = Math.min(.5, (now - (VAD.lastT || now)) / 1000); VAD.lastT = now;   // real seconds (the game clock can run slow)
+  VAD.an.getFloatTimeDomainData(VAD.buf); let s = 0; for (let i = 0; i < VAD.buf.length; i++) s += VAD.buf[i] * VAD.buf[i];
+  const rms = Math.sqrt(s / VAD.buf.length), step = rdt;
+  if (!VAD.talking) VAD.floor += (Math.min(rms, .05) - VAD.floor) * Math.min(1, step * .3);   // learn the room's background noise
+  const thr = Math.max(.012, VAD.floor * 2.6), buddyTalking = CL.speaking;
+  if (rms > thr && !buddyTalking) { VAD.loud += step; VAD.quiet = 0; } else { VAD.quiet += step; if (!VAD.talking) VAD.loud = 0; }
+  if (!VAD.talking && VAD.loud > .12 && !EARS.busy && !EARS.recOn) { VAD.talking = true; VAD.len = 0; earsStart(true); }
+  if (VAD.talking) {
+    VAD.len += step;
+    if (VAD.quiet > .9 || VAD.len > 10 || buddyTalking) { VAD.talking = false; VAD.loud = 0; if (EARS.recOn) { if (VAD.len - VAD.quiet < .35 || buddyTalking) { EARS.skip = true; } earsStop(); } }
+  }
+}
