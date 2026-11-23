@@ -290,20 +290,25 @@ function clToggle() {
   clUi(); clOut({ ev: 'hello' });
 }
 function clOff() {
-  CL.on = false; if (CL.es) { CL.es.close(); CL.es = null; }
+  CL.on = false; if (CL.ess) CL.ess.forEach(x => { try { x.close(); } catch (e) {} }); CL.ess = null; if (CL.es) { CL.es.close(); CL.es = null; }
   if (CL.hand && CL.hand.holding) clRelease(V());
   if (CL.f) CL.f.g.visible = false; if (CL.bubble) CL.bubble.s.visible = false;
   try { window.speechSynthesis && speechSynthesis.cancel(); } catch (e) {}
   toast('🤖 Claude buddy went to nap. 💤', 3); clUi();
 }
+// Two free ntfy servers: Claude's replies are sent to whichever one isn't over its daily limit, so the game listens on BOTH.
+const CL_BASES = ['https://ntfy.sh/', 'https://ntfy.envs.net/'];
 function clConnect() {
   if (CL.es || typeof EventSource === 'undefined') return;
-  try {
-    const es = new EventSource('https://ntfy.sh/' + CL_TOPIC + CL.code + '/sse'); CL.es = es; CL.net = 'connecting';
-    es.onopen = () => { CL.net = 'ok'; clUi(); };
-    es.onerror = () => { CL.net = 'retry'; clUi(); };   // EventSource reconnects on its own
-    es.onmessage = e => { try { const d = JSON.parse(e.data); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} };
-  } catch (e) { CL.net = 'off'; }
+  CL.ess = [];
+  CL_BASES.forEach((base, bi) => {
+    try {
+      const es = new EventSource(base + CL_TOPIC + CL.code + '/sse'); CL.ess.push(es); if (bi === 0) { CL.es = es; CL.net = 'connecting'; }
+      es.onopen = () => { if (bi === 0 || CL.net !== 'ok') CL.net = 'ok'; clUi(); };
+      es.onerror = () => { if (bi === 0) { CL.net = 'retry'; clUi(); } };   // EventSource reconnects on its own
+      es.onmessage = e => { try { const d = JSON.parse(e.data); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} };
+    } catch (e) { if (bi === 0) CL.net = 'off'; }
+  });
   clPollStart();
 }
 // every message runs once, even if it arrives both live (SSE) and from the backup check below
@@ -318,9 +323,13 @@ function clPollStart() {
   CL.poll = setInterval(async () => {
     if (!CL.on || !CL.code || document.hidden || CL.polling) return; CL.polling = true;
     try {
-      const r = await fetch('https://ntfy.sh/' + CL_TOPIC + CL.code + '/json?poll=1&since=' + CL.lastMsgT); if (!r.ok) return;
-      for (const line of (await r.text()).split('\n')) { if (!line.trim()) continue; try { const d = JSON.parse(line); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} }
-    } catch (e) {} finally { CL.polling = false; }
+      for (const base of CL_BASES) {
+        try {
+          const r = await fetch(base + CL_TOPIC + CL.code + '/json?poll=1&since=' + CL.lastMsgT); if (!r.ok) continue;
+          for (const line of (await r.text()).split('\n')) { if (!line.trim()) continue; try { const d = JSON.parse(line); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} }
+        } catch (e) {}
+      }
+    } finally { CL.polling = false; }
   }, 3000);
 }
 function clOut(obj) {   // tell Claude in the chat what happened (status replies, pokes)
@@ -700,10 +709,10 @@ window.__kg.claude.heard = (t) => clHeard(t, 'test');
 
 /* ---------- Claude's own ears: push-to-talk + a tiny Whisper model that runs right in the browser ----------
    For browsers with no speech-to-text (the Quest browser). Poke the mic (or tap 🎤): it records; poke again (or wait 25 s)
-   and the clip is turned into words by Whisper tiny.en (transformers.js, WASM, in a Web Worker so VR stays smooth).
-   No account, no key. The model (~40 MB) downloads once the first time, then the browser keeps it. */
+   and the clip is turned into words by Whisper base.en (transformers.js, WASM, in a Web Worker so VR stays smooth).
+   No account, no key. The model (~80 MB) downloads once the first time, then the browser keeps it. */
 const EARS = { worker: null, ready: false, loading: false, busy: false, rec: null, stream: null, chunks: [], recOn: false, recT: 0, pct: -1, id: 0 };
-const EARS_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.4/dist/transformers.min.js', EARS_MODEL = 'Xenova/whisper-tiny.en';
+const EARS_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.4/dist/transformers.min.js', EARS_MODEL = 'Xenova/whisper-base.en';
 const IS_QUEST = /OculusBrowser|Quest/i.test(navigator.userAgent);
 if (IS_QUEST) CLM.broken = true;   // its SpeechRecognition never hears anything: go straight to Claude's own ears
 /* Whisper tiny goes "you know, you know, you know..." on long, quiet or noisy clips (Vivan's voice, 2026-11-23).
@@ -761,15 +770,15 @@ self.onmessage = async e => {
   const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), { type: 'module' });
   w.onmessage = e => {
     const d = e.data;
-    if (d.t === 'pct') { const p = Math.round(d.pct * 100); if (store.get('kg-ears-ok') !== '1' && /decoder/.test(d.file || '') && p !== EARS.pct && p % 10 === 0) { EARS.pct = p; toast(`⏬ Downloading Claude's ears… ${p}% (only the first time)`, 3); } }
-    else if (d.t === 'ready') { EARS.ready = true; EARS.loading = false; store.set('kg-ears-ok', '1'); }
+    if (d.t === 'pct') { const p = Math.round(d.pct * 100); if (store.get('kg-ears2-ok') !== '1' && /decoder/.test(d.file || '') && p !== EARS.pct && p % 10 === 0) { EARS.pct = p; toast(`⏬ Downloading Claude's ears… ${p}% (only the first time)`, 3); } }
+    else if (d.t === 'ready') { EARS.ready = true; EARS.loading = false; store.set('kg-ears2-ok', '1'); }
     else if (d.t === 'text') { EARS.busy = false; const t = clDeloop(d.text.replace(/\[[^\]]*\]|\([^)]*\)/g, '')).replace(/\b(clod|clawed|claud|clawd|cloud|clot|klaud|klawd|clyde)\b/gi, 'Claude').trim(); if (t.length > 1) clHeard(t, 'voice'); else if (!VAD.on) toast('🎙️ I didn\'t catch that. Try again a bit louder!', 3); clMicUi(); }
     else if (d.t === 'err') { EARS.busy = false; EARS.loading = false; toast('😵 Claude\'s ears broke: ' + d.msg.slice(0, 80) + '. Use the quick-talk board!', 6); clBoard(state.xr); clMicUi(); }
   };
   w.onerror = () => { EARS.busy = false; toast('😵 Claude\'s ears could not load here. Use the quick-talk board!', 6); clBoard(state.xr); };
   EARS.worker = w; return w;
 }
-function earsPreload() { if (EARS.ready || EARS.loading) return; EARS.loading = true; try { earsWorker().postMessage({ t: 'load' }); if (store.get('kg-ears-ok') !== '1') toast("⏬ Getting Claude's ears ready (about 40 MB, only the first time)…", 4); } catch (e) { EARS.loading = false; } }
+function earsPreload() { if (EARS.ready || EARS.loading) return; EARS.loading = true; try { earsWorker().postMessage({ t: 'load' }); if (store.get('kg-ears2-ok') !== '1') toast("⏬ Getting Claude's ears ready (about 80 MB, only the first time)…", 4); } catch (e) { EARS.loading = false; } }
 async function earsStart(quiet) {
   if (EARS.recOn || EARS.busy) return;
   try {
