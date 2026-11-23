@@ -425,6 +425,32 @@ function clStepAction(a, dt) {
   return a.t >= (a.dur || 0) && !(a.verb === 'say' && CL.speaking && a.t < a.dur + 8);
 }
 
+/* ---------- idle: little things the buddy does by itself ---------- */
+const CL_JOKES = [
+  "Remember when I sounded like a toaster? Beep boop! 🤖",
+  "My name is Claude. Not clod. Not clot. CLAUDE. 😤",
+  "Turn left in 500 feet. Just kidding, I'm not Google Maps! 🗺️",
+  "Those dummies used to walk around all by themselves. Spooky! 👻",
+  "I hid the sledgehammer so well, even I couldn't find it! 🔨",
+  "The mic used to flip off by itself. It learned its lesson. 🎤",
+  "Fun fact: my voice is 80 megabytes of pure talent. 😎",
+  "If you hear me say BUSY, I'm building you something cool! 🛠️",
+  "Why did the dummy lose its head? It was too much of a pushover! 😂",
+  "Knock knock. Who's there? Hammer. Hammer who? Hammer time! 🔨🕺",
+];
+function clIdle(dt) {
+  if ((CL.idleT = (CL.idleT ?? 6) - dt) > 0) return;
+  CL.idleT = 5 + Math.random() * 7;
+  const r = Math.random();
+  if (r < .2 && tAll - (CL.jokeT || -1e9) > 70) {   // a joke, at most about once a minute
+    CL.jokeT = tAll; let j; do { j = Math.floor(Math.random() * CL_JOKES.length); } while (j === CL.lastJoke && CL_JOKES.length > 1); CL.lastJoke = j;
+    CL.q.push({ verb: 'say', arg: CL_JOKES[j], words: [] });
+  } else if (r < .55) {   // wander a step or two, staying near Isaiah
+    clPlayer(_cP); const a = Math.random() * Math.PI * 2, d = 1.2 + Math.random() * 1.3;
+    CL.q.push({ verb: 'walk', arg: '', words: [String(_cP.x + Math.cos(a) * d), String(_cP.z + Math.sin(a) * d)] });
+  } else if (r < .75) { CL.anim = pick(['nod', 'spin', 'hop']); CL.animT = 0; }
+  else { const a = Math.random() * Math.PI * 2; CL.look = Math.random() < .5 ? 'me' : V(CL.B.x + Math.cos(a) * 3, 1, CL.B.z + Math.sin(a) * 3); }   // look around
+}
 /* ---------- every frame ---------- */
 function stepClaude(dt) {
   // the VR orb: poke it with a paw
@@ -438,6 +464,11 @@ function stepClaude(dt) {
   if (!CL.on || !CL.f) { if ($('clCode')) $('clCode').style.display = 'none'; return; }
   if (!CL.f.thump && AV.tpl) clBuild();
   const f = CL.f;
+  // listening (paw to ear) / thinking (paw on chin)
+  const listening = !!(EARS.recOn || EARS.vadRec || (CLM.on && !CLM.broken && VAD.on && CL.heardT && tAll - CL.heardT < 1.2));
+  const thinking = !listening && !!CL.thinkT;
+  // idle: when nothing's going on for a while, wander a little, look around and crack a joke now and then (Isaiah's idea)
+  if (!CL.cur && !CL.q.length && !CL.follow && !CL.speaking && !listening && !thinking && !CL.anim && tAll - CL.lastCmd > 20) clIdle(dt); else CL.idleT = Math.max(CL.idleT || 0, 4);
   // run the command queue
   if (!CL.cur && CL.q.length) { const a = CL.q.shift(); CL.cur = clStart(a); }
   CL.wantYaw = null; let moving = false;
@@ -474,6 +505,8 @@ function stepClaude(dt) {
   if (an === 'nod') pitch = Math.sin(at * 9) * .3;
   if (an === 'flip') { pitch = -(at / 1.2) * Math.PI * 2; bob += Math.sin(at / 1.2 * Math.PI) * .9; }
   if (an === 'hop') bob += Math.sin(at / .5 * Math.PI) * .15;
+  if (!an && listening) roll += .22;   // head tilted, listening hard
+  if (!an && thinking) { roll -= .1; pitch += .12; }
   if (!an && CL.look) { _cD.subVectors(lookAt, CL.B); pitch = clamp(Math.atan2(_cD.y - CL_BH, Math.hypot(_cD.x, _cD.z)), -.5, .5) * .7; }
   const yaw = CL.yaw + yawX, feet = CL.B.y - CL_R;
   _cE.set(pitch, yaw, roll); f.head.position.set(CL.B.x, feet + CL_BH + bob, CL.B.z); f.head.quaternion.setFromEuler(_cE);
@@ -494,6 +527,8 @@ function stepClaude(dt) {
     if (an === 'throw' && i === 1) { y = .05; z = -.4 + at * .4; }
     if (an === 'give' && i === 1) { x = .06; y = -.1; z = -.5; }
     if (an === 'flip') { y = .15; x = s * .3; z = -.05; }
+    if (!an && listening && i === 0) { x = -.3; y = .24; z = .02; rx = -1.3; }                       // paw cupped to the ear
+    if (!an && thinking && i === 0) { x = -.06; y = -.12 + Math.sin(tAll * 6) * .01; z = -.2; rx = -.8; }   // paw on chin: hmm…
     if (CL.pokeT > 0) { y += .06 * Math.sin(tAll * 30); }
     _cT.set(x * sc, y * sc, z * sc).applyQuaternion(_cQ); p.position.set(CL.B.x, feet + CL_BH + bob, CL.B.z).add(_cT);
     p.quaternion.copy(_cQ).multiply(_cQ2.setFromAxisAngle(_cP.set(1, 0, 0), rx)); p.scale.set(s * sc, sc, sc);
@@ -533,7 +568,7 @@ const CL_PHRASES = ['👋 Hi Claude!', '🏃 Come here!', '👣 Follow me!', '�
 function clHeard(text, how) {
   text = String(text || '').trim().slice(0, 300); if (!text || !CL.on) return;
   clOut({ ev: 'heard', text, how });
-  if (CL.scr) { clScreenDraw('🤔 THINKING'); CL.thinkT = tAll; }   // Claude got it: show "thinking" until the next command arrives
+  if (CL.scr) { clScreenDraw('🤔 THINKING'); CL.thinkT = tAll; } CL.heardT = tAll; CL.look = 'me';   // Claude got it: show "thinking" until the next command arrives
   toast('🎤 You: ' + text, Math.min(8, 1.5 + text.split(/\s+/).length / 2.3));
   if (!CL.cur && !CL.anim) { CL.anim = 'nod'; CL.animT = 0; }   // the buddy nods: "I heard you"
 }
