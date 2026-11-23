@@ -107,6 +107,15 @@ const CT = { tubes: [], ties: null, nTies: 0, bal: null, str: null, nBal: 0, bal
   const seaT = canvasTex(512, 512, (c, w, h) => { c.fillStyle = '#f4f7ff'; c.fillRect(0, 0, w, h); for (let i = 0; i < 260; i++) { const x = Math.random() * w, y = Math.random() * h, r = 14 + Math.random() * 46, g = c.createRadialGradient(x, y, 0, x, y, r); const v = Math.random() < .5 ? '255,255,255' : '214,224,245'; g.addColorStop(0, `rgba(${v},.8)`); g.addColorStop(1, `rgba(${v},0)`); c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2); } }, [10, 10]);
   CT.sea = new THREE.Group(); CT.sea.position.set(-2, 33.5, -78); CT.sea.visible = false; rcG.add(CT.sea);
   [[0, 1], [-1.2, .8], [-2.6, .6]].forEach(([y, o], i) => { const m = new THREE.Mesh(new THREE.CircleGeometry(150, 48), new THREE.MeshStandardMaterial({ map: seaT, color: 0xffffff, emissive: 0xe6ecff, emissiveIntensity: .45, roughness: 1, transparent: i > 0, opacity: o, side: THREE.DoubleSide, depthWrite: i === 0, fog: false })); m.rotation.x = -Math.PI / 2; m.position.y = y; m.renderOrder = 1; CT.sea.add(m); });
+  // and clouds across the WHOLE sky at the same height, in every direction (one instanced mesh = cheap on Quest)
+  { const sky = [], rnd2 = (i => () => (i = (i * 16807) % 2147483647) / 2147483647)(7);
+    for (let k = 0; k < 70; k++) {
+      const a = rnd2() * Math.PI * 2, d = 22 + Math.sqrt(rnd2()) * 125, cx = -2 + Math.cos(a) * d, cz = -78 + Math.sin(a) * d, cy = 35 + rnd2() * 9, n = 5 + Math.floor(rnd2() * 4), w = 3 + rnd2() * 4;
+      for (let j = 0; j < n; j++) sky.push([cx + (rnd2() - .5) * w * 2.2, cy + (rnd2() - .3) * 1.6, cz + (rnd2() - .5) * w * 1.4, 2.4 + rnd2() * 2.6]);
+    }
+    CT.sky = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 2), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xdde6ff, emissiveIntensity: .4, roughness: 1 }), sky.length);
+    sky.forEach((c, i) => CT.sky.setMatrixAt(i, cm.compose(V(c[0], c[1], c[2]), cq, cs.set(c[3], c[3] * .62, c[3]))));
+    CT.sky.frustumCulled = false; CT.sky.visible = false; rcG.add(CT.sky); }
   CT.cloudS = cl.map(c => c.s); CT.cloud.frustumCulled = false; CT.cloud.renderOrder = 2; rcG.add(CT.cloud);
   // a balloon arch where the track leaves the island, and one over the kicker ramp
   CT.arches = [];
@@ -121,6 +130,7 @@ function coReveal(f) {   // f 0..1: how much of the track exists
   CT.tubes.forEach(m => m.geometry.setDrawRange(0, Math.max(0, iMax) * m.geometry.userData.per));
   let n = 0; while (n < CT.nTies && CT.tieS[n] < sMax) n++; CT.ties.count = n;
   let b = 0; while (b < CT.balS.length && CT.balS[b] < sMax) b++; CT.bal.count = CT.str.count = b;
+  CT.sky.visible = f > .3;
   let c = 0; while (c < CT.cloudS.length && CT.cloudS[c] < sMax + 8) c++; CT.cloud.count = c;
   CT.arches[0].visible = f > .03; CT.arches[1].visible = f > .99;
 }
