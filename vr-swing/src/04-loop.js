@@ -35,6 +35,7 @@ function toast(msg, secs = 3) { const el = $('toast'); el.textContent = msg; el.
 function updateHud() { $('hudB').textContent = `🫐 ${state.got} / ${BERRIES_TOTAL}`; drawWrist(); }
 
 function respawn() {
+  if (typeof PT !== 'undefined' && PT && PT.inside) return partyRespawn();
   if (state.area === 'arena') return arenaRespawn();
   if (state.area === 'wilds') return wildRespawn();
   rig.position.copy(SPAWN); rig.position.y += state.bodyH - eyeLocal(_e).y + .05;
@@ -518,7 +519,7 @@ function update(dt) {
   const focus = CS.on && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
   sun.position.set(focus.x + 12, focus.y + 24, focus.z + 8); sun.target.position.copy(focus);
   scene.userData.sky.position.copy(focus);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepRagdolls(dt); stepClaude(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt);
 
 }
 window.__kg.calibrate = () => calibrate();

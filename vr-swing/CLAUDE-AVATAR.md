@@ -97,3 +97,9 @@ Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
 - Grabbing works on the grove toys (balls, cones, stars), not swords, cubes or ragdolls.
 - Speech-to-text works in Chrome / Edge / Safari on PC and phones. The Quest browser doesn't, so there it uses push-to-talk with the in-browser Whisper model (English only).
 - Anyone who knows the code can send commands, so keep it in the chat.
+
+## At Vivan's birthday party
+
+When someone lands at the party (the hole at the end of the red carpet in the lobby), the buddy turns on by itself and waits on the rug at the
+**cutting station** (it only wanders a tiny bit there, `CL.home`). It says happy birthday to Vivan. Answer her questions with `say ...` as usual.
+Use `come` / `follow` if she wants Claude to walk with her (to the cake room, say).
