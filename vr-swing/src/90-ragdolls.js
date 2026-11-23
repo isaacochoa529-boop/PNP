@@ -49,7 +49,8 @@ const rdShade = (c, k) => new THREE.Color(c).multiplyScalar(k).getHex();
 function rdGeo(fur) {
   if (RD_GEO[fur]) return RD_GEO[fur];
   const T = AV.tpl, paw = makePaw(fur), pw = new THREE.Group(); pw.add(paw); paw.rotation.x = Math.PI / 2; paw.position.y = .06;   // fingers point down the arm, cuff at the wrist
-  return (RD_GEO[fur] = { torso: rdBake(T.torso, fur), head: rdBake(T.head, fur), arm: rdBake(T.arm, fur), elbow: rdBake(T.elbow, fur), paw: rdBake(pw, fur) });
+  const tor = rdBake(T.torso, fur), [top, bot] = rwSplit(tor);   // split at the waist for the cheese pull (91-cheese-saw.js)
+  return (RD_GEO[fur] = { torso: tor, top, bot, head: rdBake(T.head, fur), arm: rdBake(T.arm, fur), elbow: rdBake(T.elbow, fur), paw: rdBake(pw, fur) });
 }
 // cotton puffs / meat + bone that show where a part tore off (unit size, pointing +Y)
 const RD_CAP = {
@@ -86,7 +87,7 @@ function rdSpawnAt(base, yaw, look) {
   // meshes: Thumpling parts in a random fur color
   const GE = rdGeo(L.fur), mk = (g, sh) => { const m = new THREE.Mesh(g, RD_BODY); m.castShadow = !!sh; return m; };
   const torso = new THREE.Group(); rd.g.add(torso); rd.torso = torso; torso.scale.setScalar(RD_DS);
-  const tb = mk(GE.torso, 1); tb.position.set(0, -.26, 0); tb.rotation.y = Math.PI; torso.add(tb);
+  rwBody(rd, GE, mk);   // top + bottom half and the stretchy waist
   const seg = (a, b, thick) => { const s = rdMakeSeg(rd, a, b, null, true); const m = mk(GE.arm); m.scale.set(thick * RD_DS, s.L, thick * RD_DS); s.m.add(m); return s; };
   rd.neck = seg(4, 6, 1.9);
   const head = new THREE.Group(); rd.g.add(head); rd.head = head; const hm = mk(GE.head, 1); hm.rotation.y = Math.PI; hm.scale.setScalar(RD_DS); head.add(hm);
@@ -108,6 +109,7 @@ function rdSolve(rd, c) {
   _rd.subVectors(B.p, A.p); const len = _rd.length() || 1e-6;
   let target = c.L, k = 1;
   if (c.k === 'm') { if (len >= c.L) return; }
+  else if (c.k === 'w') { const e = len - c.L; if (e > 0) { if (e >= c.em) target = c.L + c.em; else k = rwSolveK(rd, c, e); } }   // the waist (cheese pull)
   else if (c.k === 'a') { const G = rd.G[c.g]; if (G.pulled || G.ripped) return; k = .12; }
   else if (c.k === 's') {
     const G = rd.G[c.g], e = len - c.L;
@@ -176,6 +178,7 @@ function rdStep(rd, h) {
     if (G.pulled && G.ratio > thr) G.strain += h * (G.ratio - thr) * rate; else G.strain = Math.max(0, G.strain - h);
     if (G.strain > .55) rdRip(rd, gname);
   }
+  rwStrain(rd, h);
 }
 // Isaiah: "each part of the dummy's bodies should have collision so they don't go through each other"
 // every body ball keeps out of the others (except ones that are joined, or that already overlap when standing normally)
@@ -237,7 +240,8 @@ function rdPulled(rd) {
   let pinBody = false, any = false;
   for (const g in rd.G) rd.G[g].pulled = false;
   RD.held.forEach(x => { if (!x || x.rd !== rd) return; any = true; for (const g in rd.G) if (rd.G[g].parts.includes(x.i)) rd.G[g].pulled = true; if (x.i < 6) pinBody = true; });
-  return { any, pinBody };
+  rwPulled(rd);
+  return { any, pinBody: pinBody || rd.W.pulled };
 }
 
 /* ---------------- drawing the bodies ---------------- */
@@ -252,7 +256,7 @@ function rdOrient(m, pa, pb, fwd, L, stretch, out) {
 function rdTransport(pf, a, b) { _ry.subVectors(b, a).normalize(); pf.addScaledVector(_ry, -pf.dot(_ry)); if (pf.lengthSq() < 1e-6) pf.set(1, 0, 0).cross(_ry); pf.normalize(); return pf; }
 function rdDraw(rd, dt) {
   const P = rd.P; rdTorsoFrame(rd);
-  _rm.makeBasis(rd.rx, rd.up, rd.fwd); rd.torso.quaternion.setFromRotationMatrix(_rm); rd.torso.position.copy(rd.pc);
+  rwPlace(rd);
   for (const s of rd.segs) {
     const f = s.pf ? rdTransport(s.pf, P[s.a].p, P[s.b].p) : rd.fwd;
     rdOrient(s.m, P[s.a].p, P[s.b].p, f, s.L, s.stretch);
@@ -439,7 +443,7 @@ function hmWorld(sp) {
 
 /* ---------------- spawning, fixing, clearing ---------------- */
 function rdGround(x, y0, z) { for (let y = y0 + .6; y > y0 - 5; y -= .05) { const h = pawHit(_rfP.set(x, y, z), .05); if (h && h.n.y > .5) return y - .05; } return null; }
-function rdKill(rd) { scene.remove(rd.g);   // shapes are cached per fur color and shared, nothing to free
+function rdKill(rd) { scene.remove(rd.g); if (rd.W) rd.W.tube.geometry.dispose();   // shapes are cached per fur color and shared, nothing to free
   RD.held.forEach((x, i) => { if (x && x.rd === rd) RD.held[i] = null; }); RD.list.splice(RD.list.indexOf(rd), 1); }
 function rdSpawn() {
   if (state.mode !== 'play') return;
@@ -496,7 +500,8 @@ function rdRelease(slot) {
   return true;
 }
 function rdGrab(h) {   // VR grip
-  if (!h.tracked || RD.held[h.i] || h.hammer) return false;
+  if (!h.tracked || RD.held[h.i] || h.hammer || h.saw) return false;
+  if (sawGrab(h)) return true;
   if (HM.on && !HM.held) { const d = distToSeg(h.pos, HM.a, HM.b); if (d < .1) { hmTake(h); return true; } }
   let best = null, bd = .1;
   for (const rd of RD.list) rd.P.forEach((q, i) => { const d = q.p.distanceTo(h.pos) - q.r; if (d < bd) { bd = d; best = [rd, i]; } });
@@ -504,6 +509,7 @@ function rdGrab(h) {   // VR grip
   rdGrabAt(h.i, best[0], best[1], h, 'vr', V().subVectors(best[0].P[best[1]].p, h.pos)); buzz(h, .6, 40); return true;
 }
 function rdDrop(h) {
+  if (SAW.held === h) { sawDrop(); return true; }
   if (HM.held === h) { hmDrop(); return true; }
   if (RD.held[h.i] && RD.held[h.i].src === 'vr') return rdRelease(h.i);
   return false;
@@ -517,6 +523,7 @@ function rdAim(maxD = 3) {   // PC / phone: what part are you looking at?
 function hmAimed() { if (!HM.on || HM.held) return false; headWorld(_hp); camera.getWorldDirection(_rd); _rv.addVectors(HM.a, HM.b).multiplyScalar(.5).sub(_hp); const al = _rv.dot(_rd); if (al <= 0 || al > 2.8) return false; return Math.sqrt(Math.max(0, _rv.lengthSq() - al * al)) < .25 + al * .03; }
 function rdDesk() {   // E key / phone ✋: toggle-grab what you aim at, or take/drop the hammer
   if (state.xr) return false; const h = hands[1];
+  if (sawDesk()) return true;
   if (HM.held === h) { camera.getWorldQuaternion(_hmQ); hmDrop(V(0, 1, -3).applyQuaternion(_hmQ)); return true; }
   if (RD.held[1]) { rdRelease(1); return true; }
   if (hmAimed() && !h.sword && !BR.held[1]) { hmTake(h); return true; }
@@ -527,6 +534,7 @@ canvas.addEventListener('pointerdown', e => {
   if (state.mode !== 'play' || state.xr || e.button !== 0 || CS.on || (document.pointerLockElement !== canvas && !state.touch)) return;
   if (!state.touch && e.pointerId !== 999 && PUNCH.lockedAt && performance.now() - PUNCH.lockedAt < 150) return;
   const h = hands[1];
+  if (sawPointer(e)) { e.stopImmediatePropagation(); return; }
   if (HM.held === h) { if (HM.swing < 0) { HM.swing = 0; if (ac) noiseHit(ac.currentTime, .12, .05, 'bandpass', 700, .8); } e.stopImmediatePropagation(); return; }
   if (RD.held[1]) { rdRelease(1); e.stopImmediatePropagation(); return; }
   if (h.sword || BR.held[1] || hands.some(x => x.piece || x.cup)) return;
@@ -551,10 +559,10 @@ addEventListener('keydown', e => {
   document.head.appendChild(st);
   const b = document.createElement('button'); b.id = 'rdBtn'; b.textContent = '🧸'; document.body.appendChild(b);
   const d = document.createElement('div'); d.id = 'rdHtml';
-  d.innerHTML = `<h3>🧸 Dummies</h3><button data-a="s">➕ Spawn one${IS_TOUCH ? '' : ' (G)'}</button><button data-a="r">🔧 Fix them all${IS_TOUCH ? '' : ' (H)'}</button><button data-a="c">🗑️ Clear${IS_TOUCH ? '' : ' (J)'}</button><small>${IS_TOUCH ? 'Aim + ✋ Grab an arm or head, walk back to pull!' : 'Hold click on an arm or head and pull. Wheel = reel. E = hammer.'}</small>`;
+  d.innerHTML = `<h3>🧸 Dummies</h3><button data-a="s">➕ Spawn one${IS_TOUCH ? '' : ' (G)'}</button><button data-a="r">🔧 Fix them all${IS_TOUCH ? '' : ' (H)'}</button><button data-a="c">🗑️ Clear${IS_TOUCH ? '' : ' (J)'}</button><button data-a="p">📌 Pin what I aim at${IS_TOUCH ? '' : ' (right-click)'}</button><small>${IS_TOUCH ? 'Aim + ✋ Grab an arm or head, walk back to pull!' : 'Hold click on an arm or head and pull. Wheel = reel. E = hammer / chainsaw. 🧀 Pin one half (right-click), pull the other!'}</small>`;
   document.body.appendChild(d);
   b.onclick = () => { audioOn(); d.style.display = d.style.display === 'block' ? 'none' : 'block'; };
-  d.addEventListener('click', e => { const t = e.target.closest('button'); if (!t) return; ({ s: rdSpawn, r: rdReset, c: rdClear })[t.dataset.a](); });
+  d.addEventListener('click', e => { const t = e.target.closest('button'); if (!t) return; ({ s: rdSpawn, r: rdReset, c: rdClear, p: rwPin })[t.dataset.a](); });
 })();
 let _rdUi = '';
 function rdUi() {
@@ -588,6 +596,7 @@ const RD_TEST = [V(-3.6, 0, 1.3), V(-4.5, 0, 1.1), V(-5.4, 0, 1.3)];   // arena-
 }
 function rdTestZone() {   // fill the empty test spots (missing dummies come back when you return to the yard)
   if (!AV.tpl) return false;
+  if (tAll - (RD.cubeT ?? -99) < 4) return true;   // just got cubed by the chainsaw: wait a moment before a new one pops in
   for (const sp of RD_TEST) {
     const at = V().copy(ARENA).add(sp);
     if (RD.list.some(r => r.home && r.home.distanceTo(at.clone().setY(.06)) < .1)) continue;
@@ -609,7 +618,7 @@ function rdTestRespawn(dt) {
   if ((RD.fillT = (RD.fillT || 0) - dt) < 0) { RD.fillT = 2; rdTestZone(); }   // missing ones (fell off the world) come back too
   for (const rd of RD.list.slice()) {
     if (!rd.home) continue;
-    const wrecked = Object.values(rd.G).some(G => G.ripped), far = Math.hypot(rd.P[0].p.x - rd.home.x, rd.P[0].p.z - rd.home.z) > 2.5 || rd.P[0].p.y < rd.home.y - 3;
+    const wrecked = Object.values(rd.G).some(G => G.ripped) || rd.W.ripped, far = Math.hypot(rd.P[0].p.x - rd.home.x, rd.P[0].p.z - rd.home.z) > 2.5 || rd.P[0].p.y < rd.home.y - 3;
     const held = RD.held.some(x => x && x.rd === rd);
     if ((wrecked || far) && !held) { if ((rd.backT = (rd.backT || 0) + dt) > 6) rdHomeAgain(rd); } else rd.backT = 0;
   }
@@ -627,14 +636,14 @@ function stepRagdolls(dt) {
   if (state.area === 'arena' && RD.area !== 'arena') { if (rdTestZone()) { RD.area = 'arena'; if (!RD.toldTest) { RD.toldTest = true; setTimeout(() => toast('🧸 Test dummies are waiting by the DUMMY TEST sign! Pull them apart 😈', 5), 3500); } } }
   else if (state.area !== 'arena') RD.area = state.area;
   if (state.area === 'arena' && RD.area === 'arena') rdTestRespawn(dt);
-  hmStep(dt); rfxStep(dt); splatStep(dt);
-  if (!RD.list.length) return;
+  hmStep(dt); sawStep(dt); rfxStep(dt); splatStep(dt);
+  if (!RD.list.length) { CHZ.mesh.count = 0; return; }
   // where each held part should be
   headWorld(_hp); camera.getWorldDirection(_rd);
   RD.held.forEach((x, slot) => {
     if (!x) return; if (!RD.list.includes(x.rd)) { RD.held[slot] = null; return; }
     if (x.src === 'vr') { if (!x.h.tracked) { rdRelease(slot); return; } x.t.copy(x.h.pos).add(x.off); }
-    else x.t.copy(_hp).addScaledVector(_rd, RD.pcDist);
+    else if (x.src !== 'pin') x.t.copy(_hp).addScaledVector(_rd, RD.pcDist);
     x.rd.P[x.i].pin = x.t;
   });
   RD.acc = Math.min(RD.acc + dt, RD_STEP * 3);
@@ -658,5 +667,6 @@ function stepRagdolls(dt) {
     }
     if (!rd.asleep || rd.squash > 0) rdDraw(rd, dt);
   }
+  stepCheese(dt);
 }
 window.__kg.rd = { RD, HM, RFX, SPL, spawn: rdSpawn, reset: rdReset, clear: rdClear, grabAt: rdGrabAt, release: rdRelease, aim: rdAim, desk: rdDesk, test: rdTestZone };
