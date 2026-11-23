@@ -226,18 +226,32 @@ function clBuild() {
   if (CL.hand.holding) CL.hand.holding.held = CL.hand;
 }
 // a little screen on the buddy's tummy that says if the real Claude is busy (building something) or free to chat.
-// Claude sets it with the "screen" command, e.g. "screen busy", "screen free" or "screen any text".
+// Claude sets it with the "screen" command, e.g. "screen busy", "screen free", "screen any text 🎉" or "screen pink any text" (first word can be a color, #hex or rainbow).
 function clScreenDraw(text) {
   const P = CL.scr; if (!P) return; const g = P.g, w = P.cv.width, h = P.cv.height;
-  const t = String(text || '').trim(), low = t.toLowerCase();
-  const busy = low === 'busy', free = low === 'free' || !t;
-  const label = busy ? '🛠️ BUSY' : free ? '✅ FREE' : t.slice(0, 24);
-  const bg = busy ? '#ff8a3d' : free ? '#3fbf5f' : '#3fb2ff';
+  // "screen pink 🍕 pizza time" -> a first word that is a color (name or #hex) paints the screen; "rainbow" makes stripes
+  let t = String(text || '').trim(), col = null;
+  const first = t.split(/\s+/)[0] || '';
+  if (/^rainbow$/i.test(first)) { col = 'rainbow'; t = t.slice(first.length).trim(); }
+  else if (first && first.length < 24) { g.fillStyle = '#010203'; g.fillStyle = first; if (g.fillStyle !== '#010203' || /^#010203$/i.test(first)) { col = first; t = t.slice(first.length).trim(); } }
+  const low = t.toLowerCase();
+  const busy = low === 'busy', free = low === 'free' || (!t && !col);
+  const label = busy ? '🛠️ BUSY' : free ? '✅ FREE' : t.slice(0, 48);
+  const bg = col || (busy ? '#ff8a3d' : free ? '#3fbf5f' : '#3fb2ff');
   g.clearRect(0, 0, w, h); g.fillStyle = '#1b1b22'; g.beginPath(); g.roundRect(0, 0, w, h, 34); g.fill();
-  g.fillStyle = bg; g.beginPath(); g.roundRect(14, 14, w - 28, h - 28, 24); g.fill();
-  g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  let fs = 96; g.font = `700 ${fs}px Fredoka, sans-serif`; while (g.measureText(label).width > w - 60 && fs > 30) { fs -= 6; g.font = `700 ${fs}px Fredoka, sans-serif`; }
-  g.fillText(label, w / 2, h / 2 + 4);
+  if (bg === 'rainbow') { const gr = g.createLinearGradient(14, 0, w - 14, 0); ['#ff4d4d', '#ffa64d', '#ffe14d', '#5fd35f', '#4db8ff', '#9b6bff'].forEach((c, i) => gr.addColorStop(i / 5, c)); g.fillStyle = gr; } else g.fillStyle = bg;
+  g.beginPath(); g.roundRect(14, 14, w - 28, h - 28, 24); g.fill();
+  // dark text on light colors, white text on dark ones
+  let light = false; if (bg !== 'rainbow') { g.fillStyle = bg; const hx = g.fillStyle; if (/^#[0-9a-f]{6}$/i.test(hx)) { const n = parseInt(hx.slice(1), 16); light = ((n >> 16) * .299 + ((n >> 8) & 255) * .587 + (n & 255) * .114) > 170; } }
+  g.fillStyle = light ? '#1b1b22' : '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (!light) { g.shadowColor = 'rgba(0,0,0,.45)'; g.shadowBlur = 6; }
+  // one big line, or two lines if it's long
+  let lines = [label], fs = 96; g.font = `700 ${fs}px Fredoka, sans-serif`;
+  if (g.measureText(label).width > (w - 60) * 1.6 && label.includes(' ')) { const ws = label.split(' '); let best = 1, bd = 1e9; for (let i = 1; i < ws.length; i++) { const d = Math.abs(g.measureText(ws.slice(0, i).join(' ')).width - g.measureText(ws.slice(i).join(' ')).width); if (d < bd) { bd = d; best = i; } } lines = [ws.slice(0, best).join(' '), ws.slice(best).join(' ')]; fs = 72; }
+  const fit = () => lines.some(l => g.measureText(l).width > w - 60) || fs * lines.length > h - 50;
+  g.font = `700 ${fs}px Fredoka, sans-serif`; while (fit() && fs > 26) { fs -= 4; g.font = `700 ${fs}px Fredoka, sans-serif`; }
+  lines.forEach((l, i) => g.fillText(l, w / 2, h / 2 + 4 + (i - (lines.length - 1) / 2) * fs * 1.05));
+  g.shadowBlur = 0;
   if (busy) { g.font = '600 34px Fredoka, sans-serif'; }
   P.t.needsUpdate = true; CL.scrText = label;
 }
