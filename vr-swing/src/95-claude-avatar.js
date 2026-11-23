@@ -677,6 +677,40 @@ const EARS = { worker: null, ready: false, loading: false, busy: false, rec: nul
 const EARS_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.4/dist/transformers.min.js', EARS_MODEL = 'Xenova/whisper-tiny.en';
 const IS_QUEST = /OculusBrowser|Quest/i.test(navigator.userAgent);
 if (IS_QUEST) CLM.broken = true;   // its SpeechRecognition never hears anything: go straight to Claude's own ears
+/* Whisper tiny goes "you know, you know, you know..." on long, quiet or noisy clips (Vivan's voice, 2026-11-23).
+   Squash any word or phrase repeated 3+ times in a row down to one, and throw away clips that were only a loop of filler. */
+const CL_FILLER = new Set('you know a little the uh um oh so and i it thank thanks for watching bye okay ok yeah hmm mm like is to'.split(' '));
+function clDeloop(text) {
+  let w = String(text || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean), looped = false;
+  const k = x => x.toLowerCase().replace(/[^a-z0-9']/g, '');
+  for (let pass = 0; pass < 3; pass++) {
+    let changed = false;
+    for (let n = 1; n <= 8; n++) {
+      const out = [];
+      for (let i = 0; i < w.length;) {
+        let reps = 1;
+        if (i + n <= w.length) {
+          const g = w.slice(i, i + n).map(k).join(' ');
+          while (i + (reps + 1) * n <= w.length && w.slice(i + reps * n, i + (reps + 1) * n).map(k).join(' ') === g) reps++;
+          if (reps >= 3 || (reps >= 2 && n >= 3)) {
+            out.push(...w.slice(i, i + n)); i += reps * n; changed = looped = true;
+            // a cut-off leftover of the same phrase ("a little, a little, a") goes too
+            let j = 0; while (j < n && i + j < w.length && k(w[i + j]) === k(w[i - n + j])) j++; if (j && i + j === w.length) i += j;
+            continue;
+          }
+        }
+        out.push(w[i]); i++;
+      }
+      w = out;
+    }
+    if (!changed) break;
+  }
+  const words = w.map(k).filter(Boolean);
+  if (!words.length) return '';
+  if (words.every(x => CL_FILLER.has(x)) && (looped || words.length <= 2 && /^(you|thanks for watching)$/.test(words.join(' ')))) return '';   // Whisper's "nothing was said" noises
+  return w.join(' ').replace(/[,\s]+$/, '').trim();
+}
+window.__clDeloop = clDeloop;
 function earsWorker() {
   if (EARS.worker) return EARS.worker;
   const src = `import { pipeline, env } from '${EARS_LIB}';
@@ -692,7 +726,7 @@ self.onmessage = async e => {
   const d = e.data;
   try {
     if (d.t === 'load') { await load(); return; }
-    if (d.t === 'hear') { const a = await load(); const r = await a(d.pcm, { chunk_length_s: 30 }); self.postMessage({ t: 'text', id: d.id, text: (r && r.text) || '' }); }
+    if (d.t === 'hear') { const a = await load(); let r; try { r = await a(d.pcm, { chunk_length_s: 30, max_new_tokens: 96, no_repeat_ngram_size: 4 }); } catch (e2) { r = await a(d.pcm, { chunk_length_s: 30 }); } self.postMessage({ t: 'text', id: d.id, text: (r && r.text) || '' }); }
   } catch (er) { self.postMessage({ t: 'err', id: d.id, msg: String(er && er.message || er) }); }
 };`;
   const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), { type: 'module' });
@@ -700,7 +734,7 @@ self.onmessage = async e => {
     const d = e.data;
     if (d.t === 'pct') { const p = Math.round(d.pct * 100); if (store.get('kg-ears-ok') !== '1' && /decoder/.test(d.file || '') && p !== EARS.pct && p % 10 === 0) { EARS.pct = p; toast(`⏬ Downloading Claude's ears… ${p}% (only the first time)`, 3); } }
     else if (d.t === 'ready') { EARS.ready = true; EARS.loading = false; store.set('kg-ears-ok', '1'); }
-    else if (d.t === 'text') { EARS.busy = false; const t = d.text.replace(/\[[^\]]*\]|\([^)]*\)/g, '').replace(/\b(clod|clawed|claud|clawd|cloud|clot|klaud|klawd|clyde)\b/gi, 'Claude').trim(); if (t.length > 1) clHeard(t, 'voice'); else toast('🎙️ I didn\'t catch that. Try again a bit louder!', 3); clMicUi(); }
+    else if (d.t === 'text') { EARS.busy = false; const t = clDeloop(d.text.replace(/\[[^\]]*\]|\([^)]*\)/g, '')).replace(/\b(clod|clawed|claud|clawd|cloud|clot|klaud|klawd|clyde)\b/gi, 'Claude').trim(); if (t.length > 1) clHeard(t, 'voice'); else if (!VAD.on) toast('🎙️ I didn\'t catch that. Try again a bit louder!', 3); clMicUi(); }
     else if (d.t === 'err') { EARS.busy = false; EARS.loading = false; toast('😵 Claude\'s ears broke: ' + d.msg.slice(0, 80) + '. Use the quick-talk board!', 6); clBoard(state.xr); clMicUi(); }
   };
   w.onerror = () => { EARS.busy = false; toast('😵 Claude\'s ears could not load here. Use the quick-talk board!', 6); clBoard(state.xr); };
@@ -710,7 +744,7 @@ function earsPreload() { if (EARS.ready || EARS.loading) return; EARS.loading = 
 async function earsStart(quiet) {
   if (EARS.recOn || EARS.busy) return;
   try {
-    if (!EARS.stream || !EARS.stream.active) EARS.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    if (!EARS.stream || !EARS.stream.active) EARS.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
     EARS.chunks = []; const r = new MediaRecorder(EARS.stream); EARS.rec = r;
     r.ondataavailable = e => { if (e.data && e.data.size) EARS.chunks.push(e.data); };
     r.onstop = () => { if (EARS.skip) { EARS.skip = false; return; } earsSend(new Blob(EARS.chunks, { type: r.mimeType || 'audio/webm' })); };
@@ -720,13 +754,26 @@ async function earsStart(quiet) {
   } catch (e) { toast('🎙️ No mic allowed, so here are quick-talk buttons instead!', 5); clBoard(state.xr); if (!state.xr) clTypeBox(true); }
 }
 function earsStop() { if (!EARS.recOn) return; EARS.recOn = false; try { EARS.rec.stop(); } catch (e) {} clMicUi(); if (ac && !VAD.on) tone('sine', 780, 520, .08, .15); }
-async function vadSendPcm(chunks) {   // always-listening: raw sound (with the pre-roll) -> 16 kHz -> Claude's ears
+// 16 kHz sound -> cut the long quiet tail (Whisper makes up words in silence), skip clips with under 0.3 s of voice,
+// and turn quiet or far-away voices (a guest standing next to the headset) up so Whisper can hear them
+function vadTidy(pcm, thr) {
+  const F = 320, nF = Math.floor(pcm.length / F); if (nF < 10) return null;
+  const e = new Float32Array(nF); for (let f = 0; f < nF; f++) { let s = 0; for (let i = f * F; i < f * F + F; i++) s += pcm[i] * pcm[i]; e[f] = Math.sqrt(s / F); }
+  const sorted = Array.from(e).sort((a, b) => a - b), floor = sorted[Math.floor(nF * .2)], gate = Math.max(thr * .8, floor * 2.2, .004);
+  let voiced = 0, last = -1, peak = 0; for (let f = 0; f < nF; f++) if (e[f] > gate) { voiced++; last = f; if (e[f] > peak) peak = e[f]; }
+  if (voiced * .02 < .3) return null;
+  const end = Math.min(pcm.length, (last + 25) * F), out = pcm.slice(0, end);   // keep 0.5 s after the last word
+  const g = Math.min(8, .25 / Math.max(peak, 1e-4)); if (g > 1.2) for (let i = 0; i < out.length; i++) out[i] = Math.max(-1, Math.min(1, out[i] * g));
+  return out;
+}
+async function vadSendPcm(chunks, thr) {   // always-listening: raw sound (with the pre-roll) -> 16 kHz -> Claude's ears
   let n = 0; for (const c of chunks) n += c.length; if (n < VAD.rate * .3) return;
   EARS.busy = true; clMicUi(); earsPreload();
   try {
     const all = new Float32Array(n); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
     const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(n / VAD.rate * 16000)), 16000), b = off.createBuffer(1, n, VAD.rate); b.copyToChannel(all, 0);
-    const s = off.createBufferSource(); s.buffer = b; s.connect(off.destination); s.start(); const pcm = (await off.startRendering()).getChannelData(0).slice();
+    const s = off.createBufferSource(); s.buffer = b; s.connect(off.destination); s.start(); const pcm = vadTidy((await off.startRendering()).getChannelData(0), thr || .007);
+    if (!pcm) { EARS.busy = false; clMicUi(); return; }   // only noise: don't bother Claude
     earsWorker().postMessage({ t: 'hear', id: ++EARS.id, pcm }, [pcm.buffer]);
   } catch (e) { EARS.busy = false; clMicUi(); }
 }
@@ -777,7 +824,7 @@ function vadSet(on) {
 }
 async function vadStart() {
   try {
-    if (!EARS.stream || !EARS.stream.active) EARS.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    if (!EARS.stream || !EARS.stream.active) EARS.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
     const ctx = ac || (window.__clAc = window.__clAc || new (window.AudioContext || window.webkitAudioContext)());
     if (VAD.src) try { VAD.src.disconnect(); } catch (e) {}
     VAD.src = ctx.createMediaStreamSource(EARS.stream); VAD.an = ctx.createAnalyser(); VAD.an.fftSize = 1024; VAD.src.connect(VAD.an);
@@ -840,14 +887,17 @@ function stepVad(dt) {
   VAD.an.getFloatTimeDomainData(VAD.buf); let s = 0; for (let i = 0; i < VAD.buf.length; i++) s += VAD.buf[i] * VAD.buf[i];
   const rms = Math.sqrt(s / VAD.buf.length), step = rdt;
   if (!VAD.talking) VAD.floor += (Math.min(rms, .05) - VAD.floor) * Math.min(1, step * .3);   // learn the room's background noise
-  const thr = Math.max(.012, VAD.floor * 2.6), buddyTalking = CL.speaking;
-  if (rms > thr && !buddyTalking) { VAD.loud += step; VAD.quiet = 0; } else { VAD.quiet += step; if (!VAD.talking) VAD.loud = 0; }
-  if (!VAD.talking && VAD.loud > .12 && !EARS.busy && !EARS.recOn && VAD.sp) { VAD.talking = true; VAD.len = 0; VAD.clip = VAD.ring.slice(); VAD.ring = []; VAD.ringLen = 0; EARS.vadRec = true; clMicUi(); }
-  else if (!VAD.talking && VAD.loud > .12 && !EARS.busy && !EARS.recOn && !VAD.sp) { VAD.talking = true; VAD.len = 0; earsStart(true); }
+  const thr = Math.max(.006, VAD.floor * 2.2), buddyTalking = CL.speaking;   // quieter than before so a guest's voice counts too
+  // while a clip runs, "quiet" means well under how loud this person was talking, so a noisy room can't keep it going forever
+  const on = VAD.talking ? rms > Math.max(thr * .9, VAD.pk * .14) : rms > thr;
+  if (VAD.talking && rms > VAD.pk) VAD.pk = rms; else if (VAD.talking) VAD.pk *= Math.pow(.85, step);
+  if (on && !buddyTalking) { VAD.loud += step; VAD.quiet = 0; } else { VAD.quiet += step; if (!VAD.talking) VAD.loud = 0; }
+  if (!VAD.talking && VAD.loud > .1 && !EARS.busy && !EARS.recOn && VAD.sp) { VAD.talking = true; VAD.len = 0; VAD.pk = rms; VAD.thr = thr; VAD.clip = VAD.ring.slice(); VAD.ring = []; VAD.ringLen = 0; EARS.vadRec = true; clMicUi(); }
+  else if (!VAD.talking && VAD.loud > .1 && !EARS.busy && !EARS.recOn && !VAD.sp) { VAD.talking = true; VAD.len = 0; VAD.pk = rms; VAD.thr = thr; earsStart(true); }
   if (VAD.talking) {
     VAD.len += step;
-    if (VAD.quiet > 1.7 || VAD.len > 25 || buddyTalking) { VAD.talking = false; VAD.loud = 0;
-      if (VAD.clip) { const ch = VAD.clip; VAD.clip = null; EARS.vadRec = false; clMicUi(); if (!(VAD.len - VAD.quiet < .35 || buddyTalking)) vadSendPcm(ch); }
+    if (VAD.quiet > 1.3 || VAD.len > 12 || buddyTalking) { VAD.talking = false; VAD.loud = 0;
+      if (VAD.clip) { const ch = VAD.clip; VAD.clip = null; EARS.vadRec = false; clMicUi(); if (!(VAD.len - VAD.quiet < .35 || buddyTalking)) vadSendPcm(ch, VAD.thr); }
       if (EARS.recOn) { if (VAD.len - VAD.quiet < .35 || buddyTalking) { EARS.skip = true; } earsStop(); } }
   }
 }
