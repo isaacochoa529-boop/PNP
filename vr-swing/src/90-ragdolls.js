@@ -373,6 +373,26 @@ function hmHit() {
     _rv.copy(HM.vel).normalize().negate();
     if (sp > 2.5) { const n = Math.min(8, Math.floor(sp)); for (let i = 0; i < n; i++) { _rfV.set(Math.random() - .5, Math.random() * .8, Math.random() - .5).multiplyScalar(1.4).addScaledVector(_rv, .6);
       if (HZ.on) rfxAdd(hp, _rfV, .012, .01, .012, pick([0x7a0f14, 0x9b1b1f, 0xb83a3a]), 10, 9.8, .3, rd.floor, 1); else rfxAdd(hp, _rfV, .015, .012, .015, 0xffffff, 12, 3.2, 1.8, rd.floor); } }
+  }  hmWorld(sp);
+}
+// Isaiah: "the sledgehammer doesn't interact with anything in the Slicing Yard": now it smashes glass and knocks cubes around
+const _hmN = V(), _hmL = V(), _hmP = V();
+function hmWorld(sp) {
+  if (state.area !== 'arena') return;
+  if (typeof GL !== 'undefined') for (const pane of GL.panes) {
+    if (tAll - (pane.hmT || 0) < .3 || paneSdf(pane, HM.head, _hmN) > .075) continue;
+    pane.hmT = tAll; toPane(pane, _hmP.copy(HM.head).sub(ARENA), _hmL);
+    const r = glassHit(pane, clamp(_hmL.x, -pane.W / 2 + .03, pane.W / 2 - .03), clamp(_hmL.y, .05, pane.H - .05), sp * 1.7, HM.vel.clone(), { R: .17 });
+    if (HM.held && r !== 'miss') buzz(HM.held, r === 'break' ? 1 : .6, 50);
+  }
+  if (typeof AR !== 'undefined' && AR.pieces) for (const pc of AR.pieces) {
+    if (!pc.body || pc.dying || pc.held || tAll - (pc.hmT || 0) < .25) continue;
+    const t = pc.body.translation(); if ((t.x - HM.head.x) ** 2 + (t.y - HM.head.y) ** 2 + (t.z - HM.head.z) ** 2 > (pc.rad + .07) ** 2) continue;
+    if (typeof mine === 'function' && !mine(pc)) continue;
+    pc.hmT = tAll; const m = pc.body.mass() * Math.min(sp, 10) * .7, d = _hmP.copy(HM.vel).normalize();
+    pc.body.applyImpulseAtPoint({ x: d.x * m, y: d.y * m + m * .15, z: d.z * m }, { x: HM.head.x, y: HM.head.y, z: HM.head.z }, true);
+    if (ac) { tone('sine', 220, 80, .14, clamp(sp / 20, .06, .25)); noiseHit(ac.currentTime, .06, clamp(sp / 30, .04, .2), 'bandpass', 1400, 1); }
+    if (HM.held) buzz(HM.held, clamp(sp / 8, .3, 1), 40);
   }
 }
 
