@@ -186,6 +186,8 @@ function clPvPump() {
     s.onended = () => { if (CL_PV.src !== s) return; CL_PV.src = null; if (d.last) CL.speaking = false; else clPvPump(); };
   } catch (e) { CL.speaking = false; }
 }
+// Isaiah started talking: Claude stops talking (the words stay in the bubble) and listens
+function clHush() { if (!CL.speaking) return; try { speechSynthesis.cancel(); } catch (e) {} try { CL_ES.src && CL_ES.src.stop(); } catch (e) {} clPvStop(); CL.speaking = false; }
 function clPvStop() { CL_PV.id++; CL_PV.q = []; const s = CL_PV.src; CL_PV.src = null; try { s && s.stop(); } catch (e) {} }
 function clSpeakPv(text) {
   clPvStop(); const id = CL_PV.id, w = clPvWorker(); if (!w) return false;
@@ -942,7 +944,12 @@ function stepVad(dt) {
   VAD.an.getFloatTimeDomainData(VAD.buf); let s = 0; for (let i = 0; i < VAD.buf.length; i++) s += VAD.buf[i] * VAD.buf[i];
   const rms = Math.sqrt(s / VAD.buf.length), step = rdt;
   if (!VAD.talking) VAD.floor += (Math.min(rms, .05) - VAD.floor) * Math.min(1, step * .3);   // learn the room's background noise
-  const thr = Math.max(.006, VAD.floor * 2.2), buddyTalking = CL.speaking;   // quieter than before so a guest's voice counts too
+  const thr = Math.max(.006, VAD.floor * 2.2);   // quieter than before so a guest's voice counts too
+  // no talking over each other: if Claude starts talking while you are, or you talk clearly louder than Claude's
+  // own voice leaking into the mic, Claude stops and listens (your sentence is kept, not thrown away)
+  if (CL.speaking && VAD.talking) clHush();
+  if (CL.speaking) { VAD.barge = rms > Math.max(thr * 4, .035) ? (VAD.barge || 0) + step : 0; if (VAD.barge > .3) { VAD.barge = 0; clHush(); VAD.loud = .11; } }
+  const buddyTalking = CL.speaking;
   // while a clip runs, "quiet" means well under how loud this person was talking, so a noisy room can't keep it going forever
   const on = VAD.talking ? rms > Math.max(thr * .9, VAD.pk * .14) : rms > thr;
   if (VAD.talking && rms > VAD.pk) VAD.pk = rms; else if (VAD.talking) VAD.pk *= Math.pow(.85, step);
