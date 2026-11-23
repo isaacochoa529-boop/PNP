@@ -389,7 +389,10 @@ function clStart(a) {
 function clWalkTo(a, tx, tz, near, dt, fast) {   // returns 'go' | 'there' | 'stuck'
   _cD.set(tx - CL.B.x, 0, tz - CL.B.z); const d = _cD.length();
   if (d < near) return 'there';
-  if (d < a.prog - .05) { a.prog = d; a.stuckT = 0; } else if ((a.stuckT += dt) > 3) return 'stuck';
+  // "making progress" = getting closer, or (when chasing Isaiah, who moves) actually moving. Only no progress for 3 s counts as stuck.
+  const mv = a.me && a.lx !== undefined ? Math.hypot(CL.B.x - a.lx, CL.B.z - a.lz) : 0;
+  if (a.lx === undefined || d < a.prog - .05 || mv > .4) { a.prog = Math.min(a.prog, d); a.stuckT = 0; a.lx = CL.B.x; a.lz = CL.B.z; }
+  else if ((a.stuckT += dt) > 3) return 'stuck';
   const sp = fast || d > 7 ? Math.min(5, 3 + d * .25) : 1.9; _cD.multiplyScalar(Math.min(sp, d * 3) / d);
   CL.vel.x += (_cD.x - CL.vel.x) * Math.min(1, dt * 8); CL.vel.z += (_cD.z - CL.vel.z) * Math.min(1, dt * 8);
   CL.wantYaw = Math.atan2(-_cD.x, -_cD.z); return 'go';
@@ -402,7 +405,14 @@ function clStepAction(a, dt) {
     if (a.prop && a.prop.held && a.prop.held !== CL.hand && a.t > .1) { clSay('Hey, you took it first! 😆'); return true; }
     if (!a.arrived) {
       const r = clWalkTo(a, tx, tz, a.near, dt);
-      if (r === 'stuck') { clSay(a.prop ? "I can't reach it 😅" : "I'm stuck! 😅"); clOut({ ev: 'stuck', verb: a.verb }); return true; }
+      if (r === 'stuck') {   // blocked: hop once, then just zoop over (never moan "I'm stuck" in Isaiah's ear)
+        a.prog = 1e9; a.stuckT = 0; a.lx = undefined;
+        if (a.idle) return true;   // an idle wander spot that's inside a tree/wall: forget it quietly
+        if (!a.hops && CL.info.ground) { a.hops = 1; CL.vel.y = 4.2; return false; }
+        if (a.me) clSpawnNear(a.near * .9);
+        else { CL.B.set(tx, Math.max(CL.B.y, (a.prop ? a.prop.g.position.y : state.area === 'wilds' ? groundAt(tx, tz) : 0) + CL_R + .3), tz); CL.vel.set(0, 0, 0); if (a.prop) CL.B.x += .4; }
+        clOut({ ev: 'unstuck', verb: a.verb }); return !!a.tgt;   // a plain walk is done once it's there
+      }
       if (r === 'go') return a.t > 40;
       a.arrived = true; a.t2 = 0;
     }
@@ -447,7 +457,7 @@ function clIdle(dt) {
     CL.q.push({ verb: 'say', arg: CL_JOKES[j], words: [] });
   } else if (r < .55) {   // wander a step or two, staying near Isaiah
     clPlayer(_cP); const a = Math.random() * Math.PI * 2, d = 1.2 + Math.random() * 1.3;
-    CL.q.push({ verb: 'walk', arg: '', words: [String(_cP.x + Math.cos(a) * d), String(_cP.z + Math.sin(a) * d)] });
+    CL.q.push({ verb: 'walk', arg: '', idle: true, words: [String(_cP.x + Math.cos(a) * d), String(_cP.z + Math.sin(a) * d)] });
   } else if (r < .75) { CL.anim = pick(['nod', 'spin', 'hop']); CL.animT = 0; }
   else { const a = Math.random() * Math.PI * 2; CL.look = Math.random() < .5 ? 'me' : V(CL.B.x + Math.cos(a) * 3, 1, CL.B.z + Math.sin(a) * 3); }   // look around
 }
@@ -477,9 +487,9 @@ function stepClaude(dt) {
   if (CL.follow && !moving && !(CL.cur && (CL.cur.tgt || CL.cur.me || CL.cur.prop))) {
     clPlayer(_cP); const far = Math.hypot(_cP.x - CL.B.x, _cP.z - CL.B.z);
     if (far > 22 || Math.abs(_cP.y - (CL.B.y - CL_R)) > 6) { clSpawnNear(2); CL.fa = null; }
-    const fa = CL.fa || (CL.fa = { prog: 1e9, stuckT: 0, hop: 0 }); const r = clWalkTo(fa, _cP.x, _cP.z, 1.3, dt, far > 3);
+    const fa = CL.fa || (CL.fa = { prog: 1e9, stuckT: 0, hop: 0, me: true }); const r = clWalkTo(fa, _cP.x, _cP.z, 1.3, dt, far > 3);
     if (r === 'go') moving = true;
-    else if (r === 'stuck') { fa.prog = 1e9; fa.stuckT = 0; if (CL.info.ground) CL.vel.y = 4.2; if (++fa.hop > 2 && far > 3) { clSpawnNear(1.6); fa.hop = 0; } }
+    else if (r === 'stuck') { fa.prog = 1e9; fa.stuckT = 0; fa.lx = undefined; if (CL.info.ground) CL.vel.y = 4.2; if (++fa.hop > 2 && far > 3) { clSpawnNear(1.6); fa.hop = 0; } }
     else { fa.prog = 1e9; fa.stuckT = 0; fa.hop = 0; }
   }
   if (!moving) { CL.vel.x *= Math.exp(-dt * 10); CL.vel.z *= Math.exp(-dt * 10); }
