@@ -7,89 +7,49 @@
            · phone: aim, then ✋ Grab (or ⚔️ Use) to grab, tap again to let go
    Pull an arm or the head: the part itself stretches (up to half a person longer), then RIPS off.
    Normal = cotton stuffing pops out. Horror mode = meat + bones.
-   They talk (mouth opens, eyes go wide). There's a hammer 🔨 to bonk them with.
+   They look like the player (a Thumpling made from the same model) and are blank, silent test dummies.
+   3 of them stand ready in the DUMMY TEST zone of the Slicing Yard. There's a sledgehammer 🔨 to bonk them with.
    Not shared in multiplayer rooms (each player has their own dummies).
    ====================================================================== */
-const RD = { list: [], MAX: 4, H: 1.3, acc: 0, hz: null, held: [null, null], pcDist: 1.3, stickPrev: [false, false], stickT: 0, hintT: 0, told: false, toldRip: false, seq: 0 };
+const RD = { list: [], MAX: 6, H: .95, acc: 0, hz: null, held: [null, null], pcDist: 1.3, stickPrev: [false, false], stickT: 0, hintT: 0, told: false, toldRip: false, seq: 0 };
 const RD_EXTRA = RD.H * .5;                         // a part can stretch half a person longer before it rips
 const RD_STEP = 1 / 60;
 const RD_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .8, metalness: 0 });
-// particles: 0 sL 1 sR 2 hL 3 hR 4 neck 5 belly | 6 head | 7 eL 8 eR 9 wL 10 wR | 11 kL 12 kR 13 fL 14 fR
-const RD_REST = [[-.165, .99, 0], [.165, .99, 0], [-.085, .62, 0], [.085, .62, 0], [0, 1.05, -.005], [0, .82, .1], [0, 1.19, .012],
-  [-.2, .75, -.01], [.2, .75, -.01], [-.225, .53, .035], [.225, .53, .035], [-.095, .34, .02], [.095, .34, .02], [-.1, .075, 0], [.1, .075, 0]];
-const RD_RAD = [.07, .07, .075, .075, .06, .09, .1, .042, .042, .045, .045, .052, .052, .05, .05];
-const RD_IM = [.25, .25, .25, .25, .25, .25, .6, 1, 1, 1, 1, .8, .8, 1, 1];
-const RD_STAND_K = [.06, .06, .06, .06, .06, .06, .04, .012, .012, .008, .008, .035, .035, .02, .02];
-const RD_SKIN = [0xf2c9a5, 0xe0ac84, 0xc68a62, 0x9b6544, 0x6e4630, 0xf5d5bd];
-const RD_HAIR = [0x2b1a10, 0x5a3418, 0xd9a441, 0x1a1a1a, 0x9a3b1c, 0x6b6b6b];
-const RD_SHIRT = [0xe2453c, 0x3c7be2, 0x3fbf6a, 0xf2b234, 0x8b5ad8, 0xf07ab0, 0x2bb3b8, 0xffffff];
-const RD_PANTS = [0x2d3f6e, 0x3a3a3a, 0x6b4a2e, 0x4f6b3a, 0x22252e, 0x7d7f86];
-const RD_IRIS = [0x5a3a1c, 0x3a7bd5, 0x3d8a4a, 0x2a1a10, 0x7a8a9a];
+// particles: 0 sL 1 sR 2 hL 3 hR 4 neck 5 belly | 6 head | 7 eL 8 eR 9 wL 10 wR | 11-14 the bean's bottom (hidden, they're its "feet")
+const RD_DS = .85;   // a bit smaller than the model's full size, like a player
+const RD_REST = [[-.235, .465, -.02], [.235, .465, -.02], [-.13, .14, 0], [.13, .14, 0], [0, .6, 0], [0, .33, .14], [0, .85, .02],
+  [-.33, .27, .1], [.33, .27, .1], [-.36, .08, .26], [.36, .08, .26], [-.12, .08, -.13], [.12, .08, -.13], [-.12, .07, .08], [.12, .07, .08]].map(a => a.map(v => v * RD_DS));
+const RD_RAD = [.1, .1, .13, .13, .1, .12, .2, .05, .05, .07, .07, .07, .07, .07, .07].map(v => v * RD_DS);
+const RD_IM = [.25, .25, .25, .25, .25, .25, .6, 1, 1, 1, 1, .25, .25, .25, .25];
+const RD_STAND_K = [.06, .06, .06, .06, .06, .06, .04, .012, .012, .008, .008, .03, .03, .02, .02];
+const RD_FUR = [0x2fc6a3, 0xff8a3d, 0x8b6bff, 0xff5f9e, 0x3fa0ff, 0xffd25a, 0x5ad36b, 0xe8e8f0];
 const pick = a => a[Math.floor(Math.random() * a.length)];
 
-/* ---------------- building the bodies (rounded, human proportions, ~6.5 heads tall) ---------------- */
+/* ---------------- building the bodies: the same Thumpling model the player wears ---------------- */
 function rdCol(g, c) { const col = new THREE.Color(c), n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) col.toArray(a, i * 3); g.setAttribute('color', new THREE.BufferAttribute(a, 3)); return g; }
-function rdColBy(g, fn) { const p = g.attributes.position, n = p.count, a = new Float32Array(n * 3), c = new THREE.Color(); for (let i = 0; i < n; i++) { c.set(fn(p.getX(i), p.getY(i), p.getZ(i))); c.toArray(a, i * 3); } g.setAttribute('color', new THREE.BufferAttribute(a, 3)); return g; }
 function rdT(g, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0) { g.scale(sx, sy, sz); if (rx) g.rotateX(rx); if (ry) g.rotateY(ry); if (rz) g.rotateZ(rz); g.translate(x, y, z); return g; }
 const rdS = (r, w = 12, h = 8) => new THREE.SphereGeometry(r, w, h);
 function rdMerge(list) { const g = mergeGeometries(list); list.forEach(x => x.dispose()); return g; }
-// a rounded, tapered limb along +Y from 0 (joint) to L (next joint)
-function rdLimbG(L, r0, r1, colFn) {
-  const pts = [];
-  for (let i = 0; i <= 4; i++) { const a = -Math.PI / 2 + i / 4 * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r0 + 1e-4, Math.sin(a) * r0)); }
-  pts.push(new THREE.Vector2((r0 * .7 + r1 * .3) * 1.06, L * .3));
-  for (let i = 0; i <= 4; i++) { const a = i / 4 * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r1 + 1e-4, L + Math.sin(a) * r1)); }
-  return rdColBy(new THREE.LatheGeometry(pts, 10), colFn);
+// Each Thumpling part is baked into ONE mesh with its colors painted on the vertices (1 draw call per part instead of ~50 per dummy: Quest stays smooth).
+// No smile: blank test dummies.
+const RD_GEO = {}, RD_BODY = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .85 }), _bkM = new THREE.Matrix4();
+function rdBake(obj, fur) {
+  obj.updateMatrixWorld(true); const inv = obj.matrixWorld.clone().invert(), parts = [];
+  obj.traverse(c => {
+    if (!c.isMesh || c.name === 'Smile') return;
+    let g = c.geometry.clone(); if (g.index) g = g.toNonIndexed(); g.applyMatrix4(_bkM.multiplyMatrices(inv, c.matrixWorld));
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    if (!g.attributes.normal) g.computeVertexNormals();
+    const m = Array.isArray(c.material) ? c.material[0] : c.material, n = m.name || '';
+    rdCol(g, n === 'Fur' || m === obj.userData.fur ? fur : n === 'FurDark' ? rdShade(fur, .72) : m.color ? m.color.getHex() : 0xffffff); parts.push(g);
+  });
+  return rdMerge(parts);
 }
 const rdShade = (c, k) => new THREE.Color(c).multiplyScalar(k).getHex();
-function rdLook() {
-  return { skin: pick(RD_SKIN), hair: pick(RD_HAIR), shirt: pick(RD_SHIRT), pants: pick(RD_PANTS), iris: pick(RD_IRIS), style: Math.floor(Math.random() * 4), accent: pick(RD_SHIRT), voice: 240 + Math.random() * 200 };
-}
-function rdTorsoG(L) {
-  const prof = [[0, -.075], [.09, -.065], [.13, -.02], [.14, .05], [.138, .072], [.137, .078], [.136, .098], [.135, .102], [.128, .13], [.12, .2], [.135, .27], [.152, .33], [.15, .37], [.125, .405], [.07, .43], [0, .44]];
-  const g = new THREE.LatheGeometry(prof.map(p => new THREE.Vector2(p[0] + 1e-4, p[1])), 18); g.scale(1.08, 1, .64);
-  rdColBy(g, (x, y) => y < .075 ? L.pants : y < .1 ? 0x2a1d14 : L.shirt);
-  const P = [g];
-  for (const s of [-1, 1]) {
-    P.push(rdCol(rdT(rdS(.06, 10, 8), s * .145, .365, 0, 1, .9, 1), L.shirt));     // round shoulders
-    P.push(rdCol(rdT(rdS(.072, 10, 8), s * .066, -.01, 0, 1, 1, .9), L.pants));   // hips
-  }
-  P.push(rdCol(rdT(new THREE.TorusGeometry(.046, .012, 6, 14), 0, .422, 0, 1, 1, 1, Math.PI / 2), rdShade(L.shirt, .8)));   // collar
-  P.push(rdCol(rdT(rdS(.032, 10, 6), .05, .3, .088, 1, 1, .25), L.accent));      // a little shirt badge
-  P.push(rdCol(rdT(new THREE.CylinderGeometry(.012, .012, .01, 8), 0, .087, .086, 1, 1, 1, Math.PI / 2), 0xd8b04a));   // belt buckle
-  return rdMerge(P);
-}
-function rdHeadG(L) {
-  const s = L.skin, P = [];
-  P.push(rdCol(rdT(rdS(.095, 18, 14), 0, .012, 0, 1, 1.12, 1.03), s));       // skull (egg shaped)
-  P.push(rdCol(rdT(rdS(.072, 14, 10), 0, -.042, .02), s));                     // jaw + cheeks, narrower than the skull
-  P.push(rdCol(rdT(rdS(.016, 8, 6), 0, -.02, .1, 1, 1.2, 1), rdShade(s, .93)));  // nose
-  for (const x of [-1, 1]) P.push(rdCol(rdT(rdS(.026, 8, 6), x * .094, -.004, -.006, .45, 1, .75), rdShade(s, .95)));   // ears
-  const hair = L.hair;
-  P.push(rdCol(rdT(new THREE.SphereGeometry(.101, 18, 10, 0, Math.PI * 2, 0, Math.PI * .5), 0, .018, -.004, 1.04, 1.14, 1.06, -.42), hair));
-  if (L.style === 0) for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2; P.push(rdCol(rdT(rdS(.034, 8, 6), Math.cos(a) * .045, .095, Math.sin(a) * .04 - .01, 1, .7, 1), hair)); }
-  if (L.style === 1) for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2; P.push(rdCol(rdT(new THREE.CylinderGeometry(0, .024, .075, 6), Math.cos(a) * .04, .12, Math.sin(a) * .04 - .015, 1, 1, 1, Math.sin(a) * .5, 0, -Math.cos(a) * .5), hair)); }
-  if (L.style === 2) P.push(rdCol(rdT(rdS(.045, 10, 8), 0, .085, -.075), hair));   // bun
-  if (L.style === 3) { P.push(rdCol(rdT(rdS(.1, 12, 10), 0, -.035, -.045, 1.02, 1.05, .62), hair)); P.push(rdCol(rdT(new THREE.CapsuleGeometry(.028, .1, 4, 8), 0, -.12, -.09), hair)); }
-  return rdMerge(P);
-}
-function rdEyeG(L, side) {
-  const P = [rdCol(rdT(rdS(.027, 14, 12), 0, 0, 0, 1, 1.08, .7), 0xffffff)];                     // big round bulgy eye
-  P.push(rdCol(rdT(rdS(.011, 10, 8), 0, -.002, .016, 1, 1, .45), L.iris));
-  P.push(rdCol(rdT(rdS(.0068, 8, 6), 0, -.002, .0195), 0x080808));
-  P.push(rdCol(rdT(rdS(.0028, 6, 4), .004, .003, .0215), 0xffffff));
-  P.push(rdCol(rdT(new THREE.CapsuleGeometry(.0045, .022, 3, 6), 0, .041, .006, 1, 1, 1, 0, 0, Math.PI / 2 + side * .12), L.hair));   // eyebrow
-  return rdMerge(P);
-}
-function rdMouthG() {
-  return rdMerge([rdCol(rdT(rdS(.024, 14, 10), 0, 0, 0, 1.2, 1, .42), 0x1e0508), rdCol(rdT(rdS(.014, 8, 6), 0, -.012, .004, 1.1, .45, .6), 0xc8505c),
-    rdCol(rdT(rdS(.017, 8, 6), 0, .014, .002, 1.15, .3, .5), 0xffffff)]);
-}
-function rdHandG(skin) {
-  const P = [rdCol(rdT(rdS(1, 10, 8), 0, .045, 0, .02, .045, .04), skin)];
-  for (let i = 0; i < 4; i++) P.push(rdCol(rdT(new THREE.CapsuleGeometry(.0075, .034, 3, 6), 0, .1 - Math.abs(i - 1.5) * .006, -.022 + i * .0145, 1, 1, 1, .18), skin));
-  P.push(rdCol(rdT(new THREE.CapsuleGeometry(.009, .028, 3, 6), .004, .05, .038, 1, 1, 1, .7), skin));   // thumb, angled forward
-  return rdMerge(P);
+function rdGeo(fur) {
+  if (RD_GEO[fur]) return RD_GEO[fur];
+  const T = AV.tpl, paw = makePaw(fur), pw = new THREE.Group(); pw.add(paw); paw.rotation.x = Math.PI / 2; paw.position.y = .06;   // fingers point down the arm, cuff at the wrist
+  return (RD_GEO[fur] = { torso: rdBake(T.torso, fur), head: rdBake(T.head, fur), arm: rdBake(T.arm, fur), elbow: rdBake(T.elbow, fur), paw: rdBake(pw, fur) });
 }
 // cotton puffs / meat + bone that show where a part tore off (unit size, pointing +Y)
 const RD_CAP = {
@@ -103,12 +63,12 @@ const rdCapG = () => HZ.on ? RD_CAP.meat : RD_CAP.cotton;
 
 /* ---------------- one ragdoll ---------------- */
 const _rv = V(), _rd = V(), _rx = V(), _ry = V(), _rz = V(), _rm = new THREE.Matrix4(), _rdQ = new THREE.Quaternion(), _rinfo = { nrm: V(), ground: false };
-function rdMakeSeg(rd, a, b, geo, stretch, cast) {
-  const m = new THREE.Mesh(geo, RD_MAT); m.castShadow = !!cast; rd.g.add(m);
+function rdMakeSeg(rd, a, b, geo, stretch) {
+  const m = new THREE.Group(); rd.g.add(m);
   const s = { m, a, b, L: rd.P[a].p.distanceTo(rd.P[b].p), stretch, pf: null }; rd.segs.push(s); return s;
 }
 function rdSpawnAt(base, yaw, look) {
-  const L = look || rdLook(), rd = { look: L, P: [], C: [], G: {}, segs: [], caps: [], g: new THREE.Group(), id: ++RD.seq, sleep: 0, asleep: false, stand: 1, calm: 0, fwd: V(0, 0, 1), yaw,
+  const L = look || { fur: pick(RD_FUR) }, rd = { look: L, P: [], C: [], G: {}, segs: [], caps: [], g: new THREE.Group(), id: ++RD.seq, sleep: 0, asleep: false, stand: 1, calm: 0, fwd: V(0, 0, 1), yaw,
     det: {}, talk: 0, talkDur: 0, line: '', sy: 0, idleT: 6 + Math.random() * 10, mouth: .3, eye: 1, blink: 0, blinkT: 2 + Math.random() * 3, squash: 0, hitCd: 0, said: {}, floor: base.y };
   const c = Math.cos(yaw), sn = Math.sin(yaw);
   RD_REST.forEach(([x, y, z], i) => { const p = V(base.x + x * c + z * sn, base.y + y, base.z - x * sn + z * c); rd.P.push({ p, o: p.clone(), r: RD_RAD[i], im: RD_IM[i], pin: null }); });
@@ -121,26 +81,22 @@ function rdSpawnAt(base, yaw, look) {
     const c1 = con(S, E, 's', 'arm' + side, RD_EXTRA * la / (la + lb)), c2 = con(E, W, 's', 'arm' + side, RD_EXTRA * lb / (la + lb));
     con(S, W, 'm', 'arm' + side).L = .22;
     rd.G['arm' + side] = { cons: [c1, c2], parts: [E, W], root: S, ripped: false, pulled: false, ratio: 0, strain: 0, seepT: 0, said: 0 };
-    con(2 + s, 11 + s, 'h'); con(11 + s, 13 + s, 'h'); con(2 + s, 13 + s, 'm').L = .36;
   }
-  // meshes
-  const lk = L, torso = new THREE.Mesh(rdTorsoG(lk), RD_MAT); torso.castShadow = true; rd.g.add(torso); rd.torso = torso;
-  const ln = rd.P[4].p.distanceTo(rd.P[6].p);
-  rd.neck = rdMakeSeg(rd, 4, 6, rdLimbG(ln, .041, .038, () => lk.skin), true);
-  const head = new THREE.Mesh(rdHeadG(lk), RD_MAT); head.castShadow = true; rd.g.add(head); rd.head = head;
-  rd.eyes = [-1, 1].map(sd => { const e = new THREE.Mesh(rdEyeG(lk, sd), RD_MAT); e.position.set(sd * .038, .01, .078); head.add(e); return e; });
-  rd.mouthM = new THREE.Mesh(rdMouthG(), RD_MAT); rd.mouthM.position.set(0, -.06, .083); head.add(rd.mouthM);
+  for (let i = 11; i < 15; i++) { for (let j = 0; j < 6; j++) con(i, j, 'h'); if (i > 11) for (let j = 11; j < i; j++) con(i, j, 'h'); }   // the bean's bottom is part of the body
+  // meshes: Thumpling parts in a random fur color
+  const GE = rdGeo(L.fur), mk = (g, sh) => { const m = new THREE.Mesh(g, RD_BODY); m.castShadow = !!sh; return m; };
+  const torso = new THREE.Group(); rd.g.add(torso); rd.torso = torso; torso.scale.setScalar(RD_DS);
+  const tb = mk(GE.torso, 1); tb.position.set(0, -.26, 0); tb.rotation.y = Math.PI; torso.add(tb);
+  const seg = (a, b, thick) => { const s = rdMakeSeg(rd, a, b, null, true); const m = mk(GE.arm); m.scale.set(thick * RD_DS, s.L, thick * RD_DS); s.m.add(m); return s; };
+  rd.neck = seg(4, 6, 1.9);
+  const head = new THREE.Group(); rd.g.add(head); rd.head = head; const hm = mk(GE.head, 1); hm.rotation.y = Math.PI; hm.scale.setScalar(RD_DS); head.add(hm);
   rd.arms = {};
   for (const [s, side] of [[0, 'L'], [1, 'R']]) {
-    const S = s, E = 7 + s, W = 9 + s, la = rd.P[S].p.distanceTo(rd.P[E].p), lb = rd.P[E].p.distanceTo(rd.P[W].p);
-    const up = rdMakeSeg(rd, S, E, rdLimbG(la, .048, .04, (x, y) => y < la * .45 ? lk.shirt : lk.skin), true);
-    const fo = rdMakeSeg(rd, E, W, rdLimbG(lb, .04, .031, () => lk.skin), true);
-    const hand = new THREE.Mesh(rdHandG(lk.skin), RD_MAT); rd.g.add(hand);
+    const S = s, E = 7 + s, W = 9 + s;
+    const up = seg(S, E, 1), fo = seg(E, W, 1);
+    const el = mk(GE.elbow); el.scale.setScalar(RD_DS); fo.m.add(el);
+    const hand = mk(GE.paw); hand.scale.set((side === 'L' ? -1 : 1) * RD_DS, RD_DS, RD_DS); rd.g.add(hand);
     rd.arms[side] = { up, fo, hand, E, W };
-    const lt = rd.P[2 + s].p.distanceTo(rd.P[11 + s].p), ls = rd.P[11 + s].p.distanceTo(rd.P[13 + s].p);
-    rdMakeSeg(rd, 2 + s, 11 + s, rdLimbG(lt, .066, .05, () => lk.pants), false, true);
-    rdMakeSeg(rd, 11 + s, 13 + s, rdMerge([rdLimbG(ls, .05, .038, () => lk.pants), rdCol(rdT(rdS(1, 12, 8), 0, ls + .012, .045, .046, .034, .095), 0x3a2a22),
-      rdCol(rdT(rdS(1, 12, 6), 0, ls + .04, .045, .05, .012, .1), 0xe8e0d0)]), false);
   }
   scene.add(rd.g); RD.list.push(rd);
   return rd;
@@ -175,7 +131,8 @@ const _stC = V();
 function rdStand(rd) {   // a gentle "puppet string" that keeps the dummy standing up (and gets it back up after a flop)
   if (rd.stand <= .01) return;
   const P = rd.P, c = Math.cos(rd.yaw), sn = Math.sin(rd.yaw);
-  _stC.addVectors(P[13].p, P[14].p).multiplyScalar(.5); const by = Math.min(P[13].p.y, P[14].p.y) - .075;
+  _stC.addVectors(P[13].p, P[14].p).multiplyScalar(.5); const by = Math.min(P[13].p.y, P[14].p.y) - RD_REST[13][1];
+  const fz = (RD_REST[13][2] + RD_REST[14][2]) / 2; _stC.x -= fz * sn; _stC.z -= fz * c;   // the "feet" sit a bit forward of the body's middle
   for (let i = 0; i < 15; i++) {
     const q = P[i]; if (q.pin || rd.det[i]) continue;
     const [x, y, z] = RD_REST[i], k = RD_STAND_K[i] * rd.stand;
@@ -225,10 +182,10 @@ function rdRip(rd, gname) {
   const isHead = gname === 'head', side = gname.slice(3);
   // stumps: one on the body, one on the part that came off
   const cap = (parent, x, y, z, rx, rz, s) => { const m = new THREE.Mesh(rdCapG(), RD_MAT); m.position.set(x, y, z); m.rotation.set(rx, 0, rz); m.scale.setScalar(s); parent.add(m); rd.caps.push(m); };
-  if (isHead) { cap(rd.torso, 0, .44, 0, 0, 0, .042); rd.neck.a = n; rd.neck.pf = rd.fwd.clone(); cap(rd.neck.m, 0, 0, 0, Math.PI, 0, .04); rd.headPf = rd.fwd.clone(); }
+  if (isHead) { cap(rd.torso, 0, .46, 0, 0, 0, .09); rd.neck.a = n; rd.neck.pf = rd.fwd.clone(); cap(rd.neck.m, 0, 0, 0, Math.PI, 0, .09 * RD_DS); rd.headPf = rd.fwd.clone(); }
   else {
-    const A = rd.arms[side], sx = side === 'L' ? -1 : 1; cap(rd.torso, sx * .165, .37, 0, 0, -sx * Math.PI / 2, .05);
-    A.up.a = n; A.up.pf = rd.fwd.clone(); A.fo.pf = rd.fwd.clone(); cap(A.up.m, 0, 0, 0, Math.PI, 0, .048);
+    const A = rd.arms[side], sx = side === 'L' ? -1 : 1; cap(rd.torso, sx * .235, .325, -.02, 0, -sx * Math.PI / 2, .07);
+    A.up.a = n; A.up.pf = rd.fwd.clone(); A.fo.pf = rd.fwd.clone(); cap(A.up.m, 0, 0, 0, Math.PI, 0, .06 * RD_DS);
   }
   // burst
   _rv.subVectors(root.p, rd.pc || root.p); if (_rv.lengthSq() < 1e-6) _rv.set(0, 1, 0); _rv.normalize();
@@ -239,8 +196,6 @@ function rdRip(rd, gname) {
     if (HZ.on) { noiseHit(ac.currentTime, .25, .35, 'lowpass', 600, 1.2); tone('sawtooth', 140, 50, .25, .12); tone('square', 90, 40, .12, .1, .05); }
     else { noiseHit(ac.currentTime, .18, .3, 'bandpass', 2600, 1.4); tone('triangle', 700, 220, .18, .15); tone('sine', 300, 900, .12, .1, .08); }
   }
-  rdSay(rd, isHead ? (HZ.on ? ['I can\'t feel my body...', 'Where is my BODY?!', 'Put me back...'] : ['My BODY!', 'I can see my feet!', 'Put me back!!', 'Heyyy!'])
-    : (HZ.on ? ['MY ARM...', 'It hurts...', 'Why...'] : ['MY ARM!', 'I needed that!', 'Rude!!', 'Ow! My stuffing!']), true);
   if (!RD.toldRip) { RD.toldRip = true; toast(HZ.on ? '🦴 RIIIP! Meat and bones everywhere...' : '🧸 RIIIP! Cotton everywhere! Press H (right stick in VR) to fix them.', 4); }
 }
 function rdPulled(rd) {
@@ -277,60 +232,6 @@ function rdDraw(rd, dt) {
   rd.squash = Math.max(0, rd.squash - dt * 3);
   const sq = rd.squash > 0 ? 1 - Math.sin(rd.squash * Math.PI) * .35 : 1;
   rd.head.scale.set((1 - hs * .15) / Math.sqrt(sq), (1 + hs * .5) * sq, (1 - hs * .15) / Math.sqrt(sq));
-  // face: talking opens the mouth, eyes go wide when talking / stretched / bonked
-  let strain = 0; for (const g in rd.G) if (rd.G[g].pulled) strain = Math.max(strain, rd.G[g].ratio);
-  rd.talk = Math.max(0, rd.talk - dt);
-  const talking = rd.talk > 0 && rd.talk > rd.talkDur * .2;
-  let mo = .28, ey = 1;
-  if (talking) { rd.sy += dt * 13; mo = .5 + Math.abs(Math.sin(rd.sy)) * 1.5; ey = 1.45; }
-  if (strain > .15) { mo = Math.max(mo, 1 + strain * 1.2 + Math.sin(tAll * 40) * .1); ey = Math.max(ey, 1.4 + strain * .45); }
-  if (rd.squash > 0) { ey = Math.max(ey, 1.75); mo = Math.max(mo, 1.8); }
-  rd.mouth += (mo - rd.mouth) * Math.min(1, dt * 18); rd.eye += (ey - rd.eye) * Math.min(1, dt * 14);
-  rd.blinkT -= dt; if (rd.blinkT < 0) { rd.blink = .14; rd.blinkT = 2.5 + Math.random() * 3.5; }
-  rd.blink = Math.max(0, rd.blink - dt); const bl = rd.blink > 0 && ey < 1.2 ? .12 : 1;
-  rd.mouthM.scale.set(1 + (rd.mouth - .3) * .3, rd.mouth, 1 + (rd.mouth - .3) * .15);
-  rd.eyes.forEach(e => e.scale.set(rd.eye, rd.eye * bl, rd.eye));
-  // speech bubble above the head
-  if (rd.bub) { rd.bub.visible = rd.talk > 0; if (rd.bub.visible) { rd.bub.position.copy(hd); rd.bub.position.y += .26 + (1 + hs) * .05; } }
-}
-
-/* ---------------- talking ---------------- */
-const RD_LINES = {
-  spawn: ['Hi there! 👋', 'Where am I?', 'Hello, friend!', 'I\'m so squishy!', 'Hug?', 'Ta-daaa!'],
-  grab: ['Hey!', 'Put me down!', 'Whoa whoa whoa!', 'Wheee!', 'Not the arm!', 'Careful!!'],
-  stretch: ['Ow ow OW!', 'TOO FAR!!', 'Let GO!', 'AAAAAA!', 'I\'m not taffy!!', 'Stretchyyy!'],
-  bonk: ['OUCH!', 'BONK!', 'Hey!!', 'Owie!', 'Why?!', 'My head!', 'Not the hammer!'],
-  idle: ['Nice day!', 'Hmm hmm hmm...', 'I\'m bored.', 'Boop?', 'Are you a squirrel?', 'Hello?'],
-  fix: ['Good as new!', 'I\'m back!', 'Phew!', 'All better!'],
-  hz: ['It\'s dark...', 'Did you hear that?', 'Help me...', 'Something is watching.', 'I don\'t like it here.'],
-};
-function rdBubble(rd, text) {
-  if (!rd.bub) {
-    const cv = document.createElement('canvas'); cv.width = 512; cv.height = 160; const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
-    rd.bub = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false })); rd.bub.scale.set(.8, .25, 1); rd.bub.renderOrder = 5; rd.bubCv = cv; rd.bubT = t; scene.add(rd.bub);
-  }
-  const g = rd.bubCv.getContext('2d'); g.clearRect(0, 0, 512, 160);
-  let fs = 64; g.font = `${fs}px "Lilita One", Impact, sans-serif`; while (g.measureText(text).width > 440 && fs > 26) { fs -= 4; g.font = `${fs}px "Lilita One", Impact, sans-serif`; }
-  const w = Math.min(500, g.measureText(text).width + 56), x0 = 256 - w / 2;
-  g.fillStyle = HZ.on ? '#1b1416' : '#ffffff'; g.strokeStyle = HZ.on ? '#9b1b1f' : '#222'; g.lineWidth = 6;
-  g.beginPath(); g.roundRect(x0, 8, w, 112, 30); g.moveTo(236, 118); g.lineTo(256, 152); g.lineTo(276, 118); g.fill(); g.stroke();
-  g.fillStyle = HZ.on ? '#ff5a5a' : '#111'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 256, 66);
-  rd.bubT.needsUpdate = true;
-}
-function rdSay(rd, lines, force) {
-  if (rd.talk > 0 && !force) return;
-  const text = Array.isArray(lines) ? pick(lines) : lines;
-  rd.line = text; const words = text.split(/\s+/).length;
-  rd.talkDur = rd.talk = Math.max(1.8, words * 60 / 138 + 1);   // stays up long enough to read
-  rd.sy = 0; rd.syT = 0; rd.sylLeft = Math.max(2, Math.ceil(text.replace(/[^a-z]/gi, '').length / 2.6));
-  rdBubble(rd, text);
-}
-function rdBabble(rd, dt) {   // a little made-up voice: one blip per syllable while the mouth moves
-  if (!ac || rd.talk <= 0 || rd.sylLeft <= 0) return;
-  if ((rd.syT -= dt) > 0) return; rd.syT = .085 + Math.random() * .05; rd.sylLeft--;
-  headWorld(_rv); const d = _rv.distanceTo(rd.P[6].p); if (d > 14) return;
-  const v = clamp(.09 / (1 + d * .4), 0, .09), f = rd.look.voice * (HZ.on ? .62 : 1) * (.85 + Math.random() * .4);
-  tone(HZ.on ? 'sawtooth' : 'square', f, f * (.9 + Math.random() * .3), .07, v * (HZ.on ? .7 : .55));
 }
 
 /* ---------------- stuffing / gore bits (one instanced mesh, cheap on Quest) ---------------- */
@@ -468,27 +369,25 @@ function hmHit() {
     _rv.copy(HM.vel).normalize().negate();
     if (sp > 2.5) { const n = Math.min(8, Math.floor(sp)); for (let i = 0; i < n; i++) { _rfV.set(Math.random() - .5, Math.random() * .8, Math.random() - .5).multiplyScalar(1.4).addScaledVector(_rv, .6);
       if (HZ.on) rfxAdd(hp, _rfV, .012, .01, .012, pick([0x7a0f14, 0x9b1b1f, 0xb83a3a]), 10, 9.8, .3, rd.floor, 1); else rfxAdd(hp, _rfV, .015, .012, .015, 0xffffff, 12, 3.2, 1.8, rd.floor); } }
-    rdSay(rd, RD_LINES.bonk, true);
   }
 }
 
 /* ---------------- spawning, fixing, clearing ---------------- */
 function rdGround(x, y0, z) { for (let y = y0 + .6; y > y0 - 5; y -= .05) { const h = pawHit(_rfP.set(x, y, z), .05); if (h && h.n.y > .5) return y - .05; } return null; }
-function rdKill(rd) { scene.remove(rd.g); rd.g.traverse(o => { if (o.isMesh && o.geometry && !Object.values(RD_CAP).includes(o.geometry)) o.geometry.dispose(); });
-  if (rd.bub) { scene.remove(rd.bub); rd.bub.material.map.dispose(); rd.bub.material.dispose(); }
+function rdKill(rd) { scene.remove(rd.g);   // shapes are cached per fur color and shared, nothing to free
   RD.held.forEach((x, i) => { if (x && x.rd === rd) RD.held[i] = null; }); RD.list.splice(RD.list.indexOf(rd), 1); }
 function rdSpawn() {
   if (state.mode !== 'play') return;
+  if (!AV.tpl) { toast('🧸 Dummies are still loading, try again in a sec!', 2.5); return; }
   audioOn();
   if (RD.list.length >= RD.MAX) rdKill(RD.list[0]);
   headWorld(_hp); camera.getWorldDirection(_rd); _rd.y = 0; if (_rd.lengthSq() < 1e-4) _rd.set(0, 0, -1); _rd.normalize();
-  const base = _hp.clone().addScaledVector(_rd, 1.15 + RD.list.length * .15).add(_rv.set(-_rd.z, 0, _rd.x).multiplyScalar((Math.random() - .5) * .6));
+  const base = _hp.clone().addScaledVector(_rd, 1 + Math.random() * .3).add(_rv.set(-_rd.z, 0, _rd.x).multiplyScalar((Math.random() - .5) * .6));
   const gy = rdGround(base.x, _hp.y, base.z); base.y = (gy === null ? _hp.y - .9 : gy) + .06;
   const rd = rdSpawnAt(base, Math.atan2(_hp.x - base.x, _hp.z - base.z));
   rdTorsoFrame(rd); rdDraw(rd, 0);
   rdBurst(_rv.copy(base).add(V(0, .7, 0)), V(0, 1, 0), 10, base.y);   // poof!
   if (ac) { tone('triangle', 400, 1000, .15, .15); tone('sine', 800, 1600, .1, .08, .08); }
-  rdSay(rd, HZ.on ? RD_LINES.hz : RD_LINES.spawn, true);
   if (!HM.on) hmPlace(base.clone().add(_rv.set(-_rd.z, 0, _rd.x).multiplyScalar(.55)).setY(base.y + .5));
   if (!RD.told) { RD.told = true; store.set('kg-rd', '1');
     toast(state.xr ? '🧸 Squeeze grip on an arm or the head and PULL! 🔨 Grab the hammer too.' : IS_TOUCH ? '🧸 Aim at an arm or head, tap ✋ Grab, then walk back to pull! ✋ on the 🔨 hammer takes it.'
@@ -498,10 +397,10 @@ function rdReset() {
   if (!RD.list.length) { toast('🧸 No dummies yet! Spawn one first.', 2.5); return; }
   const olds = RD.list.slice();
   for (const o of olds) {
-    const pc = o.pc ? o.pc.clone() : o.P[0].p.clone(), gy = rdGround(pc.x, pc.y + .4, pc.z), base = V(pc.x, (gy === null ? o.floor : gy) + .06, pc.z);
-    const look = o.look, yaw = o.yaw; rdKill(o);
-    const rd = rdSpawnAt(base, yaw, look); rdTorsoFrame(rd); rdDraw(rd, 0);
-    rdBurst(_rv.copy(base).add(V(0, .7, 0)), V(0, 1, 0), 8, base.y); rdSay(rd, RD_LINES.fix, true);
+    const pc = o.home ? o.home.clone() : o.pc ? o.pc.clone() : o.P[0].p.clone(), gy = o.home ? o.home.y - .06 : rdGround(pc.x, pc.y + .4, pc.z), base = V(pc.x, (gy === null ? o.floor : gy) + .06, pc.z);
+    const look = o.look, yaw = o.home ? o.homeYaw : o.yaw, home = o.home, hy = o.homeYaw; rdKill(o);
+    const rd = rdSpawnAt(base, yaw, look); rd.home = home; rd.homeYaw = hy; rdTorsoFrame(rd); rdDraw(rd, 0);
+    rdBurst(_rv.copy(base).add(V(0, .5, 0)), V(0, 1, 0), 8, base.y);
   }
   for (let i = 0; i < RFX.N; i++) RFX.life[i] = Math.min(RFX.life[i], .5);   // tidy up the mess
   for (let i = 0; i < SPL.N; i++) SPL.life[i] = Math.min(SPL.life[i], 1.5);
@@ -524,8 +423,6 @@ function rdGrabAt(slot, rd, i, h, src, off) {
   rd.asleep = false; rd.sleep = 0; rd.calm = 0;
   if (i < 6) rd.stand = 0;
   if (ac) tone('sine', 520 + Math.random() * 200, 900, .09, .08);
-  rdSay(rd, HZ.on ? RD_LINES.hz : RD_LINES.grab);
-  for (const g in rd.G) rd.G[g].said = 0;
 }
 function rdRelease(slot) {
   const x = RD.held[slot]; if (!x) return false; RD.held[slot] = null;
@@ -614,6 +511,27 @@ function rdSticks(dt) {
   }
 }
 
+/* ---------------- the DUMMY TEST zone in the Slicing Yard: 3 dummies stand ready ---------------- */
+const RD_TEST = [V(-3.6, 0, 1.3), V(-4.5, 0, 1.1), V(-5.4, 0, 1.3)];   // arena-local, they face the yard's spawn
+{
+  const g = new THREE.Group(); g.position.set(-4.5, 0, .35); arena.add(g);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(.035, .04, 1.35, 8), mat(0x6a7380)); post.position.y = .67; g.add(post);
+  const tex = labelTex(1024, 256, (c, w, h) => signText(c, w, h, [['🧸 DUMMY TEST', 104, '#ffd25a', 132]], 'rgba(22,30,44,.92)', '#ff8a3d'));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.2, .3), new THREE.MeshBasicMaterial({ map: tex, transparent: true })); sign.position.set(0, 1.42, .04); g.add(sign);
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.45, .012, 32), new THREE.MeshStandardMaterial({ color: 0xff8a3d, roughness: .8, transparent: true, opacity: .35 })); pad.position.set(0, .006, .85); pad.scale.z = .45; g.add(pad);
+}
+function rdTestZone() {   // fill the empty test spots (missing dummies come back when you return to the yard)
+  if (!AV.tpl) return false;
+  for (const sp of RD_TEST) {
+    const at = V().copy(ARENA).add(sp);
+    if (RD.list.some(r => r.home && r.home.distanceTo(at.clone().setY(.06)) < .1)) continue;
+    if (RD.list.length >= RD.MAX) rdKill(RD.list.find(r => !r.home) || RD.list[0]);
+    at.y = .06; const yaw = Math.atan2(AR_SPAWN.x - sp.x, AR_SPAWN.z - sp.z) * .4;
+    const rd = rdSpawnAt(at, yaw); rd.home = at.clone(); rd.homeYaw = yaw; rdTorsoFrame(rd); rdDraw(rd, 0);
+  }
+  return true;
+}
+
 /* ---------------- per frame ---------------- */
 function stepRagdolls(dt) {
   rdUi();
@@ -623,6 +541,8 @@ function stepRagdolls(dt) {
     RD.told = true; toast(state.xr ? '🧸 NEW: Dummies! Click the LEFT stick to spawn one (right stick fixes them).' : IS_TOUCH ? '🧸 NEW: Dummies! Tap 🧸 to spawn one.' : '🧸 NEW: Dummies! Press G to spawn one (H fixes them, J clears).', 6);
   }
   if (HZ.on !== RD.hz) { RD.hz = HZ.on; for (const rd of RD.list) rd.caps.forEach(m => { m.geometry = rdCapG(); }); }
+  if (state.area === 'arena' && RD.area !== 'arena') { if (rdTestZone()) { RD.area = 'arena'; if (!RD.toldTest) { RD.toldTest = true; setTimeout(() => toast('🧸 Test dummies are waiting by the DUMMY TEST sign! Pull them apart 😈', 5), 3500); } } }
+  else if (state.area !== 'arena') RD.area = state.area;
   hmStep(dt); rfxStep(dt); splatStep(dt);
   if (!RD.list.length) return;
   // where each held part should be
@@ -645,16 +565,13 @@ function stepRagdolls(dt) {
     // stretch sounds + yells, and stuffing leaking out of the seam
     for (const gname in rd.G) {
       const G = rd.G[gname]; if (G.ripped || !G.pulled) continue;
-      if (G.ratio > .35 && !G.said) { G.said = 1; rdSay(rd, HZ.on ? ['STOP...', 'It hurts!', 'No no no...'] : RD_LINES.stretch, true); }
       const step = Math.floor(G.ratio * 6); if (step > (G.lastStep || 0) && ac) tone('sine', 260 + G.ratio * 600, 300 + G.ratio * 700, .08, .05); G.lastStep = step;
       if (G.ratio > .55 && (G.seepT -= dt) < 0) {
         G.seepT = .14; const p = rd.P[G.cons[0].a].p; _rfV.set(Math.random() - .5, Math.random() * .5, Math.random() - .5).multiplyScalar(.6);
         if (HZ.on) rfxAdd(p, _rfV, .01, .008, .01, pick([0x7a0f14, 0x9b1b1f]), 8, 9.8, .3, rd.floor, 1); else rfxAdd(p, _rfV, .013, .011, .013, 0xffffff, 12, 3.2, 1.8, rd.floor);
       }
     }
-    if (!rd.asleep || rd.talk > 0 || rd.squash > 0 || rd.blinkT < .2) rdDraw(rd, dt);
-    rdBabble(rd, dt);
-    if ((rd.idleT -= dt) < 0) { rd.idleT = 9 + Math.random() * 12; if (rd.P[6].p.distanceTo(_hp) < 6) rdSay(rd, HZ.on ? RD_LINES.hz : RD_LINES.idle); }
+    if (!rd.asleep || rd.squash > 0) rdDraw(rd, dt);
   }
 }
-window.__kg.rd = { RD, HM, RFX, SPL, spawn: rdSpawn, reset: rdReset, clear: rdClear, grabAt: rdGrabAt, release: rdRelease, aim: rdAim, desk: rdDesk, say: rdSay };
+window.__kg.rd = { RD, HM, RFX, SPL, spawn: rdSpawn, reset: rdReset, clear: rdClear, grabAt: rdGrabAt, release: rdRelease, aim: rdAim, desk: rdDesk, test: rdTestZone };
