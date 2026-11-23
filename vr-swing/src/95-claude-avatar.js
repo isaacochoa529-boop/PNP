@@ -115,9 +115,12 @@ async function grab(url, big) {
   return await blob.arrayBuffer();
 }
 let cfg = null, sess = null, ph = null, phOut = null, ready = null;
+let phUrls = null;
 async function phMod() {
+  if (!phUrls) { const [w, d] = await Promise.all([grab(PW + '.wasm'), grab(PW + '.data')]);
+    phUrls = { w: URL.createObjectURL(new Blob([w], { type: 'application/wasm' })), d: URL.createObjectURL(new Blob([d])) }; }
   const m = await createPiperPhonemize({ print: l => phOut && phOut(l), printErr: () => {},
-    locateFile: f => f.endsWith('.wasm') ? PW + '.wasm' : f.endsWith('.data') ? PW + '.data' : f });
+    locateFile: f => f.endsWith('.wasm') ? phUrls.w : f.endsWith('.data') ? phUrls.d : f });
   return m;
 }
 function load() {
@@ -159,8 +162,8 @@ function clPvWorker() {
     const w = new Worker(URL.createObjectURL(new Blob([CL_PV_SRC], { type: 'text/javascript' })), { type: 'module' });
     w.onmessage = e => {
       const d = e.data;
-      if (d.t === 'ready') { CL_PV.ready = true; CL_PV.loading = false; toast('🗣️ Claude got a real voice!', 3); return; }
-      if (d.t === 'pct') { if (d.pct !== CL_PV.pct && d.pct % 20 === 0 && d.pct < 100) { CL_PV.pct = d.pct; toast(`⏬ Getting Claude's real voice… ${d.pct}% (only the first time)`, 3); } return; }
+      if (d.t === 'ready') { CL_PV.ready = true; CL_PV.loading = false; if (store.get('kg-voice-ok') !== '1') { store.set('kg-voice-ok', '1'); toast('🗣️ Claude got a real voice!', 3); } return; }
+      if (d.t === 'pct') { if (store.get('kg-voice-ok') !== '1' && d.pct !== CL_PV.pct && d.pct % 20 === 0 && d.pct < 100) { CL_PV.pct = d.pct; toast(`⏬ Getting Claude's real voice… ${d.pct}% (only the first time)`, 3); } return; }
       if (d.t === 'err') { console.warn('Claude real voice', d.msg); if (!CL_PV.ready) { CL_PV.failed = true; CL_PV.loading = false; } if (d.id === CL_PV.id) { CL.speaking = false; if (d.n === undefined) clSpeakEs(CL.spText || ''); } return; }
       if (d.t === 'pcm' && d.id === CL_PV.id) { CL_PV.q.push(d); clPvPump(); }
     };
@@ -250,8 +253,10 @@ function clToggle() {
   clSpawnNear(1.6); CL.q = []; CL.cur = null; CL.follow = false; CL.look = 'me';
   clConnect(); clVoice(); if (CL.tts === 'espeak') { clEsWorker(); clPvPreload(); }   // warm up the robot voice + start getting the real one
   if (typeof VAD !== 'undefined' && VAD.on) setTimeout(() => vadSet(true), 600);
-  const msg = `Hi Isaiah! 👋 Tell the chat my code: ${CL.code.toUpperCase()}`;
-  clBubble(msg, 30); toast('🤖 Claude buddy is ON! Code: ' + CL.code.toUpperCase(), 8);
+  // the code is saved, so only the very first time asks you to tell it to the chat (Isaiah: "it tells me the code every time")
+  if (store.get('kg-claude-met') === '1') { clBubble('Hi Isaiah! 👋 I\'m back!', 4); toast('🤖 Claude buddy is ON! (code ' + CL.code.toUpperCase() + ')', 3); }
+  else { store.set('kg-claude-met', '1'); clBubble(`Hi Isaiah! 👋 Tell the chat my code: ${CL.code.toUpperCase()}`, 30); toast('🤖 Claude buddy is ON! Code: ' + CL.code.toUpperCase(), 8); }
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}   // ask the browser to keep the downloaded voice + ears
   if (ac) [523, 659, 784].forEach((q, i) => tone('triangle', q, q, .15, .15, i * .08));
   clUi(); clOut({ ev: 'hello' });
 }
@@ -626,15 +631,15 @@ self.onmessage = async e => {
   const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), { type: 'module' });
   w.onmessage = e => {
     const d = e.data;
-    if (d.t === 'pct') { const p = Math.round(d.pct * 100); if (/decoder/.test(d.file || '') && p !== EARS.pct && p % 10 === 0) { EARS.pct = p; toast(`⏬ Downloading Claude's ears… ${p}% (only the first time)`, 3); } }
-    else if (d.t === 'ready') { EARS.ready = true; EARS.loading = false; }
+    if (d.t === 'pct') { const p = Math.round(d.pct * 100); if (store.get('kg-ears-ok') !== '1' && /decoder/.test(d.file || '') && p !== EARS.pct && p % 10 === 0) { EARS.pct = p; toast(`⏬ Downloading Claude's ears… ${p}% (only the first time)`, 3); } }
+    else if (d.t === 'ready') { EARS.ready = true; EARS.loading = false; store.set('kg-ears-ok', '1'); }
     else if (d.t === 'text') { EARS.busy = false; const t = d.text.replace(/\[[^\]]*\]|\([^)]*\)/g, '').trim(); if (t.length > 1) clHeard(t, 'voice'); else toast('🎙️ I didn\'t catch that. Try again a bit louder!', 3); clMicUi(); }
     else if (d.t === 'err') { EARS.busy = false; EARS.loading = false; toast('😵 Claude\'s ears broke: ' + d.msg.slice(0, 80) + '. Use the quick-talk board!', 6); clBoard(state.xr); clMicUi(); }
   };
   w.onerror = () => { EARS.busy = false; toast('😵 Claude\'s ears could not load here. Use the quick-talk board!', 6); clBoard(state.xr); };
   EARS.worker = w; return w;
 }
-function earsPreload() { if (EARS.ready || EARS.loading) return; EARS.loading = true; try { earsWorker().postMessage({ t: 'load' }); toast("⏬ Getting Claude's ears ready (about 40 MB, only the first time)…", 4); } catch (e) { EARS.loading = false; } }
+function earsPreload() { if (EARS.ready || EARS.loading) return; EARS.loading = true; try { earsWorker().postMessage({ t: 'load' }); if (store.get('kg-ears-ok') !== '1') toast("⏬ Getting Claude's ears ready (about 40 MB, only the first time)…", 4); } catch (e) { EARS.loading = false; } }
 async function earsStart(quiet) {
   if (EARS.recOn || EARS.busy) return;
   try {
