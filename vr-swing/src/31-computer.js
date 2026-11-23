@@ -87,8 +87,8 @@ function compDraw() {
   }
   const grad = g.createLinearGradient(0, 0, 0, 576); grad.addColorStop(0, '#163a4a'); grad.addColorStop(1, '#0e2230'); g.fillStyle = grad; g.fillRect(0, 0, 1024, 576);
   // tabs
-  [['join', '🌐 Rooms'], ['name', '✏️ Name'], ['color', '🎨 Colors'], ['id', '🆔 My ID']].forEach(([k, l], i) =>
-    btn(g, 14 + i * 252, 12, 240, 84, l, CP.page === k ? '#ffd25a' : '#2fc6a3', () => { CP.page = k; if (k === 'name') CP.nameT = MP.name || store.get('kg-name') || ''; compDraw(); }, 38));
+  [['join', '🌐 Rooms'], ['name', '✏️ Name'], ['color', '🎨 Colors'], ['id', '🆔 My ID'], ['claude', '🤖 Claude']].forEach(([k, l], i) =>
+    btn(g, 12 + i * 202, 12, 192, 84, l, CP.page === k ? '#ffd25a' : '#2fc6a3', () => { CP.page = k; if (k === 'name') CP.nameT = MP.name || store.get('kg-name') || ''; compDraw(); }, 32));
   const st = MP.status;
   if (CP.page === 'join') {
     if (st === 'off') {
@@ -131,6 +131,17 @@ function compDraw() {
     g.fillStyle = '#fff'; [-28, 28].forEach(dx => { g.beginPath(); g.arc(870 + dx, 460, 18, 0, 7); g.fill(); }); g.fillStyle = '#1a1a22'; [-28, 28].forEach(dx => { g.beginPath(); g.arc(870 + dx, 465, 9, 0, 7); g.fill(); });
     g.fillStyle = pcx; [-95, 95].forEach(dx => { g.beginPath(); g.arc(870 + dx, 520, 30, 0, 7); g.fill(); });
     txt(g, 'Friends see you in these colors!', 380, 490, 32, '#bfe9dc');
+  } else if (CP.page === 'claude') {   // Claude buddy options (the hooks live in 95-claude-avatar.js)
+    const C = window.__clOpts;
+    if (!C) txt(g, 'Claude buddy is still loading…', 512, 280, 40);
+    else {
+      txt(g, 'Claude buddy', 512, 140, 48);
+      if (!C.on()) { txt(g, 'Turn on your Claude buddy first! 🤖', 512, 250, 40, '#ffd25a'); txt(g, '(the orange orb by the spawn)', 512, 310, 32, '#bfe9dc'); }
+      else {
+        btn(g, 162, 190, 700, 110, C.ear() ? '👂 Always listening: ON' : '👂 Always listening: OFF', C.ear() ? '#36e06a' : '#6a8f7c', () => { C.setEar(!C.ear()); if (ac) tone('square', 300, 300, .04, .1); compDraw(); }, 46);
+        txt(g, C.ear() ? 'Claude hears you whenever you talk.' : 'Poke the tiny mic to talk to Claude.', 512, 345, 34, '#bfe9dc');
+      }
+    }
   } else {
     txt(g, 'Your player ID', 512, 150, 44);
     txt(g, myId(), 512, 250, 120, '#ffd25a');
