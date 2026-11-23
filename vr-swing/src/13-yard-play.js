@@ -160,6 +160,7 @@ function letGoHold(h) { if (h.hold) { if (h.hold.plat) h.hold.m.userData.fade = 
 function grabAny(h) {
   if (BR.phase === 'play' && brGrab(h)) return;
   if (wildGrab(h)) return;
+  if (partyGrab(h)) return;
   if (BM.stop && h.side === 'right') { bmStatue(true); return; }   // stop-motion: R grip freezes another you
   if (BM.grab && bmGrabFriend(h)) return;
   if (rdGrab(h)) return;
@@ -202,6 +203,7 @@ function deskInteract() {
   if (compDesk()) return;
   if (brDesk()) return;
   if (wildDesk()) return;
+  if (partyDesk()) return;
   const h = hands[1], hl = hands[0];
   if (state.area === 'arena' && AR.ready) {
     if (cupDesk(h)) return;

@@ -456,7 +456,8 @@ function clIdle(dt) {
     CL.jokeT = tAll; let j; do { j = Math.floor(Math.random() * CL_JOKES.length); } while (j === CL.lastJoke && CL_JOKES.length > 1); CL.lastJoke = j;
     CL.q.push({ verb: 'say', arg: CL_JOKES[j], words: [] });
   } else if (r < .55) {   // wander a step or two, staying near Isaiah
-    clPlayer(_cP); const a = Math.random() * Math.PI * 2, d = 1.2 + Math.random() * 1.3;
+    clPlayer(_cP); if (CL.home) _cP.copy(CL.home);   // at the party Claude stays at the cutting station
+    const a = Math.random() * Math.PI * 2, d = CL.home ? .2 + Math.random() * .5 : 1.2 + Math.random() * 1.3;
     CL.q.push({ verb: 'walk', arg: '', idle: true, words: [String(_cP.x + Math.cos(a) * d), String(_cP.z + Math.sin(a) * d)] });
   } else if (r < .75) { CL.anim = pick(['nod', 'spin', 'hop']); CL.animT = 0; }
   else { const a = Math.random() * Math.PI * 2; CL.look = Math.random() < .5 ? 'me' : V(CL.B.x + Math.cos(a) * 3, 1, CL.B.z + Math.sin(a) * 3); }   // look around
