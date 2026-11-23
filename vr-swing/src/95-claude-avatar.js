@@ -373,6 +373,7 @@ function clUi() {
 
 /* ---------- commands ---------- */
 const CL_VERBS = ['walk', 'come', 'follow', 'stay', 'stop', 'say', 'wave', 'nod', 'jump', 'dance', 'spin', 'look', 'grab', 'drop', 'throw', 'give', 'tp', 'wait', 'status', 'screen'];
+const CL_EXT = {};   // extra verbs other files add (96-spawn.js: spawn / despawn / spawnables). Handler(arg) returns seconds to wait
 function clRun(text) {
   if (!CL.on) return;
   CL.lastCmd = tAll;
@@ -381,7 +382,7 @@ function clRun(text) {
   for (let line of String(text).slice(0, 2000).split(/\n|;/)) {
     line = line.trim(); if (!line) continue;
     const m = line.match(/^(\S+)\s*(.*)$/); const verb = m[1].toLowerCase().replace(/^\//, ''), arg = m[2] || '';
-    if (!CL_VERBS.includes(verb)) { clOut({ ev: 'error', msg: 'unknown command: ' + verb, know: CL_VERBS }); continue; }
+    if (!CL_VERBS.includes(verb) && !CL_EXT[verb]) { clOut({ ev: 'error', msg: 'unknown command: ' + verb, know: CL_VERBS.concat(Object.keys(CL_EXT)) }); continue; }
     if (verb === 'stop') { CL.q = []; CL.cur = null; CL.follow = false; CL.anim = null; try { speechSynthesis.cancel(); } catch (e) {} try { CL_ES.src && CL_ES.src.stop(); } catch (e) {} clPvStop(); CL.speaking = false; continue; }
     if (verb === 'status') { clStatus(); continue; }
     if (verb === 'screen') { CL.scrRaw = arg; clScreenDraw(arg); continue; }   // instant, doesn't wait in line
@@ -425,7 +426,7 @@ function clStart(a) {
     case 'give': if (!CL.hand.holding) { clSay('My paws are empty! 🐾'); return null; } a.me = true; a.near = 1.15; a.give = true; break;
     case 'tp': { if (w[0] === 'me' || !w.length) clSpawnNear(1.4); else if (num(0) !== null && num(1) !== null) { CL.B.set(num(0), (state.area === 'wilds' ? groundAt(num(0), num(1)) : 0) + 1.2, num(1)); CL.vel.set(0, 0, 0); } return null; }
     case 'wait': a.dur = clamp(num(0) || 1, 0, 30); break;
-    default: return null;
+    default: if (CL_EXT[a.verb]) { a.dur = CL_EXT[a.verb](a.arg) || .3; break; } return null;
   }
   a.prog = 1e9; a.stuckT = 0; return a;
 }
