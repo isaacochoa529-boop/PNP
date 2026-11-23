@@ -34,7 +34,7 @@ send hzf7bn "wave"
 | Command | What happens |
 |---|---|
 | `say <text>` | Speech bubble + text-to-speech voice (up to 220 characters). Waits until it's done talking |
-| `walk <x> <z>` | Walk to a spot (world meters). Grove spawn is about `0 0`. Gives up and says "I'm stuck" if blocked for 3 s |
+| `walk <x> <z>` | Walk to a spot (world meters). Grove spawn is about `0 0`. If blocked for 3 s it hops, then teleports there (no more "I'm stuck") |
 | `come` | Walk over to Isaiah (pops next to him if he's more than 35 m away, e.g. another area) |
 | `follow` / `stay` | Keep following Isaiah around (keeps following while it talks or waves; hops when stuck, pops next to him if left far behind) / stop following |
 | `look me` / `look <x> <z>` | Where to look while standing still (default: looks at Isaiah) |
@@ -62,7 +62,7 @@ Each line's `message` is JSON with `ev`:
 - `hello`: the buddy was just switched on.
 - `status`: `{area, isaiah:{x,y,z}, claude:{x,y,z,holding,doing,queue}, toys:[{id,kind,x,y,z,dist,held}]}` (6 nearest toys).
 - `heard`: **Isaiah talked to you!** `{text, how}`. `how` is `voice` (speech-to-text), `typed` (type box) or `button` (VR quick-talk board). Answer with `say`.
-- `poke`: Isaiah poked / high-fived the buddy. `taken`: he took the toy you were giving. `stuck`: a walk or grab failed.
+- `poke`: Isaiah poked / high-fived the buddy. `taken`: he took the toy you were giving. `unstuck`: a walk/come/grab was blocked, so the buddy teleported (next to Isaiah, or to the spot/toy).
 - `error`: unknown command (lists the ones it knows).
 
 Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
