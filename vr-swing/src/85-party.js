@@ -700,6 +700,7 @@ function stepParty(dt) {
   if (ptb) ptb.style.display = showB ? 'block' : 'none'; if (ptw) ptw.style.display = showB ? 'block' : 'none';
   stepBlower(dt);
   stepBooth(dt);
+  stepCoaster(dt);
   if (!PT.inside) { if ($('ptHud')) $('ptHud').style.display = 'none'; return; }
   if (AR.ready && !PT.phys) { partyPhys(); swordToParty(); newCake(false); }
   if (PT.fall) {
