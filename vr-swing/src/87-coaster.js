@@ -9,15 +9,15 @@ var RC = { open: false, ride: false, phase: '', s: 0, v: 0, t: 0, build: 1, buil
   rides: 0, eye0: V(), clickT: 0, vig: 0, fly: null, cartFly: null, gold: false, wasIn: false, told: {} };
 function rcRiding() { return RC.ride; }
 const rcG = new THREE.Group(); partyG.add(rcG);
-const CO = { S: [], T: [], U: [], R: [], NS: 0, L: 0, DS: .25, sStart: 0, sLift0: 0, sCrest: 0, sLoop0: 0, sLoop1: 0, E0: 0, fric: 0, GE: 8 };
+const CO = { S: [], T: [], U: [], R: [], NS: 0, L: 0, DS: .25, sStart: 0, sLift0: 0, sCrest: 0, sDrop: 0, LIFT: 5, CRUISE: 6, sLoop0: 0, sLoop1: 0, E0: 0, fric: 0, GE: 8 };
 
 /* ---------- the track's shape (party-local) ---------- */
 {
   const P = [[0, .35, -12.6], [0, .35, -15.5], [0, .35, -19], [0, .7, -22.5],
-    [0, 3, -26], [0, 9, -32], [0, 15, -38], [0, 17.6, -42], [0, 17.2, -45],
-    [0, 12, -49.5], [.6, 3, -55], [2.5, -2.4, -61],
-    [7.5, -3, -67], [15, -1.5, -70],
-    [22, 4.5, -70.5], [27.5, 6, -69], [32.5, 2, -66], [37, -1.6, -61.5], [39.7, -2.05, -55.5]];
+    [0, 3, -26], [0, 11, -34], [0, 21, -44], [0, 31, -54], [0, 38.5, -62], [-1.5, 40.5, -67],   // the long lift UP INTO THE CLOUDS
+    [-6, 40.5, -72], [-13, 39.8, -76], [-20, 40.3, -82], [-22, 40, -90], [-17, 39.5, -97], [-8, 40, -100.5], [0, 39.6, -100.5],   // cruising through the clouds
+    [7, 35, -100], [14, 22, -98.5], [20, 8, -95], [24, 0, -90], [26, -2.5, -84],   // the BIG drop out of the sky
+    [29, 4.5, -77], [33, 5.5, -71], [36, 1, -66], [37.5, -1.6, -61.5], [39.7, -2.05, -55.5]];   // camel hill, line up for the loop
   const loop0 = P.length, cz = -48.5, cy = 4.8, R0 = 6.8;
   for (let k = 0; k <= 12; k++) { const f = k / 12 * Math.PI * 2, R = R0 * (1 - .22 * Math.sin(f / 2) ** 2); P.push([40 + 3 * k / 12, cy - R * Math.cos(f), cz + R * Math.sin(f)]); }
   const loop1 = P.length - 1;
@@ -41,10 +41,10 @@ const CO = { S: [], T: [], U: [], R: [], NS: 0, L: 0, DS: .25, sStart: 0, sLift0
   }
   const near = v => { let bi = 0, bd = 1e9; CO.S.forEach((p, i) => { const d = p.distanceToSquared(v); if (d < bd) { bd = d; bi = i; } }); return bi * CO.DS; };
   CO.sStart = near(pts[1]); CO.sLift0 = near(pts[3]);
-  let ci = 0; for (let i = 0; i < NS * .4; i++) if (CO.S[i].y > CO.S[ci].y) ci = i; CO.sCrest = ci * CO.DS;
+  CO.sCrest = near(pts[9]); CO.sDrop = near(pts[16]); const ci = Math.round(CO.sDrop / CO.DS);
   CO.sLoop0 = near(pts[loop0]) - 6; CO.sLoop1 = near(pts[loop1]) + 6;
-  CO.E0 = .5 * 3.2 * 3.2 + CO.GE * CO.S[ci].y;
-  const end = CO.S[NS - 1]; CO.fric = (CO.E0 - (.5 * 11 * 11 + CO.GE * end.y)) / (CO.L - CO.sCrest);
+  CO.E0 = .5 * CO.CRUISE * CO.CRUISE + CO.GE * CO.S[ci].y;
+  const end = CO.S[NS - 1]; CO.fric = (CO.E0 - (.5 * 11 * 11 + CO.GE * end.y)) / (CO.L - CO.sDrop);
 }
 function coAt(s, p, T, U, Rr) {   // position + frame at distance s along the track
   const f = clamp(s / CO.DS, 0, CO.NS - 1.001), i = Math.floor(f), a = f - i;
@@ -92,6 +92,22 @@ const CT = { tubes: [], ties: null, nTies: 0, bal: null, str: null, nBal: 0, bal
   CT.bal.frustumCulled = CT.str.frustumCulled = false; CT.balList = BAL;
   BAL.forEach((b, i) => { for (let k = 0; k < 3; k++) { CT.bal.setColorAt(i * 3 + k, cc.setHex(PARTY_COLS[(i * 3 + k) % 7])); CT.balS.push(b.s); } });
   rcG.add(CT.bal, CT.str);
+  // fluffy clouds round the top (some right ON the track, so you ride through them)
+  const cl = [], cp = V(), cT = V(), cU = V(), cR = V();
+  for (let s = CO.sCrest - 14; s < CO.sDrop + 6; s += 3.2) {
+    coAt(s, cp, cT, cU, cR); const k = cl.length, on = k % 5 === 2, sd = on ? 0 : (k % 2 ? 1 : -1) * (3.5 + (k * 7 % 5));
+    const c = V().copy(cp).addScaledVector(cR, sd).add(V(0, on ? .4 : -1 + (k * 3 % 4), 0));
+    const n = on ? 7 : 5; for (let j = 0; j < n; j++) { const a = j / n * 6.28 + k; cl.push({ s, p: V(c.x + Math.cos(a) * (on ? 1.8 : 2.4), c.y + Math.sin(j * 2.3) * .7, c.z + Math.sin(a) * (on ? 1.8 : 2.4)), r: (on ? 1.9 : 1.6) + (j * 13 % 7) * .18 }); }
+    cl.push({ s, p: c.clone().add(V(0, .9, 0)), r: on ? 2.4 : 2.1 });
+  }
+  CT.cloud = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 3), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xdde6ff, emissiveIntensity: .35, roughness: 1, transparent: true, opacity: .93, side: THREE.DoubleSide, depthWrite: false }), cl.length);
+  const cm = new THREE.Matrix4(), cq = new THREE.Quaternion(), cs = V();
+  cl.forEach((c, i) => { CT.cloud.setMatrixAt(i, cm.compose(c.p, cq, cs.set(c.r, c.r * .72, c.r))); });
+  // a SEA OF CLOUDS under the top: from up there you can't see the ground at all, and the drop punches through it
+  const seaT = canvasTex(512, 512, (c, w, h) => { c.fillStyle = '#f4f7ff'; c.fillRect(0, 0, w, h); for (let i = 0; i < 260; i++) { const x = Math.random() * w, y = Math.random() * h, r = 14 + Math.random() * 46, g = c.createRadialGradient(x, y, 0, x, y, r); const v = Math.random() < .5 ? '255,255,255' : '214,224,245'; g.addColorStop(0, `rgba(${v},.8)`); g.addColorStop(1, `rgba(${v},0)`); c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2); } }, [10, 10]);
+  CT.sea = new THREE.Group(); CT.sea.position.set(-2, 33.5, -78); CT.sea.visible = false; rcG.add(CT.sea);
+  [[0, 1], [-1.2, .8], [-2.6, .6]].forEach(([y, o], i) => { const m = new THREE.Mesh(new THREE.CircleGeometry(150, 48), new THREE.MeshStandardMaterial({ map: seaT, color: 0xffffff, emissive: 0xe6ecff, emissiveIntensity: .45, roughness: 1, transparent: i > 0, opacity: o, side: THREE.DoubleSide, depthWrite: i === 0, fog: false })); m.rotation.x = -Math.PI / 2; m.position.y = y; m.renderOrder = 1; CT.sea.add(m); });
+  CT.cloudS = cl.map(c => c.s); CT.cloud.frustumCulled = false; CT.cloud.renderOrder = 2; rcG.add(CT.cloud);
   // a balloon arch where the track leaves the island, and one over the kicker ramp
   CT.arches = [];
   [[V(0, 0, -21), 0], [CO.S[CO.NS - 1].clone(), 1]].forEach(([c, kick], ai) => {
@@ -105,6 +121,7 @@ function coReveal(f) {   // f 0..1: how much of the track exists
   CT.tubes.forEach(m => m.geometry.setDrawRange(0, Math.max(0, iMax) * m.geometry.userData.per));
   let n = 0; while (n < CT.nTies && CT.tieS[n] < sMax) n++; CT.ties.count = n;
   let b = 0; while (b < CT.balS.length && CT.balS[b] < sMax) b++; CT.bal.count = CT.str.count = b;
+  let c = 0; while (c < CT.cloudS.length && CT.cloudS[c] < sMax + 8) c++; CT.cloud.count = c;
   CT.arches[0].visible = f > .03; CT.arches[1].visible = f > .99;
 }
 function coBalloons() {   // bob the track balloons
@@ -334,6 +351,7 @@ function coHands(dt, q, hup) {   // paws: real controllers in VR, gripping the b
   }
 }
 function coEnd(landed) {
+  CT.sea.visible = false; RC.wasTop = false;
   RC.ride = false; RC.phase = ''; coWind(false); VIG.visible = false; vigDom.style.opacity = 0;
   rig.quaternion.setFromAxisAngle(V(0, 1, 0), (RC.fly ? RC.fly.yaw : 0) + (!state.xr && !sim.on ? state.yaw : 0)); rig.rotation.set(0, rig.rotation.y, 0);
   if (!state.xr) { state.yaw = rig.rotation.y; state.pitch = 0; }
@@ -345,7 +363,7 @@ function stepRide(dt) {
   if (state.mode !== 'play') return;
   if (!PT.inside) { coEnd(false); return; }
   RC.t += dt;
-  const hupAuto = RC.phase === 'go' && (RC.v > 10 || (RC.s > CO.sCrest && RC.s < CO.sCrest + 12)) ? 1 : 0;
+  const hupAuto = RC.phase === 'go' && (RC.v > 10 || (RC.s > CO.sDrop && RC.s < CO.sDrop + 14)) ? 1 : 0;
   RC.hup = (RC.hup || 0) + (hupAuto - (RC.hup || 0)) * Math.min(1, dt * 4);
   if (RC.phase === 'board') {
     CART.bar.rotation.x = -1.3 * Math.max(0, 1 - RC.t / .8);
@@ -355,12 +373,13 @@ function stepRide(dt) {
   } else if (RC.phase === 'go') {
     // speed: station roll-out, chain lift, then gravity (energy) with a bit of friction, capped to stay comfy
     let want;
-    if (RC.s < CO.sLift0) want = 3.6; else if (RC.s < CO.sCrest) want = 3.2;
-    else { coAt(RC.s, _rcP, _rcT, _rcU, _rcR); want = Math.sqrt(Math.max(2 * (CO.E0 - CO.GE * _rcP.y - CO.fric * (RC.s - CO.sCrest)), 16)); want = Math.min(want, 15); }
+    if (RC.s < CO.sLift0) want = 3.6; else if (RC.s < CO.sCrest) want = CO.LIFT; else if (RC.s < CO.sDrop) want = CO.CRUISE;
+    else { coAt(RC.s, _rcP, _rcT, _rcU, _rcR); want = Math.sqrt(Math.max(2 * (CO.E0 - CO.GE * _rcP.y - CO.fric * (RC.s - CO.sDrop)), 16)); want = Math.min(want, 15); }
     RC.v += (want - RC.v) * Math.min(1, dt * (RC.s < CO.sCrest ? 1.5 : 4));
     RC.s += RC.v * dt;
     if (RC.s >= CO.sLift0 && RC.s < CO.sCrest && (RC.clickT -= dt) <= 0) { RC.clickT = .17; if (ac) tone('square', 1100, 700, .02, .04); }
-    if (!RC.told.drop && RC.s > CO.sCrest + 1) { RC.told.drop = 1; toast(state.xr ? '🙌 HANDS UP!!!' : '🙌 WHEEEEE!!!', 2); if (ac) tone('sawtooth', 500, 900, .6, .05); }
+    if (!RC.told.sky && RC.s > CO.sCrest - 4) { RC.told.sky = 1; toast('☁️ We are UP IN THE CLOUDS! Look how high we are!', 4); if (ac) [784, 988, 1175].forEach((f, i) => tone('sine', f, f, .5, .06, i * .15)); }
+    if (!RC.told.drop && RC.s > CO.sDrop + 1) { RC.told.drop = 1; toast(state.xr ? '🙌 HANDS UP!!!' : '🙌 WHEEEEE!!!', 2); if (ac) tone('sawtooth', 500, 900, .6, .05); }
     if (!RC.told.loop && RC.s > CO.sLoop0) { RC.told.loop = 1; toast('🌀 LOOP-DE-LOOP!', 2.2); }
     if (RC.s >= CO.L - .05) { RC.s = CO.L; coLaunch(); return; }
   }
@@ -381,6 +400,7 @@ function stepRide(dt) {
   const k = state.xr ? clamp((RC.comfy ? .45 : .2) + (RC.v - 5) / 20, 0, .8) : clamp((RC.v - 8) / 14, 0, .45);
   RC.vig += (k - RC.vig) * Math.min(1, dt * 3);
   VIG.visible = state.xr && RC.vig > .02; VIG.material.uniforms.k.value = RC.vig; vigDom.style.opacity = state.xr ? 0 : RC.vig;
+  { const ly = eye.y - PW.y, top = ly > 30; CT.sea.visible = top; if (top !== RC.wasTop) { RC.wasTop = top; if (RC.phase === 'go' && RC.s > CO.sDrop && !top) { toast('☁️💥 WHOOSH! Right through the clouds!', 2.5); if (ac) tone('sine', 900, 200, .6, .08); } } }
   if (windGain) { windGain.gain.value = clamp((RC.v - 2) / 13, 0, 1) * .22; windF.frequency.value = 300 + RC.v * 70; }
 }
 function coLaunch() {
