@@ -71,14 +71,14 @@ Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
 
 - **PC / phone:** the blue **🎤** button (shows once the buddy is on). It listens with the browser's speech-to-text and also opens a type box.
   On a phone, the keyboard's own mic button works in the type box too.
-- **VR:** poke the blue mic on the little post next to the orange orb. If the browser can't do speech-to-text (the Quest browser
+- **VR:** poke the tiny blue mic on the grove computer's desk, beside the keyboard. If the browser can't do speech-to-text (the Quest browser
   usually can't), a **quick-talk board** pops up next to the buddy instead: poke "Hi Claude!", "Come here!", "Follow me!",
   "Give me that!", "Dance!", "Throw it!", "Yes", "No".
 - **Quest (and any browser without speech-to-text): push-to-talk with Claude's own ears.** Poke the mic (or tap 🎤), talk,
   poke again (or it stops after 25 s). A small Whisper model (tiny.en, transformers.js) turns it into words right in the
   browser, no account or key. It downloads about 40 MB the first time, then the browser keeps it. A clip takes a few seconds.
   The mic turns yellow 🧠 while it's thinking. The quick-talk board pops up too, as a backup.
-- **Always listening 👂:** the 👂 button (PC/phone) or the little flip switch on the front of the mic post (VR). It remembers the
+- **Always listening 👂:** the 👂 button (PC/phone) or the little flip switch on the desk next to the tiny mic (VR). It remembers the
   choice. With real speech-to-text it just keeps listening; on Quest it notices when he starts and stops talking and sends each
   sentence to the in-browser Whisper on its own (the mic glows green while waiting, red while recording, yellow while thinking).
   It ignores the buddy's own voice. Words said while it's still thinking about the last sentence can get missed.
