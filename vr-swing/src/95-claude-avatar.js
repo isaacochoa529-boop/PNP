@@ -664,17 +664,15 @@ function clTypeBox(show) {
   d.onsubmit = e => { e.preventDefault(); const i = $('clTypeIn'); clHeard(i.value, 'typed'); i.value = ''; };
   d.addEventListener('keydown', e => e.stopPropagation()); d.addEventListener('keyup', e => e.stopPropagation()); document.body.appendChild(d);
 })();
-// VR: a blue mic orb on its own little post next to the orange one
+// VR: a tiny blue mic standing on the grove computer's desk, beside the keyboard (Isaiah asked: small, no sign)
 const clMicOrb = (() => {
-  const at = V(CL_ORB_AT.x + .45, 0, CL_ORB_AT.z), g = new THREE.Group(); g.position.copy(at);
+  const g = new THREE.Group(), yaw = Math.atan2(-COMP_AT.x, -COMP_AT.z);
+  g.position.copy(V(.47, .32, .02).applyAxisAngle(V(0, 1, 0), yaw).add(COMP_AT)); g.rotation.y = yaw + Math.PI; g.scale.setScalar(.38);   // switch faces you
   const post = new THREE.Mesh(new THREE.CylinderGeometry(.04, .07, .8, 8), mat(0x6b4426)); post.position.y = .4; g.add(post);
   const m = new THREE.MeshStandardMaterial({ color: 0x3fb2ff, emissive: 0x3fb2ff, emissiveIntensity: .5, roughness: .3 });
   const head = new THREE.Mesh(new THREE.CapsuleGeometry(.045, .07, 4, 10), m); head.position.y = .92; g.add(head);
   const grill = new THREE.Mesh(new THREE.TorusGeometry(.05, .008, 6, 16), mat(0x2a2a33)); grill.rotation.x = Math.PI / 2; grill.position.y = .9; g.add(grill);
-  const tag = textPanel(512, 128, (c) => { c.fillStyle = 'rgba(10,30,50,.8)'; c.beginPath(); c.roundRect(6, 14, 500, 100, 50); c.fill(); c.fillStyle = '#9adcff'; c.font = '600 54px Fredoka, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('🎤 Talk to Claude', 256, 66); });
-  const lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: tag.t, transparent: true })); lab.scale.set(.46, .115, 1); lab.position.y = 1.15; g.add(lab);
   g.traverse(o => { if (o.isMesh) o.castShadow = true; }); scene.add(g);
-  addCol({ t: 1, x: at.x, z: at.z, cy: .4, hy: .4, r: .07, tag: 'wood' });
   return { g, head, m, cool: 0 };
 })();
 // VR quick-talk board: floats beside the buddy, poke a phrase to say it
@@ -701,7 +699,7 @@ function stepClaudeEars(dt) {
   if (clMicOrb.cool <= 0 && (state.area || 'grove') === 'grove') {
     clMicOrb.head.getWorldPosition(_cT);
     // only counts as a NEW poke after the paw has left the mic (holding it there used to flip it on, then off again)
-    let near = null; for (const h of hands) if (h.tracked && h.pos.distanceTo(_cT) < (clMicOrb.armed === false ? .22 : .15)) { near = h; break; }
+    let near = null; for (const h of hands) if (h.tracked && h.pos.distanceTo(_cT) < (clMicOrb.armed === false ? .14 : .09)) { near = h; break; }
     if (near && clMicOrb.armed !== false) { clMicOrb.armed = false; clMicOrb.cool = .4; buzz(near, .6, 40); clMicToggle(); }
     else if (!near) clMicOrb.armed = true;
   }
@@ -916,7 +914,7 @@ function vadUi() {
 })();
 // VR: a little flip switch on the front of the mic post
 const clEarSw = (() => {
-  const g = new THREE.Group(); clMicOrb.g.add(g); g.position.set(0, .62, -.07);
+  const g = new THREE.Group(); clMicOrb.g.add(g); g.position.set(.3, .1, -.07);   // on the desk beside the tiny mic
   const plate = new THREE.Mesh(new THREE.BoxGeometry(.09, .13, .02), mat(0x2a2a33)); g.add(plate);
   const m = new THREE.MeshStandardMaterial({ color: 0x777777, emissive: 0x111111, roughness: .4 });
   const knob = new THREE.Mesh(new THREE.BoxGeometry(.05, .045, .04), m); knob.position.z = -.02; g.add(knob);
