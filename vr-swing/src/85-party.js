@@ -703,6 +703,7 @@ function stepParty(dt) {
   stepBooth(dt);
   stepCoaster(dt);
   if (!PT.inside) { if ($('ptHud')) $('ptHud').style.display = 'none'; return; }
+  stepPartyPerf(dt);
   if (AR.ready && !PT.phys) { partyPhys(); swordToParty(); newCake(false); }
   if (PT.fall) {
     state.vel.y = Math.max(state.vel.y, -2.1);   // float down like a balloon
