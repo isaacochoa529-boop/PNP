@@ -108,7 +108,7 @@ const GRAV = 9.8;
 function makeLoose(obj, { mass = 3, k = .12, samples, kind = 'part', life = 0, r = .15 } = {}) {
   const b = { obj, v: new V3(), w: new V3(), m: mass, invI: 1 / (mass * k * k), samples, kind, life, r, held: null, still: 0, cool: 0, smash: 0 };
   LOOSE.push(b);
-  if (LOOSE.length > 45) { const old = LOOSE.findIndex(x => !x.held && x.kind !== 'head' && x.kind !== 'body'); if (old >= 0) killLoose(LOOSE[old]); }
+  if (LOOSE.length > 45) { const old = LOOSE.findIndex(x => !x.held && x.kind !== 'head' && x.kind !== 'body' && x.kind !== 'weapon'); if (old >= 0) killLoose(LOOSE[old]); }
   return b;
 }
 function killLoose(b) { const i = LOOSE.indexOf(b); if (i >= 0) LOOSE.splice(i, 1); if (b.obj.parent) b.obj.parent.remove(b.obj); if (b.held) b.held.grab = null; }
@@ -160,6 +160,7 @@ function collideWalls(b) {
     if (l > worst) { worst = l; wn = d.divideScalar(l).clone(); wp = p.clone(); }
   }
   if (!wn) return;
+  if (wn.y > .5) b.touch = true;
   o.position.addScaledVector(wn, worst);
   const hit = bounce(b, wp.addScaledVector(wn, worst), wn, .35, .4);
   if (hit > 2.2 && b.cool <= 0) onImpact(b, wp, hit, wn);
@@ -198,6 +199,7 @@ function collideFloor(b, dynamic) {
 }
 function onImpact(b, p, speed, n) {
   b.cool = .12; n = n || _v3.set(0, 1, 0);
+  if (b.kind === 'weapon') { if (speed > 1.2) sfx.clang(Math.min(1, speed / 5) * Math.min(1, .4 + b.m / 6), b.m); return; }
   if (n.y < .5 && speed > 2.5 && b.kind !== 'tooth' && b.kind !== 'eye' && b.kind !== 'chunk') addSplat(p, n, Math.min(.35, .05 + speed * .025));
   if (b.kind === 'head' && speed > 3.2) { smashHead(b, p, speed); return; }
   if (b.kind === 'tooth' || b.kind === 'eye') { if (speed > 1) sfx.click(); return; }

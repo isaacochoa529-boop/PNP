@@ -42,6 +42,14 @@ function say3D(msg, secs) {
 // ---- grabbing ----
 const _hm = new THREE.Matrix4(), _bm = new THREE.Matrix4();
 function startGrab(H, found, handMatrix, handW) {
+  if (found.weapon) {
+    const b = found.weapon; H.grab = { weapon: b, local: found.local };
+    b.hands = b.hands.filter(h => h.H !== H); b.hands.push({ H, local: found.local });
+    b.held = b.held || H; b.soft = true; b.still = 0;
+    sfx.click(); buzz(H.side, clamp(.2 + b.m * .04, .2, .8), 40);
+    if (b.m > 8 && !b.toldHeavy) { b.toldHeavy = true; toast(b.m > 12 ? '😤 SO HEAVY! Use both hands!' : '💪 Heavy! Two hands help.'); }
+    return;
+  }
   if (found.rag !== undefined) { H.grab = { rag: found.rag, dum: DUM.id }; ragHold(H, found.rag, handW || RAG.p[found.rag]); }
   else { const b = found.body; H.grab = { body: b, off: new THREE.Matrix4().copy(handMatrix).invert().multiply(b.obj.matrixWorld) }; b.held = H; b.still = 0; }
   sfx.squish(); buzz(H.side, .4, 30);
@@ -49,6 +57,11 @@ function startGrab(H, found, handMatrix, handW) {
 function drop(H) {
   const g = H.grab; if (!g) return; H.grab = null;
   if (g.rag !== undefined) { ragRelease(H, avgVel(H.vbuf, 4).multiplyScalar(.9)); return; }
+  if (g.weapon) {     // let go: it keeps its own swing (throw it!)
+    const b = g.weapon; b.hands = b.hands.filter(h => h.H !== H);
+    if (!b.hands.length) { b.held = null; b.soft = false; b.pc2 = false; } else b.held = b.hands[0].H;
+    b.still = 0; return;
+  }
   if (g.body) {
     const b = g.body; b.held = null; b.still = 0;
     const v = avgVel(H.vbuf, 4); b.v.copy(v).clampLength(0, 14);
@@ -68,6 +81,7 @@ function grabValid(H) {
     return true;
   }
   if (g.body && !LOOSE.includes(g.body)) { H.grab = null; return false; }
+  if (g.weapon) return true;
   return true;
 }
 // moves a held loose body with the hand and handles floor smashes
@@ -101,7 +115,7 @@ function handStep(H, dt, pressed, handW, handMatrix) {
       // weight: the further the body lags behind your hand, the more it pulls on your hand
       const lag = RAG.p[H.grab.rag].distanceTo(handW);
       if (lag > .04) buzz(H.side, Math.min(.5, lag * 1.5), 16);
-    } else carry(H, dt, handW);
+    } else if (H.grab.body) carry(H, dt, handW);
   } else if (inVR() && H.vel.length() > 1.6 && H.cool <= 0) { if (hitDummy(handW, avgVel(H.vbuf, 3), H.side)) H.cool = .25; }
   // buttons you can touch
   const nearBtn = handW.distanceTo(RESP_POS) < .13;
@@ -113,9 +127,24 @@ function handStep(H, dt, pressed, handW, handMatrix) {
   H.curl += (want - H.curl) * Math.min(1, dt * 18);
   H.model.userData.hand.userData.fingers.forEach(f => f.rotation.z = -H.s * H.curl);
 }
+// punching leaves blood on YOUR knuckles too (it builds up)
+const knuckleBlood = new THREE.MeshStandardMaterial({ color: '#6e0707', roughness: .35, metalness: .1 });
+function bloodyHand(side, sp) {
+  const models = [HANDS[side] && HANDS[side].model]; if (side === 'R' && !inVR()) models[0] = pcHandR.model;
+  for (const M of models) {
+    if (!M) continue; const h = M.userData.hand; const n = (h.userData.blood = (h.userData.blood || 0) + 1);
+    if (n > 10 || Math.random() > .4 + sp * .08) continue;
+    const s = side === 'L' ? -1 : 1, i = (Math.random() * 4) | 0;
+    const d = new THREE.Mesh(new THREE.SphereGeometry(rand(.007, .013), 8, 6), knuckleBlood);
+    d.position.set(-s * rand(.012, .022), rand(-.1, -.075), .028 - i * .019 + rand(-.006, .006)); d.scale.set(.5, 1, 1.2); h.add(d);
+  }
+}
+function cleanHands() { for (const H of Object.values(HANDS)) { const h = H.model.userData.hand; h.userData.blood = 0; h.children.filter(c => c.material === knuckleBlood).forEach(c => h.remove(c)); } }
 function pressRespawn() {
   respBtn.position.y = .97; setTimeout(() => respBtn.position.y = .99, 150);
-  sfx.click(); sfx.pop(); buildDummy(); toast('🧍 Fresh dummy!');
+  sfx.click(); sfx.pop(); buildDummy(); cleanHands();
+  for (const b of WEAPONS) if (!b.held) resetWeapon(b);
+  toast('🧍 Fresh dummy!');
 }
 function touchGary() {
   state.garyT = 1; state.rainbow = !state.rainbow;
@@ -203,7 +232,7 @@ function gorilla(dt) {
 }
 
 // ---- PC controls ----
-const pc = { yaw: 0, pitch: 0, keys: {}, down: false, dist: 1.2, T: new V3(), punchT: 0 };
+const pc = { yaw: 0, pitch: 0, keys: {}, down: false, dist: 1.2, T: new V3(), punchT: 0, swingT: 0 };
 const pcHandR = HANDS.R, pcHandL = makePlayerHand(-1);
 function pcAttach() {
   pcHandR.model.rotation.set(1.2, 0, -.15); pcHandR.model.position.set(.22, -.2, -.42); camera.add(pcHandR.model);
@@ -216,7 +245,7 @@ canvas.addEventListener('mousedown', e => {
   audio();
   if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
   if (e.button === 0) pc.down = true;
-  if (e.button === 2) pcPunch();
+  if (e.button === 2) { if (pcHandR.grab && pcHandR.grab.weapon) { if (pc.swingT <= 0) { pc.swingT = .55; sfx.whoosh(.8); } } else pcPunch(); }
 });
 addEventListener('mouseup', e => { if (e.button === 0) pc.down = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -230,10 +259,26 @@ addEventListener('keydown', e => {
   if (state.mode !== 'pc') return;
   if (e.code === 'KeyR') pressRespawn();
   if (e.code === 'KeyQ' && pcHandR.grab) { pc.dist = Math.max(.3, pc.dist - .5); pc.yank = .12; }
+  if (e.code === 'KeyF') pcLeftHand();
   if (e.code === 'Escape') showMenu();
 });
 addEventListener('keyup', e => { pc.keys[e.code] = false; });
 document.addEventListener('pointerlockchange', () => { if (state.mode === 'pc' && document.pointerLockElement !== canvas) pc.down = false; });
+// F on PC: your LEFT hand. Holding a weapon? both hands on it. Holding him? the left hand grabs the other half and holds it still (pull him in two!)
+function pcLeftHand() {
+  const L = HANDS.L;
+  if (L.grab) { drop(L); pcHandL.visible = true; toast('✋ Left hand let go'); return; }
+  const g = pcHandR.grab;
+  if (g && g.weapon) { g.weapon.pc2 = !g.weapon.pc2; toast(g.weapon.pc2 ? '🙌 Two hands!' : '✋ One hand'); sfx.click(); return; }
+  const { o, d } = pcRay(), r = DUM && ragRay(o, d, 3.5);
+  if (!r) { toast('Look at him and press F to grab with your left hand'); return; }
+  if (RAG.owner[r.i].startsWith('leg') || RAG.owner[r.i] === 'hips') {    // grab him by the belt (so you can pull him in two)
+    let bi = r.i, bd = 1e9; for (const j of RAG.lo) { const dd = RAG.p[j].distanceTo(RAG.p[r.i]); if (dd < bd) { bd = dd; bi = j; } } r.i = bi;
+  }
+  L.mat = new THREE.Matrix4().makeTranslation(RAG.p[r.i].x, RAG.p[r.i].y, RAG.p[r.i].z);
+  startGrab(L, { rag: r.i }, L.mat, RAG.p[r.i].clone()); pcHandL.visible = false;
+  toast('🤜 Left hand holding! Now pull with the right.');
+}
 function pcRay() { const o = camera.getWorldPosition(new V3()), d = camera.getWorldDirection(new V3()); return { o, d }; }
 function pcPunch() {
   pc.punchT = .25; const { o, d } = pcRay();
@@ -254,7 +299,7 @@ function stepPC(dt) {
   if (pc.down && !pcHandR.was) {
     const fnd = findGrabRay(o, d);
     pcHandR.pcFound = fnd;
-    if (fnd) pc.dist = clamp(fnd.t, .35, 3);
+    if (fnd) pc.dist = fnd.weapon ? .6 : clamp(fnd.t, .35, 3);
     else { const t = _v1.subVectors(RESP_POS, o).dot(d); if (t > 0 && t < 3.5 && _v2.copy(o).addScaledVector(d, t).distanceTo(RESP_POS) < .15) pressRespawn();
       const tg = _v1.subVectors(GARY_POS, o).dot(d); if (tg > 0 && tg < 3 && _v2.copy(o).addScaledVector(d, tg).distanceTo(GARY_POS) < .3) touchGary(); }
   }
@@ -263,7 +308,19 @@ function stepPC(dt) {
   if (pcHandR.grab && d.y < -.55) dd = Math.max(dd, o.y / -d.y + .12);
   pc.T.copy(o).addScaledVector(d, dd);
   if (pc.T.y < .01) pc.T.y = Math.max(pc.T.y, -.25);
-  const m = new THREE.Matrix4().compose(pc.T, camera.getWorldQuaternion(new Q()), new V3(1, 1, 1));
+  const cq = camera.getWorldQuaternion(new Q());
+  if (pcHandR.grab && pcHandR.grab.weapon) {
+    // hold the weapon up and to the right; right click = a big overhead swing (heavy ones lag behind!)
+    const u = pc.swingT > 0 ? 1 - pc.swingT / .55 : 0, sw = u < .25 ? -u / .25 : -1 + (u - .25) / .75 * 2.6;
+    const swing = pc.swingT > 0 ? sw : 0;
+    const c = Math.min(1, Math.abs(swing));          // during a swing the weapon comes to the middle (where you aim)
+    pc.T.add(_v1.set(.18 * (1 - c) - .06 * c, -.12 + Math.max(0, -swing) * .3 - Math.max(0, swing) * .3, -Math.max(0, swing) * .35).applyQuaternion(cq));
+    cq.multiply(_q1.setFromEuler(new THREE.Euler(.55 - swing * 1.25, 0, -.25 * (1 - c))));
+    pc.swingT = Math.max(0, pc.swingT - dt);
+  }
+  // the left hand keeps holding where it grabbed
+  if (HANDS.L.grab && HANDS.L.grab.rag !== undefined && !RAG.alive[HANDS.L.grab.rag]) { HANDS.L.grab = null; ragRelease(HANDS.L); pcHandL.visible = true; }
+  const m = new THREE.Matrix4().compose(pc.T, cq, new V3(1, 1, 1));
   handStep(pcHandR, dt, pc.down && !!(pcHandR.grab || pcHandR.pcFound), pc.T.clone(), m);
   if (!pc.down) pcHandR.pcFound = null;
   // show the right hand where it's grabbing, or punching
@@ -276,7 +333,7 @@ function stepPC(dt) {
 function showMenu() {
   if (document.pointerLockElement) document.exitPointerLock();
   $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true;
-  if (state.mode === 'pc') { pcDetach(); drop(pcHandR); }
+  if (state.mode === 'pc') { pcDetach(); drop(pcHandR); drop(HANDS.L); pcHandL.visible = true; }
   state.mode = 'menu';
 }
 function startPC() {

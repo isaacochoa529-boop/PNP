@@ -105,20 +105,23 @@ function makeLeg(m, side) {
 function makeHuman(o) {
   const m = mats(o);
   const root = new THREE.Group();
-  const torso = new THREE.Group(); torso.position.y = .97; root.add(torso);
-  const lathe = new THREE.LatheGeometry([[.0, -.06], [.13, -.06], [.155, 0], [.15, .1], [.14, .2], [.16, .33], [.185, .44], [.175, .5], [.11, .55], [.0, .56]].map(p => new THREE.Vector2(p[0], p[1])), 20);
-  const chest = mesh(lathe, m.shirt, 0, 0, 0, torso); chest.scale.z = .62;
-  const coll = mesh(new THREE.TorusGeometry(.06, .012, 6, 16), m.shirt, 0, .545, 0, torso); coll.rotation.x = Math.PI / 2;
+  const torso = new THREE.Group(); torso.position.y = .97; root.add(torso);          // lower body (hips)
+  const torsoUp = new THREE.Group(); torso.add(torsoUp);                              // upper body: can be torn off at the waist
+  const prof = [[.0, -.06], [.13, -.06], [.155, 0], [.15, .1], [.145, .18], [.14, .2], [.16, .33], [.185, .44], [.175, .5], [.11, .55], [.0, .56]];
+  const lathe = pts => new THREE.LatheGeometry(pts.map(p => new THREE.Vector2(p[0], p[1])), 20);
+  const lo = mesh(lathe([...prof.slice(0, 5), [.0, .18]]), m.shirt, 0, 0, 0, torso); lo.scale.z = .62;
+  const up = mesh(lathe([[.0, .18], ...prof.slice(4)]), m.shirt, 0, 0, 0, torsoUp); up.scale.z = .62;
+  const coll = mesh(new THREE.TorusGeometry(.06, .012, 6, 16), m.shirt, 0, .545, 0, torsoUp); coll.rotation.x = Math.PI / 2;
   const belt = mesh(new THREE.TorusGeometry(.15, .018, 6, 20), m.belt, 0, -.02, 0, torso); belt.rotation.x = Math.PI / 2; belt.scale.y = .64;
   mesh(new THREE.BoxGeometry(.05, .04, .02), new THREE.MeshStandardMaterial({ color: '#c9a227', metalness: .8, roughness: .3 }), 0, -.02, .1, torso);
   if (o.legs) {
     const pelvis = mesh(new THREE.SphereGeometry(.16, 16, 12), m.pants, 0, -.07, 0, torso); pelvis.scale.set(1, .6, .66);
   }
   const parts = {};
-  const head = makeHead(m, o); head.position.set(0, .52, .005); torso.add(head); parts.head = head;
+  const head = makeHead(m, o); head.position.set(0, .52, .005); torsoUp.add(head); parts.head = head;
   [-1, 1].forEach(s => {
-    const a = makeArm(m, s); a.position.set(s * .2, .465, 0); torso.add(a); parts[s < 0 ? 'armL' : 'armR'] = a;
+    const a = makeArm(m, s); a.position.set(s * .2, .465, 0); torsoUp.add(a); parts[s < 0 ? 'armL' : 'armR'] = a;
     if (o.legs) { const l = makeLeg(m, s); l.position.set(s * .088, -.07, 0); torso.add(l); parts[s < 0 ? 'legL' : 'legR'] = l; }
   });
-  return { root, torso, parts, face: head.userData.face, mats: m };
+  return { root, torso, torsoUp, parts, face: head.userData.face, mats: m };
 }
