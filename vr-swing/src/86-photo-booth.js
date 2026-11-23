@@ -582,6 +582,18 @@ function boothCard() {
 }
 
 /* ---------- hooks: grabbing props (VR), E on a prop (PC), and the per-frame step ---------- */
+// anywhere in the game: grab next to your head to take off what's on it (hats, glasses, noses...), or at your neck for neck things
+function boothTakeOff(h) {
+  if (!h.tracked) return false;
+  headWorld(_tO); const dh = h.pos.distanceTo(_tO); _tO.y -= .28; const dn = h.pos.distanceTo(_tO);
+  const slots = dh < .2 ? ['head', 'eyes', 'face'] : dn < .16 ? ['neck'] : [];
+  const off = slots.filter(s => BO.worn[s]); if (!off.length) return false;
+  const s = off[0], id = BO.worn[s]; wearShow(id, false); BO.worn[s] = null;
+  if (s === 'head') PH.wornHat.visible = PT.hat === 'worn';
+  store.set('kg-booth', JSON.stringify(BO.worn)); boothUiSync(); buzz(h, .6, 40); if (ac) tone('sine', 600, 300, .12, .1); toast(`🙅 ${BP[id].emo} ${BP[id].name} off`, 1.8);
+  return true;
+}
+const _tO = V();
 function boothGrab(h) {
   if (!PT.inside || !h.tracked) return false;
   let best = null, bd = .2; for (const r of BO.rack) { const d = r.w.distanceTo(h.pos) - (r.rad || 0); if (d < bd) { bd = d; best = r; } }
