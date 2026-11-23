@@ -130,9 +130,12 @@ function rdTorsoFrame(rd) {
 const _stC = V();
 function rdStand(rd) {   // a gentle "puppet string" that keeps the dummy standing up (and gets it back up after a flop)
   if (rd.stand <= .01) return;
-  const P = rd.P, c = Math.cos(rd.yaw), sn = Math.sin(rd.yaw);
+  const P = rd.P, yaw = rd.anchor ? rd.anchor.yaw : rd.yaw, c = Math.cos(yaw), sn = Math.sin(yaw);
   _stC.addVectors(P[13].p, P[14].p).multiplyScalar(.5); const by = Math.min(P[13].p.y, P[14].p.y) - RD_REST[13][1];
   const fz = (RD_REST[13][2] + RD_REST[14][2]) / 2; _stC.x -= fz * sn; _stC.z -= fz * c;   // the "feet" sit a bit forward of the body's middle
+  // once it has settled, it stands on a fixed spot (it used to creep along by itself, like it was walking)
+  if (!rd.anchor && rd.calm > 2.5) rd.anchor = { x: _stC.x, z: _stC.z, yaw: rd.yaw };
+  if (rd.anchor) { _stC.x = rd.anchor.x; _stC.z = rd.anchor.z; }
   for (let i = 0; i < 15; i++) {
     const q = P[i]; if (q.pin || rd.det[i]) continue;
     const [x, y, z] = RD_REST[i], k = RD_STAND_K[i] * rd.stand;
@@ -143,7 +146,7 @@ function rdStep(rd, h) {
   const P = rd.P, gdrop = 9.8 * h * h; let mv = 0;
   for (const q of P) {
     if (q.pin) { q.o.copy(q.p); q.p.copy(q.pin); mv = 1; continue; }
-    _rv.subVectors(q.p, q.o).multiplyScalar(.993); if (_rv.lengthSq() > .09) _rv.setLength(.3);
+    _rv.subVectors(q.p, q.o).multiplyScalar(rd.heldNow ? .9 : .993); if (_rv.lengthSq() > .09) _rv.setLength(.3);   // held: calm it down so it can't spin like a top
     q.o.copy(q.p); q.p.add(_rv); q.p.y -= gdrop; mv = Math.max(mv, _rv.lengthSq());
   }
   rdStand(rd);
@@ -168,7 +171,8 @@ function rdStep(rd, h) {
     let e = 0; for (const c of G.cons) e += Math.max(0, rd.P[c.a].p.distanceTo(rd.P[c.b].p) - c.L);
     G.ratio = e / RD_EXTRA;
     // the harder (and longer) you tug, the sooner the seam gives: a big yank rips fast, a steady pull takes a couple of seconds
-    if (G.pulled && G.ratio > .5) G.strain += h * (G.ratio - .5) * 2; else G.strain = Math.max(0, G.strain - h);
+    const thr = gname === 'head' ? .3 : .5, rate = gname === 'head' ? 4 : 2;   // Isaiah: heads were too much of a struggle
+    if (G.pulled && G.ratio > thr) G.strain += h * (G.ratio - thr) * rate; else G.strain = Math.max(0, G.strain - h);
     if (G.strain > .55) rdRip(rd, gname);
   }
 }
@@ -360,7 +364,7 @@ function hmHit() {
     let hit = -1, bd = 1e9;
     rd.P.forEach((q, i) => { const d = q.p.distanceTo(HM.head) - q.r - (state.xr ? .11 : .16); if (d < 0 && d < bd) { bd = d; hit = i; } });
     if (hit < 0) continue;
-    rd.hitCd = .25; rd.asleep = false; rd.sleep = 0; rd.calm = 0; if (sp > 3) rd.stand = 0;
+    rd.hitCd = .25; rd.asleep = false; rd.sleep = 0; rd.calm = 0; rd.anchor = null; if (sp > 3) rd.stand = 0;
     const k = Math.min(sp, 9) * .85 * RD_STEP, hp = rd.P[hit].p;
     for (const q of rd.P) { if (q.pin) continue; const d = q.p.distanceTo(hp), f = d < .01 ? 1 : clamp(1 - d / .45, 0, 1) * .6; if (f > 0) { q.o.copy(q.p).addScaledVector(HM.vel, -k * f / Math.max(sp, 1e-3) * Math.min(sp, 9)); } }
     if (hit === 6) rd.squash = 1;
@@ -369,6 +373,26 @@ function hmHit() {
     _rv.copy(HM.vel).normalize().negate();
     if (sp > 2.5) { const n = Math.min(8, Math.floor(sp)); for (let i = 0; i < n; i++) { _rfV.set(Math.random() - .5, Math.random() * .8, Math.random() - .5).multiplyScalar(1.4).addScaledVector(_rv, .6);
       if (HZ.on) rfxAdd(hp, _rfV, .012, .01, .012, pick([0x7a0f14, 0x9b1b1f, 0xb83a3a]), 10, 9.8, .3, rd.floor, 1); else rfxAdd(hp, _rfV, .015, .012, .015, 0xffffff, 12, 3.2, 1.8, rd.floor); } }
+  }  hmWorld(sp);
+}
+// Isaiah: "the sledgehammer doesn't interact with anything in the Slicing Yard": now it smashes glass and knocks cubes around
+const _hmN = V(), _hmL = V(), _hmP = V();
+function hmWorld(sp) {
+  if (state.area !== 'arena') return;
+  if (typeof GL !== 'undefined') for (const pane of GL.panes) {
+    if (tAll - (pane.hmT || 0) < .3 || paneSdf(pane, HM.head, _hmN) > .075) continue;
+    pane.hmT = tAll; toPane(pane, _hmP.copy(HM.head).sub(ARENA), _hmL);
+    const r = glassHit(pane, clamp(_hmL.x, -pane.W / 2 + .03, pane.W / 2 - .03), clamp(_hmL.y, .05, pane.H - .05), sp * 1.7, HM.vel.clone(), { R: .17 });
+    if (HM.held && r !== 'miss') buzz(HM.held, r === 'break' ? 1 : .6, 50);
+  }
+  if (typeof AR !== 'undefined' && AR.pieces) for (const pc of AR.pieces) {
+    if (!pc.body || pc.dying || pc.held || tAll - (pc.hmT || 0) < .25) continue;
+    const t = pc.body.translation(); if ((t.x - HM.head.x) ** 2 + (t.y - HM.head.y) ** 2 + (t.z - HM.head.z) ** 2 > (pc.rad + .07) ** 2) continue;
+    if (typeof mine === 'function' && !mine(pc)) continue;
+    pc.hmT = tAll; const m = pc.body.mass() * Math.min(sp, 10) * .7, d = _hmP.copy(HM.vel).normalize();
+    pc.body.applyImpulseAtPoint({ x: d.x * m, y: d.y * m + m * .15, z: d.z * m }, { x: HM.head.x, y: HM.head.y, z: HM.head.z }, true);
+    if (ac) { tone('sine', 220, 80, .14, clamp(sp / 20, .06, .25)); noiseHit(ac.currentTime, .06, clamp(sp / 30, .04, .2), 'bandpass', 1400, 1); }
+    if (HM.held) buzz(HM.held, clamp(sp / 8, .3, 1), 40);
   }
 }
 
@@ -576,8 +600,8 @@ function stepRagdolls(dt) {
   let n = 0; while (RD.acc >= RD_STEP) { RD.acc -= RD_STEP; n++; }
   for (const rd of RD.list.slice()) {
     rd.hitCd -= dt;
-    const pl = rdPulled(rd); rd.heavy = pl.any && !pl.pinBody;
-    if (pl.any) { rd.asleep = false; rd.calm = 0; if (pl.pinBody) rd.stand = Math.max(0, rd.stand - dt * 4); else rd.stand = Math.min(rd.stand, .8); }
+    const pl = rdPulled(rd); rd.heavy = pl.any && !pl.pinBody; rd.heldNow = pl.any;
+    if (pl.any) { rd.asleep = false; rd.calm = 0; rd.anchor = null; if (pl.pinBody) rd.stand = Math.max(0, rd.stand - dt * 4); else rd.stand = Math.min(rd.stand, .8); }
     else if ((rd.calm += dt) > 2.5) rd.stand = Math.min(1, rd.stand + dt * .8);
     if (!rd.asleep) for (let i = 0; i < n; i++) rdStep(rd, RD_STEP);
     if (rd.P[0].p.y < -60) { rdKill(rd); continue; }
