@@ -186,6 +186,8 @@ function clPvPump() {
     s.onended = () => { if (CL_PV.src !== s) return; CL_PV.src = null; if (d.last) CL.speaking = false; else clPvPump(); };
   } catch (e) { CL.speaking = false; }
 }
+// Isaiah started talking: Claude stops talking (the words stay in the bubble) and listens
+function clHush() { if (!CL.speaking) return; try { speechSynthesis.cancel(); } catch (e) {} try { CL_ES.src && CL_ES.src.stop(); } catch (e) {} clPvStop(); CL.speaking = false; }
 function clPvStop() { CL_PV.id++; CL_PV.q = []; const s = CL_PV.src; CL_PV.src = null; try { s && s.stop(); } catch (e) {} }
 function clSpeakPv(text) {
   clPvStop(); const id = CL_PV.id, w = clPvWorker(); if (!w) return false;
@@ -226,18 +228,32 @@ function clBuild() {
   if (CL.hand.holding) CL.hand.holding.held = CL.hand;
 }
 // a little screen on the buddy's tummy that says if the real Claude is busy (building something) or free to chat.
-// Claude sets it with the "screen" command, e.g. "screen busy", "screen free" or "screen any text".
+// Claude sets it with the "screen" command, e.g. "screen busy", "screen free", "screen any text 🎉" or "screen pink any text" (first word can be a color, #hex or rainbow).
 function clScreenDraw(text) {
   const P = CL.scr; if (!P) return; const g = P.g, w = P.cv.width, h = P.cv.height;
-  const t = String(text || '').trim(), low = t.toLowerCase();
-  const busy = low === 'busy', free = low === 'free' || !t;
-  const label = busy ? '🛠️ BUSY' : free ? '✅ FREE' : t.slice(0, 24);
-  const bg = busy ? '#ff8a3d' : free ? '#3fbf5f' : '#3fb2ff';
+  // "screen pink 🍕 pizza time" -> a first word that is a color (name or #hex) paints the screen; "rainbow" makes stripes
+  let t = String(text || '').trim(), col = null;
+  const first = t.split(/\s+/)[0] || '';
+  if (/^rainbow$/i.test(first)) { col = 'rainbow'; t = t.slice(first.length).trim(); }
+  else if (first && first.length < 24) { g.fillStyle = '#010203'; g.fillStyle = first; if (g.fillStyle !== '#010203' || /^#010203$/i.test(first)) { col = first; t = t.slice(first.length).trim(); } }
+  const low = t.toLowerCase();
+  const busy = low === 'busy', free = low === 'free' || (!t && !col);
+  const label = busy ? '🛠️ BUSY' : free ? '✅ FREE' : t.slice(0, 48);
+  const bg = col || (busy ? '#ff8a3d' : free ? '#3fbf5f' : '#3fb2ff');
   g.clearRect(0, 0, w, h); g.fillStyle = '#1b1b22'; g.beginPath(); g.roundRect(0, 0, w, h, 34); g.fill();
-  g.fillStyle = bg; g.beginPath(); g.roundRect(14, 14, w - 28, h - 28, 24); g.fill();
-  g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  let fs = 96; g.font = `700 ${fs}px Fredoka, sans-serif`; while (g.measureText(label).width > w - 60 && fs > 30) { fs -= 6; g.font = `700 ${fs}px Fredoka, sans-serif`; }
-  g.fillText(label, w / 2, h / 2 + 4);
+  if (bg === 'rainbow') { const gr = g.createLinearGradient(14, 0, w - 14, 0); ['#ff4d4d', '#ffa64d', '#ffe14d', '#5fd35f', '#4db8ff', '#9b6bff'].forEach((c, i) => gr.addColorStop(i / 5, c)); g.fillStyle = gr; } else g.fillStyle = bg;
+  g.beginPath(); g.roundRect(14, 14, w - 28, h - 28, 24); g.fill();
+  // dark text on light colors, white text on dark ones
+  let light = false; if (bg !== 'rainbow') { g.fillStyle = bg; const hx = g.fillStyle; if (/^#[0-9a-f]{6}$/i.test(hx)) { const n = parseInt(hx.slice(1), 16); light = ((n >> 16) * .299 + ((n >> 8) & 255) * .587 + (n & 255) * .114) > 170; } }
+  g.fillStyle = light ? '#1b1b22' : '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (!light) { g.shadowColor = 'rgba(0,0,0,.45)'; g.shadowBlur = 6; }
+  // one big line, or two lines if it's long
+  let lines = [label], fs = 96; g.font = `700 ${fs}px Fredoka, sans-serif`;
+  if (g.measureText(label).width > (w - 60) * 1.6 && label.includes(' ')) { const ws = label.split(' '); let best = 1, bd = 1e9; for (let i = 1; i < ws.length; i++) { const d = Math.abs(g.measureText(ws.slice(0, i).join(' ')).width - g.measureText(ws.slice(i).join(' ')).width); if (d < bd) { bd = d; best = i; } } lines = [ws.slice(0, best).join(' '), ws.slice(best).join(' ')]; fs = 72; }
+  const fit = () => lines.some(l => g.measureText(l).width > w - 60) || fs * lines.length > h - 50;
+  g.font = `700 ${fs}px Fredoka, sans-serif`; while (fit() && fs > 26) { fs -= 4; g.font = `700 ${fs}px Fredoka, sans-serif`; }
+  lines.forEach((l, i) => g.fillText(l, w / 2, h / 2 + 4 + (i - (lines.length - 1) / 2) * fs * 1.05));
+  g.shadowBlur = 0;
   if (busy) { g.font = '600 34px Fredoka, sans-serif'; }
   P.t.needsUpdate = true; CL.scrText = label;
 }
@@ -290,20 +306,25 @@ function clToggle() {
   clUi(); clOut({ ev: 'hello' });
 }
 function clOff() {
-  CL.on = false; if (CL.es) { CL.es.close(); CL.es = null; }
+  CL.on = false; if (CL.ess) CL.ess.forEach(x => { try { x.close(); } catch (e) {} }); CL.ess = null; if (CL.es) { CL.es.close(); CL.es = null; }
   if (CL.hand && CL.hand.holding) clRelease(V());
   if (CL.f) CL.f.g.visible = false; if (CL.bubble) CL.bubble.s.visible = false;
   try { window.speechSynthesis && speechSynthesis.cancel(); } catch (e) {}
   toast('🤖 Claude buddy went to nap. 💤', 3); clUi();
 }
+// Two free ntfy servers: Claude's replies are sent to whichever one isn't over its daily limit, so the game listens on BOTH.
+const CL_BASES = ['https://ntfy.sh/', 'https://ntfy.envs.net/'];
 function clConnect() {
   if (CL.es || typeof EventSource === 'undefined') return;
-  try {
-    const es = new EventSource('https://ntfy.sh/' + CL_TOPIC + CL.code + '/sse'); CL.es = es; CL.net = 'connecting';
-    es.onopen = () => { CL.net = 'ok'; clUi(); };
-    es.onerror = () => { CL.net = 'retry'; clUi(); };   // EventSource reconnects on its own
-    es.onmessage = e => { try { const d = JSON.parse(e.data); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} };
-  } catch (e) { CL.net = 'off'; }
+  CL.ess = [];
+  CL_BASES.forEach((base, bi) => {
+    try {
+      const es = new EventSource(base + CL_TOPIC + CL.code + '/sse'); CL.ess.push(es); if (bi === 0) { CL.es = es; CL.net = 'connecting'; }
+      es.onopen = () => { if (bi === 0 || CL.net !== 'ok') CL.net = 'ok'; clUi(); };
+      es.onerror = () => { if (bi === 0) { CL.net = 'retry'; clUi(); } };   // EventSource reconnects on its own
+      es.onmessage = e => { try { const d = JSON.parse(e.data); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} };
+    } catch (e) { if (bi === 0) CL.net = 'off'; }
+  });
   clPollStart();
 }
 // every message runs once, even if it arrives both live (SSE) and from the backup check below
@@ -318,9 +339,13 @@ function clPollStart() {
   CL.poll = setInterval(async () => {
     if (!CL.on || !CL.code || document.hidden || CL.polling) return; CL.polling = true;
     try {
-      const r = await fetch('https://ntfy.sh/' + CL_TOPIC + CL.code + '/json?poll=1&since=' + CL.lastMsgT); if (!r.ok) return;
-      for (const line of (await r.text()).split('\n')) { if (!line.trim()) continue; try { const d = JSON.parse(line); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} }
-    } catch (e) {} finally { CL.polling = false; }
+      for (const base of CL_BASES) {
+        try {
+          const r = await fetch(base + CL_TOPIC + CL.code + '/json?poll=1&since=' + CL.lastMsgT); if (!r.ok) continue;
+          for (const line of (await r.text()).split('\n')) { if (!line.trim()) continue; try { const d = JSON.parse(line); if (d.event === 'message' && d.message) clGot(d); } catch (er) {} }
+        } catch (e) {}
+      }
+    } finally { CL.polling = false; }
   }, 3000);
 }
 function clOut(obj) {   // tell Claude in the chat what happened (status replies, pokes)
@@ -700,10 +725,10 @@ window.__kg.claude.heard = (t) => clHeard(t, 'test');
 
 /* ---------- Claude's own ears: push-to-talk + a tiny Whisper model that runs right in the browser ----------
    For browsers with no speech-to-text (the Quest browser). Poke the mic (or tap 🎤): it records; poke again (or wait 25 s)
-   and the clip is turned into words by Whisper tiny.en (transformers.js, WASM, in a Web Worker so VR stays smooth).
-   No account, no key. The model (~40 MB) downloads once the first time, then the browser keeps it. */
+   and the clip is turned into words by Whisper base.en (transformers.js, WASM, in a Web Worker so VR stays smooth).
+   No account, no key. The model (~80 MB) downloads once the first time, then the browser keeps it. */
 const EARS = { worker: null, ready: false, loading: false, busy: false, rec: null, stream: null, chunks: [], recOn: false, recT: 0, pct: -1, id: 0 };
-const EARS_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.4/dist/transformers.min.js', EARS_MODEL = 'Xenova/whisper-tiny.en';
+const EARS_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.4/dist/transformers.min.js', EARS_MODEL = 'Xenova/whisper-base.en', EARS_FAST = 'Xenova/whisper-tiny.en'; // short clips (under ~2 s, about 5 words) use the fast ears, longer ones the smart ears
 const IS_QUEST = /OculusBrowser|Quest/i.test(navigator.userAgent);
 if (IS_QUEST) CLM.broken = true;   // its SpeechRecognition never hears anything: go straight to Claude's own ears
 /* Whisper tiny goes "you know, you know, you know..." on long, quiet or noisy clips (Vivan's voice, 2026-11-23).
@@ -749,27 +774,30 @@ async function load() {
   if (asr) return asr;
   asr = await pipeline('automatic-speech-recognition', '${EARS_MODEL}', { dtype: 'q8', device: 'wasm',
     progress_callback: p => { if (p.status === 'progress' && p.total) self.postMessage({ t: 'pct', file: p.file, pct: p.loaded / p.total }); } });
-  self.postMessage({ t: 'ready' }); return asr;
+  self.postMessage({ t: 'ready' });
+  pipeline('automatic-speech-recognition', '${EARS_FAST}', { dtype: 'q8', device: 'wasm' }).then(f => { fast = f; }).catch(() => {});
+  return asr;
 }
+let fast = null;
 self.onmessage = async e => {
   const d = e.data;
   try {
     if (d.t === 'load') { await load(); return; }
-    if (d.t === 'hear') { const a = await load(); let r; try { r = await a(d.pcm, { chunk_length_s: 30, max_new_tokens: 96, no_repeat_ngram_size: 4 }); } catch (e2) { r = await a(d.pcm, { chunk_length_s: 30 }); } self.postMessage({ t: 'text', id: d.id, text: (r && r.text) || '' }); }
+    if (d.t === 'hear') { let a = await load(); if (fast && d.pcm.length < 16000 * 2) a = fast; let r; try { r = await a(d.pcm, { chunk_length_s: 30, max_new_tokens: 96, no_repeat_ngram_size: 4 }); } catch (e2) { r = await a(d.pcm, { chunk_length_s: 30 }); } self.postMessage({ t: 'text', id: d.id, text: (r && r.text) || '' }); }
   } catch (er) { self.postMessage({ t: 'err', id: d.id, msg: String(er && er.message || er) }); }
 };`;
   const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), { type: 'module' });
   w.onmessage = e => {
     const d = e.data;
-    if (d.t === 'pct') { const p = Math.round(d.pct * 100); if (store.get('kg-ears-ok') !== '1' && /decoder/.test(d.file || '') && p !== EARS.pct && p % 10 === 0) { EARS.pct = p; toast(`⏬ Downloading Claude's ears… ${p}% (only the first time)`, 3); } }
-    else if (d.t === 'ready') { EARS.ready = true; EARS.loading = false; store.set('kg-ears-ok', '1'); }
+    if (d.t === 'pct') { const p = Math.round(d.pct * 100); if (store.get('kg-ears2-ok') !== '1' && /decoder/.test(d.file || '') && p !== EARS.pct && p % 10 === 0) { EARS.pct = p; toast(`⏬ Downloading Claude's ears… ${p}% (only the first time)`, 3); } }
+    else if (d.t === 'ready') { EARS.ready = true; EARS.loading = false; store.set('kg-ears2-ok', '1'); }
     else if (d.t === 'text') { EARS.busy = false; const t = clDeloop(d.text.replace(/\[[^\]]*\]|\([^)]*\)/g, '')).replace(/\b(clod|clawed|claud|clawd|cloud|clot|klaud|klawd|clyde)\b/gi, 'Claude').trim(); if (t.length > 1) clHeard(t, 'voice'); else if (!VAD.on) toast('🎙️ I didn\'t catch that. Try again a bit louder!', 3); clMicUi(); }
     else if (d.t === 'err') { EARS.busy = false; EARS.loading = false; toast('😵 Claude\'s ears broke: ' + d.msg.slice(0, 80) + '. Use the quick-talk board!', 6); clBoard(state.xr); clMicUi(); }
   };
   w.onerror = () => { EARS.busy = false; toast('😵 Claude\'s ears could not load here. Use the quick-talk board!', 6); clBoard(state.xr); };
   EARS.worker = w; return w;
 }
-function earsPreload() { if (EARS.ready || EARS.loading) return; EARS.loading = true; try { earsWorker().postMessage({ t: 'load' }); if (store.get('kg-ears-ok') !== '1') toast("⏬ Getting Claude's ears ready (about 40 MB, only the first time)…", 4); } catch (e) { EARS.loading = false; } }
+function earsPreload() { if (EARS.ready || EARS.loading) return; EARS.loading = true; try { earsWorker().postMessage({ t: 'load' }); if (store.get('kg-ears2-ok') !== '1') toast("⏬ Getting Claude's ears ready (about 80 MB, only the first time)…", 4); } catch (e) { EARS.loading = false; } }
 async function earsStart(quiet) {
   if (EARS.recOn || EARS.busy) return;
   try {
@@ -916,7 +944,12 @@ function stepVad(dt) {
   VAD.an.getFloatTimeDomainData(VAD.buf); let s = 0; for (let i = 0; i < VAD.buf.length; i++) s += VAD.buf[i] * VAD.buf[i];
   const rms = Math.sqrt(s / VAD.buf.length), step = rdt;
   if (!VAD.talking) VAD.floor += (Math.min(rms, .05) - VAD.floor) * Math.min(1, step * .3);   // learn the room's background noise
-  const thr = Math.max(.006, VAD.floor * 2.2), buddyTalking = CL.speaking;   // quieter than before so a guest's voice counts too
+  const thr = Math.max(.006, VAD.floor * 2.2);   // quieter than before so a guest's voice counts too
+  // no talking over each other: if Claude starts talking while you are, or you talk clearly louder than Claude's
+  // own voice leaking into the mic, Claude stops and listens (your sentence is kept, not thrown away)
+  if (CL.speaking && VAD.talking) clHush();
+  if (CL.speaking) { VAD.barge = rms > Math.max(thr * 4, .035) ? (VAD.barge || 0) + step : 0; if (VAD.barge > .3) { VAD.barge = 0; clHush(); VAD.loud = .11; } }
+  const buddyTalking = CL.speaking;
   // while a clip runs, "quiet" means well under how loud this person was talking, so a noisy room can't keep it going forever
   const on = VAD.talking ? rms > Math.max(thr * .9, VAD.pk * .14) : rms > thr;
   if (VAD.talking && rms > VAD.pk) VAD.pk = rms; else if (VAD.talking) VAD.pk *= Math.pow(.85, step);

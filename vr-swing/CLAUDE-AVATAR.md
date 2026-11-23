@@ -47,7 +47,7 @@ send hzf7bn "wave"
 | `wait <seconds>` | Pause the queue (max 30) |
 | `stop` | Clear the queue, stop following, stop talking (happens right away) |
 | `status` | The game posts where everyone is (see below) |
-| `screen busy` / `screen free` / `screen <text>` | The little screen on the buddy's tummy: 🛠️ BUSY (orange), ✅ FREE (green) or any short text (blue). Instant. Claude sets busy while building, free when done. The game itself shows 🤔 THINKING from when Isaiah says something until the next command arrives (or 30 s) |
+| `screen busy` / `screen free` / `screen <text>` / `screen <color> <text>` | The little screen on the buddy's tummy: 🛠️ BUSY (orange), ✅ FREE (green) or any text with emoji (blue, up to 48 letters, wraps to 2 lines). Start with a color name, #hex or `rainbow` to paint it, e.g. `screen pink 🍕 pizza time`. Instant. Claude sets busy while building, free when done. The game itself shows 🤔 THINKING from when Isaiah says something until the next command arrives (or 30 s) |
 
 ## Reading what happens in the game
 
