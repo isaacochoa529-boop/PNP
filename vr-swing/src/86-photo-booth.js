@@ -6,7 +6,7 @@
    frame. Every photo also prints a polaroid that flies onto the PHOTO WALL. On PC/phone you can save the photo.
    Head/eye/face props sit on the avatar's head, neck props on the torso (SELF_LAYER: cameras + mirrors see them,
    your own eyes don't), hand props float on your left paw. The outfit is saved ('kg-booth') and goes with you. */
-const BO = { fit: false, W: .3, worn: { head: null, eyes: null, face: null, neck: null, hand: null }, inst: {}, anch: {}, snap: null, show: 0, shots: 0,
+const BO = { fit: false, W: .3, worn: { head: null, eyes: null, face: null, neck: null, hand: null }, inst: {}, anch: {}, snap: null, show: 0, shots: 0, strips: [],
   polas: [], near: false, told: false, frame: 0, look: V(), rack: [], flash: 0, horn: 0, ovKey: '', legend: false };
 const B_SPOT = V(-8.2, 0, -3), B_CAM = V(-5.95, 0, -3);
 const B_SLOTS = ['head', 'eyes', 'face', 'neck', 'hand'];
@@ -316,7 +316,8 @@ const booth = { cam: null, head: null, lens: null, flashM: null, rec: null, live
     [-1, 1].forEach(s => part(new THREE.BoxGeometry(.05, 1.1, .07), bm.gold, s * 1.06, 1.24, -.24, rg));
     signBoard(rg, 0, 1.62, -.2, 0, 1.5, .26, [[R.title, 110, '#8b6bff', 256]], 'rgba(255,255,255,.98)', '#ff4fa8', false);
     for (let k = 0; k < 7; k++) { const bulb = new THREE.Mesh(new THREE.SphereGeometry(.03, 8, 6), new THREE.MeshStandardMaterial({ color: 0xfff1c0, emissive: 0xffd27a, emissiveIntensity: 1.2 })); bulb.position.set(-.9 + k * .3, 1.42, -.215); rg.add(bulb); }
-    const wp = V(); rg.getWorldPosition(wp); addCol({ t: 0, x: wp.x, y: .62, z: wp.z, hx: 1.06, hy: .62, hz: .3, yaw: R.yaw, tag: 'wood' });
+    const wp = V(); rg.getWorldPosition(wp); addCol({ t: 0, x: wp.x, y: .36, z: wp.z, hx: 1.06, hy: .36, hz: .27, yaw: R.yaw, tag: 'wood' });   // just the table, so paws can reach the props on it
+    { const b = rg.localToWorld(V(0, 0, -.25)); addCol({ t: 0, x: b.x, y: 1.25, z: b.z, hx: 1.06, hy: .55, hz: .04, yaw: R.yaw, tag: 'wood' }); }
     R.ids.forEach((id, i) => {
       const upper = i >= 5, k = upper ? i - 5 : i, x = upper ? -.66 + k * .44 : -.8 + k * .4, y = upper ? 1.14 : .745, z = upper ? -.13 : .05;
       const st = new THREE.Group(); st.position.set(x, y, z); rg.add(st);
@@ -385,7 +386,7 @@ const booth = { cam: null, head: null, lens: null, flashM: null, rec: null, live
   [-1, 1].forEach(s => part(new THREE.CylinderGeometry(.04, .05, .84, 10), bm.white, s * .7, .42, -.03, wg));
   signBoard(wg, 0, 2.3, .02, 0, 1.3, .3, [['🖼️ PHOTO WALL', 140, '#ff4fa8', 256]], 'rgba(255,255,255,.98)', '#3fb2ff', false);
   { const w = wg.localToWorld(V()); addCol({ t: 0, x: w.x, y: 1.05, z: w.z, hx: .9, hy: 1.05, hz: .1, yaw: wg.rotation.y, tag: 'wood' }); }
-  for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) booth.slots.push(V(-.54 + c * .54, 1.73 - r * .54, .07));
+  for (let c = 0; c < 4; c++) booth.slots.push(V(-.6 + c * .4, 1.45, .07));
   boothG.updateMatrixWorld(true);
   mergeStatic(g, c => BO.rack.some(r => r.st === c));
 }
@@ -414,15 +415,16 @@ function boothFrame(c, w, h, legend) {   // the party frame (shared by the live 
 function ovDraw(key) {
   if (BO.ovKey === key) return; BO.ovKey = key;
   const c = booth.ovCtx; c.clearRect(0, 0, 1024, 684); boothFrame(c, 1024, 684, false);
-  const n = BO.snap ? Math.ceil(BO.snap.t) : 0;
-  const cap = BO.snap ? (n > 0 ? '😁 LOOK AT THE CAMERA! 😁' : '📸 CHEESE!') : '🔴 LIVE · stand on the ⭐ and press SNAP!';
+  const n = BO.snap ? Math.ceil(BO.snap.t) : 0, k = BO.snap ? BO.snap.k + 1 : 0;
+  const cap = BO.snap ? (n > 0 ? `😁 PHOTO ${k} OF ${STRIP_N} · ${['SMILE!', 'BE SILLY!', 'STRIKE A POSE!', 'BIG FINISH!'][k - 1]}` : '📸 CHEESE!') : '🔴 LIVE · stand on the ⭐ and press SNAP!';
   c.strokeText(cap, 512, 637); c.fillStyle = '#fff'; c.fillText(cap, 512, 637);
   if (BO.snap && n > 0) { c.font = '330px "Lilita One", Impact, sans-serif'; c.lineWidth = 22; c.strokeStyle = 'rgba(40,10,60,.6)'; c.strokeText(n, 512, 330); c.fillStyle = 'rgba(255,255,255,.92)'; c.fillText(n, 512, 330); }
   booth.ovT.needsUpdate = true;
 }
 labelFns.push(() => { BO.ovKey = ''; });
 
-/* ---------- taking the photo ---------- */
+/* ---------- taking the photos: SNAP = a strip of 4 ---------- */
+const STRIP_N = 4;
 function boothRender(rt) {
   const xrOn = renderer.xr.enabled, sa = renderer.shadowMap.autoUpdate, prev = renderer.getRenderTarget();
   renderer.xr.enabled = false; renderer.shadowMap.autoUpdate = false; booth.sg.visible = false;
@@ -432,55 +434,82 @@ function boothRender(rt) {
 function boothSnap() {
   if (!PT.inside) return;
   if (BO.snap) return;
-  BO.snap = { t: 3, last: 4 }; BO.show = 0; booth.photo.visible = false;
+  BO.snap = { t: 3, last: 4, k: 0, pics: [] }; BO.show = 0; booth.photo.visible = false;
   headWorld(_tA); const d = Math.hypot(_tA.x - PW.x - B_SPOT.x, _tA.z - PW.z - B_SPOT.z);
-  toast(d > 1.4 ? '📸 3 seconds! Run to the ⭐ and look at the camera!' : '📸 Look at the camera and SMILE! 😁', 3);
+  toast(d > 1.4 ? `📸 ${STRIP_N} photos coming! Run to the ⭐ and look at the camera!` : `📸 ${STRIP_N} photos in a row! Do a different pose for each one! 😁`, 3.5);
 }
-function boothShoot() {
-  BO.snap = null; BO.shots++;
+const sticker = (c, x, y, r, col, rot) => { c.save(); c.translate(x, y); c.rotate(rot); c.fillStyle = col; c.strokeStyle = '#fff'; c.lineWidth = Math.max(3, r * .18); c.beginPath(); shapePts('star', r).forEach((p, k) => c[k ? 'lineTo' : 'moveTo'](p.x, -p.y)); c.closePath(); c.fill(); c.stroke(); c.restore(); };
+function boothCapture() {   // render the camera's view into a 956 x 556 canvas
   if (!booth.photoRT) { booth.photoRT = new THREE.WebGLRenderTarget(956, 556); booth.photoRT.texture.colorSpace = THREE.SRGBColorSpace; }
-  if (BO.inst.horn && BO.inst.horn.parent) BO.horn = 1.6;
-  stepBoothHorn(0);
   boothRender(booth.photoRT);
   const W = 956, H = 556, buf = new Uint8Array(W * H * 4);
   renderer.readRenderTargetPixels(booth.photoRT, 0, 0, W, H, buf);
-  const img = booth.pCtx.createImageData(W, H), d = img.data;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const cx = cv.getContext('2d');
+  const img = cx.createImageData(W, H), d = img.data;
   for (let y = 0; y < H; y++) { const s = (H - 1 - y) * W * 4, o = y * W * 4; for (let i = 0; i < W * 4; i += 4) { d[o + i] = Math.min(255, buf[s + i] * 1.06 + 6); d[o + i + 1] = Math.min(255, buf[s + i + 1] * 1.06 + 6); d[o + i + 2] = Math.min(255, buf[s + i + 2] * 1.06 + 6); d[o + i + 3] = 255; } }   // + a little flash
-  const legend = B_SLOTS.every(s => BO.worn[s]);
-  const c = booth.pCtx; c.clearRect(0, 0, 1024, 684); boothFrame(c, 1024, 684, legend); c.putImageData(img, 34, 34);
-  // corner stickers
-  const sticker = (x, y, r, col, rot) => { c.save(); c.translate(x, y); c.rotate(rot); c.fillStyle = col; c.strokeStyle = '#fff'; c.lineWidth = 6; c.beginPath(); shapePts('star', r).forEach((p, k) => c[k ? 'lineTo' : 'moveTo'](p.x, -p.y)); c.closePath(); c.fill(); c.stroke(); c.restore(); };
-  sticker(60, 60, 34, '#ffd25a', -.2); sticker(964, 64, 30, '#ff4fa8', .3); sticker(970, 560, 26, '#5fd94a', .1); sticker(56, 556, 28, '#3fb2ff', -.4);
-  c.textAlign = 'center'; c.textBaseline = 'middle'; c.font = '52px "Lilita One", Impact, sans-serif'; c.lineWidth = 9; c.strokeStyle = 'rgba(40,10,60,.55)';
-  const dt = new Date(), cap = legend ? '✨ LEGENDARY PARTY FIT ✨' : `🎂 VIVAN'S BIRTHDAY · ${dt.getMonth() + 1}/${dt.getDate()}/${dt.getFullYear()} · #${BO.shots}`;
-  c.strokeText(cap, 512, 637); c.fillStyle = legend ? '#5a2a00' : '#fff'; if (legend) c.lineWidth = 0; c.fillText(cap, 512, 637);
-  booth.pT.needsUpdate = true; booth.photo.visible = true; BO.show = 14;
-  // flash + shutter + confetti
-  BO.flash = 1; if (ac) { tone('square', 2600, 900, .04, .12); tone('triangle', 1400, 300, .09, .1, .03); setTimeout(() => partyChime(), 250); }
-  confetti(pw(B_SPOT.x, 1.6, B_SPOT.z), state.xr ? 30 : 70);
+  cx.putImageData(img, 0, 0); return cv;
+}
+function boothCaption(c, x, y, txt, legend) { c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineWidth = 9; c.strokeStyle = 'rgba(40,10,60,.55)'; if (!legend) c.strokeText(txt, x, y); c.fillStyle = legend ? '#5a2a00' : '#fff'; c.fillText(txt, x, y); }
+function boothShoot() {
+  const S = BO.snap; if (BO.inst.horn && BO.inst.horn.parent) BO.horn = 1.6;
+  stepBoothHorn(0);
+  const cv = boothCapture(); S.pics.push(cv);
+  // show this one on the big screen for a moment
+  const c = booth.pCtx, legend = B_SLOTS.every(s => BO.worn[s]); c.clearRect(0, 0, 1024, 684); boothFrame(c, 1024, 684, legend); c.drawImage(cv, 34, 34);
+  sticker(c, 60, 60, 34, '#ffd25a', -.2); sticker(c, 964, 64, 30, '#ff4fa8', .3);
+  c.font = '52px "Lilita One", Impact, sans-serif'; boothCaption(c, 512, 637, `📸 PHOTO ${S.k + 1} OF ${STRIP_N}`, legend);
+  booth.pT.needsUpdate = true; booth.photo.visible = true;
+  BO.flash = 1; if (ac) { tone('square', 2600, 900, .04, .12); tone('triangle', 1400, 300, .09, .1, .03); }
+  confetti(pw(B_SPOT.x, 1.6, B_SPOT.z), state.xr ? 15 : 35);
   if (!state.xr && BO.near) { const f = $('boothFlash'); if (f) { f.style.transition = 'none'; f.style.opacity = .85; requestAnimationFrame(() => requestAnimationFrame(() => { f.style.transition = 'opacity .7s'; f.style.opacity = 0; })); } }
+  S.k++;
+  if (S.k < STRIP_N) { S.t = 3; S.last = 4; BO.show = 1.1; return; }   // next photo: 1 s to look, then 3-2-1 again
+  BO.snap = null; BO.shots++;
+  boothStrip(S.pics, legend);
+}
+function boothStrip(pics, legend) {
+  // the big screen: all 4 in a 2 x 2 grid
+  const c = booth.pCtx; c.clearRect(0, 0, 1024, 684); boothFrame(c, 1024, 684, legend);
+  c.fillStyle = 'rgba(255,255,255,.95)'; c.fillRect(34, 34, 956, 556);
+  pics.forEach((p, i) => { const x = 46 + (i % 2) * 472, y = 44 + Math.floor(i / 2) * 274; c.drawImage(p, x, y, 460, 266); });
+  sticker(c, 60, 60, 34, '#ffd25a', -.2); sticker(c, 964, 64, 30, '#ff4fa8', .3); sticker(c, 970, 560, 26, '#5fd94a', .1); sticker(c, 56, 556, 28, '#3fb2ff', -.4);
+  const dt = new Date(), date = `${dt.getMonth() + 1}/${dt.getDate()}/${dt.getFullYear()}`;
+  c.font = '50px "Lilita One", Impact, sans-serif'; boothCaption(c, 512, 637, legend ? '✨ LEGENDARY PARTY FIT ✨' : `🎂 VIVAN'S BIRTHDAY · ${date} · strip #${BO.shots}`, legend);
+  booth.pT.needsUpdate = true; booth.photo.visible = true; BO.show = 16;
+  // the real photo strip: tall and thin, like a photo booth prints
+  const SW = 600, PH = 349, M = 24, TOP = 130, BOT = 120, s = document.createElement('canvas'); s.width = SW; s.height = TOP + pics.length * (PH + M) + BOT;
+  const g = s.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, s.height);
+  if (legend) { gr.addColorStop(0, '#fff3a0'); gr.addColorStop(.5, '#ffc54a'); gr.addColorStop(1, '#ff9a1a'); } else { gr.addColorStop(0, '#ff4fa8'); gr.addColorStop(.5, '#8b6bff'); gr.addColorStop(1, '#3fb2ff'); }
+  g.fillStyle = gr; g.fillRect(0, 0, SW, s.height);
+  for (let i = 0; i < 60; i++) { g.fillStyle = ['#ffffff', '#ffd25a', '#5fd94a', '#ff8a3d'][i % 4]; g.globalAlpha = .7; g.save(); g.translate((i * 97) % SW, (i * 211) % s.height); g.rotate(i); g.fillRect(-6, -2.5, 12, 5); g.restore(); } g.globalAlpha = 1;
+  pics.forEach((p, i) => { const y = TOP + i * (PH + M); g.fillStyle = '#fff'; g.fillRect(M - 6, y - 6, SW - 2 * M + 12, PH + 12); g.drawImage(p, M, y, SW - 2 * M, PH); });
+  g.font = '60px "Lilita One", Impact, sans-serif'; boothCaption(g, SW / 2, 58, legend ? '✨ LEGENDARY ✨' : "📸 VIVAN'S PARTY", legend);
+  g.font = '34px "Lilita One", Impact, sans-serif'; boothCaption(g, SW / 2, 104, 'HAPPY BIRTHDAY! 🎂', legend);
+  g.font = '38px "Lilita One", Impact, sans-serif'; boothCaption(g, SW / 2, s.height - 72, `${date} · strip #${BO.shots}`, legend);
+  g.font = '26px "Lilita One", Impact, sans-serif'; boothCaption(g, SW / 2, s.height - 30, 'Knuckle Grove Photo Booth', legend);
+  sticker(g, 40, 40, 26, '#ffd25a', -.2); sticker(g, SW - 40, 44, 22, '#5fd94a', .3);
+  BO.strips.push({ n: BO.shots, url: s.toDataURL('image/png') }); if (BO.strips.length > 12) BO.strips.shift();
+  if (ac) setTimeout(() => partyChime(), 250);
   if (legend) {   // secret: every slot filled
     if (ac) [523, 659, 784, 1047, 1319].forEach((f, i) => tone('triangle', f, f, .2, .1, .3 + i * .1));
     confetti(pw(B_SPOT.x, 2.2, B_SPOT.z), state.xr ? 40 : 120, [0xffd25a, 0xffc54a, 0xffffff, 0xfff3a0]);
-    if (!BO.legend) { BO.legend = true; toast('✨ SECRET: LEGENDARY PARTY FIT! Golden photo unlocked! ✨', 5); }
-  } else toast(state.xr ? '📸 CLICK! Look at the big screen! 📺' : '📸 CLICK! There you are on the big screen! 📺', 3.5);
-  boothPolaroid(); boothCard();
+    if (!BO.legend) { BO.legend = true; toast('✨ SECRET: LEGENDARY PARTY FIT! Golden photo strip unlocked! ✨', 5); }
+  } else toast(state.xr ? '🎞️ Your photo strip is printing! Look at the big screen + the PHOTO WALL!' : '🎞️ Photo strip done! Save it with the 💾 button!', 4);
+  boothPolaroid(s); boothCard();
 }
-function boothPolaroid() {   // a little copy prints out of the camera and flies to the photo wall
-  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 236; const c = cv.getContext('2d');
-  c.fillStyle = '#ffffff'; c.fillRect(0, 0, 256, 236); c.drawImage(booth.pCanvas, 34, 34, 956, 556, 12, 12, 232, 135);
-  c.fillStyle = '#ff4fa8'; c.font = '30px "Lilita One", Impact, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(`📸 #${BO.shots}`, 128, 190);
-  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(new THREE.BoxGeometry(.44, .4, .008), bm.white));
-  const pm = new THREE.Mesh(new THREE.PlaneGeometry(.44, .4), new THREE.MeshBasicMaterial({ map: t, toneMapped: false })); pm.position.z = .0045; g.add(pm);
-  const pin = new THREE.Mesh(new THREE.SphereGeometry(.018, 8, 6), new THREE.MeshStandardMaterial({ color: PARTY_COLS[BO.shots % 7], roughness: .3 })); pin.position.set(0, .17, .012); g.add(pin);
+function boothPolaroid(strip) {   // the strip prints out of the camera and flies to the photo wall
+  const cv = document.createElement('canvas'); cv.width = 128; cv.height = Math.round(128 * strip.height / strip.width); cv.getContext('2d').drawImage(strip, 0, 0, cv.width, cv.height);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const w = .3, h = w * strip.height / strip.width, g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(w, h, .006), bm.white));
+  const pm = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: t, toneMapped: false })); pm.position.z = .0035; g.add(pm);
+  const pin = new THREE.Mesh(new THREE.SphereGeometry(.018, 8, 6), new THREE.MeshStandardMaterial({ color: PARTY_COLS[BO.shots % 7], roughness: .3 })); pin.position.set(0, h / 2 - .03, .012); g.add(pin);
   booth.lens.updateMatrixWorld(true); const from = booth.lens.localToWorld(V(0, -.12, .05)).sub(PW);
   g.position.copy(from); g.scale.setScalar(.3); boothG.add(g);
-  const slot = (BO.shots - 1) % 6, old = BO.polas.find(p => p.slot === slot);
+  const slot = (BO.shots - 1) % booth.slots.length, old = BO.polas.find(p => p.slot === slot);
   if (old) { boothG.remove(old.g); old.tex.dispose(); BO.polas.splice(BO.polas.indexOf(old), 1); }
   const to = booth.wall.localToWorld(V().copy(booth.slots[slot])).sub(PW);
-  BO.polas.push({ g, tex: t, slot, from, to, u: 0, tilt: (Math.random() - .5) * .25 });
+  BO.polas.push({ g, tex: t, slot, from, to, u: 0, tilt: (Math.random() - .5) * .12 });
 }
 function stepPolas(dt) {
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, booth.wall.rotation.y, 0));
@@ -511,7 +540,7 @@ function stepBoothHorn(dt) {
   #boothUi .sm{width:36px;height:34px;font-size:18px;background:#3fb2ff;box-shadow:0 3px 0 #1b6fa8}#boothUi .hint{margin-top:4px;font-size:11px;opacity:.8;text-align:center}
   #boothPic{position:fixed;right:74px;top:70px;z-index:22;display:none;width:230px;padding:8px;border-radius:16px;background:#fff;box-shadow:0 6px 20px rgba(0,0,0,.35);transform:rotate(2deg);font:600 14px Fredoka,system-ui,sans-serif}
   #boothPic img{width:100%;border-radius:8px;display:block}#boothPic .r{display:flex;gap:6px;margin-top:6px}#boothPic a,#boothPic button{flex:1;text-align:center;border:0;border-radius:10px;padding:7px;color:#fff;text-decoration:none;cursor:pointer;font:inherit}
-  #boothPic a{background:#5fd94a}#boothPic button{background:#ff5f6d;flex:.45}
+  #boothPic a{background:#5fd94a}#boothPic a.all{background:#3fb2ff}#boothPic button{background:#ff5f6d;flex:.45}
   #boothFlash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:40}
   @media (max-width:900px),(max-height:520px){#boothUi{top:4px;padding:4px 6px;max-width:calc(100vw - 200px)}#boothUi .p,#boothUi .sm{width:30px;height:29px;font-size:17px}#boothUi .t{display:none}#boothUi .big{font-size:15px;padding:6px 9px}#boothUi .hint{display:none}#boothPic{width:150px;top:auto;bottom:120px;right:70px;padding:6px}#boothPic .r{font-size:12px}}`;
   document.head.appendChild(st);
@@ -521,7 +550,8 @@ function stepBoothHorn(dt) {
   const stop = e => { e.stopPropagation(); };
   ui.addEventListener('pointerdown', stop); ui.addEventListener('touchstart', stop, { passive: true });
   ui.addEventListener('click', e => { e.stopPropagation(); const b = e.target.closest('button'); if (!b) return; if (b.dataset.id) wear(b.dataset.id); else if (b.dataset.act === 'snap') boothSnap(); else if (b.dataset.act === 'clear') wearClear(); b.blur(); });
-  const pic = document.createElement('div'); pic.id = 'boothPic'; pic.innerHTML = '<img alt="your party photo"><div class="r"><a download="vivan-party-photo.jpg">💾 Save</a><button>✖</button></div>';
+  const pic = document.createElement('div'); pic.id = 'boothPic'; pic.innerHTML = '<img alt="your photo strip"><div class="r"><a class="one">💾 Save strip</a><button>✖</button></div><div class="r"><a class="all" href="#">📂 Save ALL strips</a></div>';
+  pic.querySelector('.all').onclick = e => { e.preventDefault(); e.stopPropagation(); BO.strips.forEach((s, i) => setTimeout(() => { const a = document.createElement('a'); a.href = s.url; a.download = `vivan-party-strip-${s.n}.png`; document.body.appendChild(a); a.click(); a.remove(); }, i * 400)); toast(`📂 Saving ${BO.strips.length} photo strip${BO.strips.length > 1 ? 's' : ''} to your Downloads!`, 3.5); };
   pic.addEventListener('pointerdown', stop); pic.querySelector('button').onclick = e => { e.stopPropagation(); pic.style.display = 'none'; };
   const fl = document.createElement('div'); fl.id = 'boothFlash';
   document.body.append(ui, pic, fl);
@@ -531,7 +561,8 @@ function boothUiSync() { document.querySelectorAll('#boothUi .p').forEach(b => b
 function boothCard() {
   if (state.xr) return;
   const pic = $('boothPic'); if (!pic) return;
-  const url = booth.pCanvas.toDataURL('image/jpeg', .9); pic.querySelector('img').src = url; const a = pic.querySelector('a'); a.href = url; a.download = `vivan-party-photo-${BO.shots}.jpg`;
+  pic.querySelector('img').src = booth.pCanvas.toDataURL('image/jpeg', .85); const s = BO.strips[BO.strips.length - 1], a = pic.querySelector('.one'); a.href = s.url; a.download = `vivan-party-strip-${s.n}.png`;
+  pic.querySelector('.all').textContent = `📂 Save ALL strips (${BO.strips.length})`;
   pic.style.display = 'block';
 }
 
@@ -577,6 +608,7 @@ function stepBooth(dt) {
   ovDraw(BO.snap ? 'c' + Math.ceil(BO.snap.t) : 'live');
   BO.flash = Math.max(0, BO.flash - dt * 2.5); booth.flashM.emissiveIntensity = .2 + BO.flash * 8;
   if (BO.show > 0) { BO.show -= dt; if (BO.show <= 0) booth.photo.visible = false; }
+  if (BO.snap && BO.show > 0) BO.snap.t += dt;   // countdown waits while the last photo is on screen
   booth.bulbs.forEach((m, i) => m.material.emissiveIntensity = (Math.sin(tAll * (BO.snap ? 14 : 4) - i * .6) > 0) ? 1.3 : .25);
   // live view (only when you're close, every 2nd frame (3rd in VR), and not while a photo is on screen)
   if (dS < 9 && !booth.photo.visible && BO.frame++ % (state.xr ? 3 : 2) === 0) boothRender(booth.liveRT);
