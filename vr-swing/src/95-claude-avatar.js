@@ -712,7 +712,7 @@ window.__kg.claude.heard = (t) => clHeard(t, 'test');
    and the clip is turned into words by Whisper base.en (transformers.js, WASM, in a Web Worker so VR stays smooth).
    No account, no key. The model (~80 MB) downloads once the first time, then the browser keeps it. */
 const EARS = { worker: null, ready: false, loading: false, busy: false, rec: null, stream: null, chunks: [], recOn: false, recT: 0, pct: -1, id: 0 };
-const EARS_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.4/dist/transformers.min.js', EARS_MODEL = 'Xenova/whisper-base.en';
+const EARS_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.4/dist/transformers.min.js', EARS_MODEL = 'Xenova/whisper-base.en', EARS_FAST = 'Xenova/whisper-tiny.en'; // short clips (under ~2 s, about 5 words) use the fast ears, longer ones the smart ears
 const IS_QUEST = /OculusBrowser|Quest/i.test(navigator.userAgent);
 if (IS_QUEST) CLM.broken = true;   // its SpeechRecognition never hears anything: go straight to Claude's own ears
 /* Whisper tiny goes "you know, you know, you know..." on long, quiet or noisy clips (Vivan's voice, 2026-11-23).
@@ -758,13 +758,16 @@ async function load() {
   if (asr) return asr;
   asr = await pipeline('automatic-speech-recognition', '${EARS_MODEL}', { dtype: 'q8', device: 'wasm',
     progress_callback: p => { if (p.status === 'progress' && p.total) self.postMessage({ t: 'pct', file: p.file, pct: p.loaded / p.total }); } });
-  self.postMessage({ t: 'ready' }); return asr;
+  self.postMessage({ t: 'ready' });
+  pipeline('automatic-speech-recognition', '${EARS_FAST}', { dtype: 'q8', device: 'wasm' }).then(f => { fast = f; }).catch(() => {});
+  return asr;
 }
+let fast = null;
 self.onmessage = async e => {
   const d = e.data;
   try {
     if (d.t === 'load') { await load(); return; }
-    if (d.t === 'hear') { const a = await load(); let r; try { r = await a(d.pcm, { chunk_length_s: 30, max_new_tokens: 96, no_repeat_ngram_size: 4 }); } catch (e2) { r = await a(d.pcm, { chunk_length_s: 30 }); } self.postMessage({ t: 'text', id: d.id, text: (r && r.text) || '' }); }
+    if (d.t === 'hear') { let a = await load(); if (fast && d.pcm.length < 16000 * 2) a = fast; let r; try { r = await a(d.pcm, { chunk_length_s: 30, max_new_tokens: 96, no_repeat_ngram_size: 4 }); } catch (e2) { r = await a(d.pcm, { chunk_length_s: 30 }); } self.postMessage({ t: 'text', id: d.id, text: (r && r.text) || '' }); }
   } catch (er) { self.postMessage({ t: 'err', id: d.id, msg: String(er && er.message || er) }); }
 };`;
   const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), { type: 'module' });
