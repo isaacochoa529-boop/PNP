@@ -47,6 +47,7 @@ send hzf7bn "wave"
 | `wait <seconds>` | Pause the queue (max 30) |
 | `stop` | Clear the queue, stop following, stop talking (happens right away) |
 | `status` | The game posts where everyone is (see below) |
+| `screen busy` / `screen free` / `screen <text>` | The little screen on the buddy's tummy: 🛠️ BUSY (orange), ✅ FREE (green) or any short text (blue). Instant. Claude sets busy while building, free when done |
 
 ## Reading what happens in the game
 

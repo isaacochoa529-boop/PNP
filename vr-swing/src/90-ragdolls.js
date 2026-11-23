@@ -151,6 +151,7 @@ function rdStep(rd, h) {
   }
   rdStand(rd);
   for (let it = 0; it < 6; it++) for (const c of rd.C) rdSolve(rd, c);
+  rdSelfHit(rd);
   let low = 1e9;
   for (const q of P) {
     if (q.pin) continue;
@@ -174,6 +175,36 @@ function rdStep(rd, h) {
     const thr = gname === 'head' ? .3 : .5, rate = gname === 'head' ? 4 : 2;   // Isaiah: heads were too much of a struggle
     if (G.pulled && G.ratio > thr) G.strain += h * (G.ratio - thr) * rate; else G.strain = Math.max(0, G.strain - h);
     if (G.strain > .55) rdRip(rd, gname);
+  }
+}
+// Isaiah: "each part of the dummy's bodies should have collision so they don't go through each other"
+// every body ball keeps out of the others (except ones that are joined, or that already overlap when standing normally)
+function rdPairs(rd) {
+  if (rd.pairs && rd.pairsN === rd.P.length + rd.C.length) return rd.pairs;
+  const P = rd.P, n = P.length, joined = new Set(rd.C.map(c => Math.min(c.a, c.b) * 64 + Math.max(c.a, c.b))), out = [];
+  for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+    if (a < 6 && b < 6) continue;                              // the torso is one solid piece already
+    if (joined.has(a * 64 + b)) continue;
+    let m = P[a].r + P[b].r;
+    if (a < RD_REST.length && b < RD_REST.length) { const A = RD_REST[a], B = RD_REST[b], rest = Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); m = Math.min(m, rest * .9); }
+    if (m > .02) out.push(a, b, m);
+  }
+  rd.pairs = out; rd.pairsN = n + rd.C.length; return out;
+}
+function rdPush(A, B, m) {
+  _rd.subVectors(B.p, A.p); const d2 = _rd.lengthSq(); if (d2 >= m * m || d2 < 1e-10) return;
+  const d = Math.sqrt(d2), wa = A.pin ? 0 : A.im, wb = B.pin ? 0 : B.im, w = wa + wb; if (!w) return;
+  const k = (m - d) / d / w; A.p.addScaledVector(_rd, -k * wa); B.p.addScaledVector(_rd, k * wb);
+}
+function rdSelfHit(rd) { const pr = rdPairs(rd), P = rd.P; for (let i = 0; i < pr.length; i += 3) rdPush(P[pr[i]], P[pr[i + 1]], pr[i + 2]); }
+function rdBetween() {   // dummies bump into each other too
+  const L = RD.list;
+  for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
+    const a = L[i], b = L[j]; if (a.asleep && b.asleep) continue;
+    if (a.P[0].p.distanceToSquared(b.P[0].p) > 4) continue;
+    let hit = false;
+    for (const p of a.P) for (const q of b.P) { const m = p.r + q.r; if (p.p.distanceToSquared(q.p) < m * m) { rdPush(p, q, m); hit = true; } }
+    if (hit) { a.asleep = b.asleep = false; a.sleep = b.sleep = 0; }
   }
 }
 function rdRip(rd, gname) {
@@ -386,11 +417,21 @@ function hmWorld(sp) {
     if (HM.held && r !== 'miss') buzz(HM.held, r === 'break' ? 1 : .6, 50);
   }
   if (typeof AR !== 'undefined' && AR.pieces) for (const pc of AR.pieces) {
-    if (!pc.body || pc.dying || pc.held || tAll - (pc.hmT || 0) < .25) continue;
-    const t = pc.body.translation(); if ((t.x - HM.head.x) ** 2 + (t.y - HM.head.y) ** 2 + (t.z - HM.head.z) ** 2 > (pc.rad + .07) ** 2) continue;
+    if (!pc.body || pc.dying || pc.held || pc.pane || tAll - (pc.hmT || 0) < .25) continue;
+    _hmP.copy(HM.head).sub(ARENA);   // cube bodies live in yard coordinates
+    const t = pc.body.translation(); if ((t.x - _hmP.x) ** 2 + (t.y - _hmP.y) ** 2 + (t.z - _hmP.z) ** 2 > (pc.rad + .07) ** 2) continue;
     if (typeof mine === 'function' && !mine(pc)) continue;
-    pc.hmT = tAll; const m = pc.body.mass() * Math.min(sp, 10) * .7, d = _hmP.copy(HM.vel).normalize();
-    pc.body.applyImpulseAtPoint({ x: d.x * m, y: d.y * m + m * .15, z: d.z * m }, { x: HM.head.x, y: HM.head.y, z: HM.head.z }, true);
+    // only a real touch counts (the bounding ball is bigger than the cube)
+    toLocal(pc, _hmP, _hmL); if (outside(pc.parts, _hmL) > .07) continue;
+    pc.hmT = tAll;
+    // a hard smash knocks a chunk out of it where the hammer lands (Isaiah: "make a hole in the cubes")
+    if (sp > 4.5 && !pc.inQ && pc.pop >= 1) {
+      toLocal(pc, _hmN.copy(_hmP).addScaledVector(HM.vel, 1 / sp), _hmN); const n = _hmN.sub(_hmL).normalize();
+      const w = widthAlong(pc, n), e = _hmL.clone().addScaledVector(n, Math.max(0, -outside(pc.parts, _hmL)) + clamp(w * .3, .03, .12));
+      pc.inQ = true; AR.cutQ.push({ pc, lines: [[n.clone(), n.dot(e)]], bis: [], nMain: n.clone(), e, sp, extreme: false });
+    }
+    const m = pc.body.mass() * Math.min(sp, 10) * .7, d = _hmN.copy(HM.vel).normalize();
+    pc.body.applyImpulseAtPoint({ x: d.x * m, y: d.y * m + m * .15, z: d.z * m }, { x: _hmP.x, y: _hmP.y, z: _hmP.z }, true);
     if (ac) { tone('sine', 220, 80, .14, clamp(sp / 20, .06, .25)); noiseHit(ac.currentTime, .06, clamp(sp / 30, .04, .2), 'bandpass', 1400, 1); }
     if (HM.held) buzz(HM.held, clamp(sp / 8, .3, 1), 40);
   }
@@ -598,6 +639,7 @@ function stepRagdolls(dt) {
   });
   RD.acc = Math.min(RD.acc + dt, RD_STEP * 3);
   let n = 0; while (RD.acc >= RD_STEP) { RD.acc -= RD_STEP; n++; }
+  if (n) rdBetween();
   for (const rd of RD.list.slice()) {
     rd.hitCd -= dt;
     const pl = rdPulled(rd); rd.heavy = pl.any && !pl.pinBody; rd.heldNow = pl.any;
