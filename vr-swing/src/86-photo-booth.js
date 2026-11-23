@@ -15,7 +15,7 @@ const B_PROPS = [
   ['star', 'eyes', 'Star glasses', '⭐'], ['heart', 'eyes', 'Heart glasses', '💖'], ['shades', 'eyes', 'Cool shades', '😎'], ['nerd', 'eyes', 'Nerd glasses', '🤓'],
   ['stache', 'face', 'Mustache', '🥸'], ['nose', 'face', 'Clown nose', '🔴'], ['horn', 'face', 'Party horn', '🎉'],
   ['bowtie', 'neck', 'Bow tie', '🎀'], ['medal', 'neck', 'Gold medal', '🥇'], ['lei', 'neck', 'Flower lei', '🌺'],
-  ['balloon', 'hand', 'Balloon', '🎈'], ['wand', 'hand', 'Magic wand', '🪄'], ['cupcake', 'hand', 'Cupcake', '🧁'],
+  ['balloon', 'hand', 'Balloon', '🎈'], ['wand', 'hand', 'Magic wand', '🪄'], ['cupcake', 'hand', 'Cupcake', '🧁'], ['plush', 'hand', 'Sprout Bear', '🧸'],
 ].map(([id, slot, name, emo]) => ({ id, slot, name, emo }));
 const BP = Object.fromEntries(B_PROPS.map(p => [p.id, p]));
 const boothG = new THREE.Group(); partyG.add(boothG);
@@ -166,6 +166,7 @@ const BUILD = {
     for (let i = 0; i < 4; i++) { const sp = new THREE.Mesh(new THREE.OctahedronGeometry(.01, 0), bm.star); sp.position.set(Math.cos(i * 1.6) * .07, .3 + Math.sin(i * 2.3) * .06, 0); g.add(sp); }
     return g;
   },
+  plush() { return buildPlush(.25, PLU.bloom); },   // 🧸 in 87-plush.js
   cupcake() {
     const g = new THREE.Group();
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(.055, .04, .055, 16, 1, true), bm.dots); cup.material.side = THREE.DoubleSide; cup.position.y = .03; g.add(cup);
@@ -244,6 +245,7 @@ function wear(id, quiet) {
   if (cur !== id) { BO.worn[P.slot] = id; wearShow(id, true); if (!quiet) { partyChime(); toast(`${P.emo} ${P.name} ON!` + (state.xr ? ' Look at the big screen 📺' : ''), 2.2); } }
   else if (!quiet) { if (ac) tone('sine', 600, 300, .12, .1); toast(`🙅 ${P.name} off`, 1.8); }
   if (P.slot === 'head') wearShow(id, BO.worn.head === id);
+  if (id === 'plush' && !quiet) plushWorn(BO.worn.hand === id);
   store.set('kg-booth', JSON.stringify(BO.worn)); boothUiSync();
 }
 function wearClear() { B_SLOTS.forEach(s => { if (BO.worn[s]) { wearShow(BO.worn[s], false); BO.worn[s] = null; } }); PH.wornHat.visible = PT.hat === 'worn'; store.set('kg-booth', JSON.stringify(BO.worn)); boothUiSync(); toast('🧹 All props off!', 2); if (ac) tone('sine', 700, 250, .2, .1); }
@@ -569,12 +571,12 @@ function boothCard() {
 /* ---------- hooks: grabbing props (VR), E on a prop (PC), and the per-frame step ---------- */
 function boothGrab(h) {
   if (!PT.inside || !h.tracked) return false;
-  let best = null, bd = .2; for (const r of BO.rack) { const d = r.w.distanceTo(h.pos); if (d < bd) { bd = d; best = r; } }
+  let best = null, bd = .2; for (const r of BO.rack) { const d = r.w.distanceTo(h.pos) - (r.rad || 0); if (d < bd) { bd = d; best = r; } }
   if (!best) return false; wear(best.id); buzz(h, .7, 45); return true;
 }
 function boothDesk() {
   if (!PT.inside) return false;
-  const r = aimAt(2.6, f => BO.rack.forEach(r => f(r, r.w, .12))); if (!r) return false;
+  const r = aimAt(2.6, f => BO.rack.forEach(r => f(r, r.w, r.rad ? .35 : .12))); if (!r) return false;
   wear(r.id); return true;
 }
 function stepBooth(dt) {
@@ -588,7 +590,7 @@ function stepBooth(dt) {
   if (ui) ui.style.display = BO.near && !state.xr && state.mode === 'play' && !PT.fall ? 'block' : 'none';
   if (BO.near && !BO.told && !PT.fall) { BO.told = true; toast(state.xr ? '📸 PHOTO BOOTH! Grab props off the racks, stand on the ⭐ and press SNAP!' : '📸 PHOTO BOOTH! Pick props (panel or E), stand on the ⭐ and press SNAP or P!', 6); }
   // rack: props turn slowly; remember where they are for grabbing
-  for (const r of BO.rack) { r.show.rotation.y = Math.sin(tAll * .6 + r.st.position.x * 3) * .5; r.st.getWorldPosition(r.w); r.w.y += .16; }
+  for (const r of BO.rack) { if (r.big) continue; r.show.rotation.y = Math.sin(tAll * .6 + r.st.position.x * 3) * .5; r.st.getWorldPosition(r.w); r.w.y += .16; }
   // the camera turns to look at you
   const tgt = V(_tA.x, PW.y + (_tA.y - PW.y) * .74, _tA.z);
   BO.look.lengthSq() ? BO.look.lerp(tgt, Math.min(1, dt * 5)) : BO.look.copy(tgt);
@@ -612,7 +614,7 @@ function stepBooth(dt) {
   booth.bulbs.forEach((m, i) => m.material.emissiveIntensity = (Math.sin(tAll * (BO.snap ? 14 : 4) - i * .6) > 0) ? 1.3 : .25);
   // live view (only when you're close, every 2nd frame (3rd in VR), and not while a photo is on screen)
   if (dS < 9 && !booth.photo.visible && BO.frame++ % (state.xr ? 3 : 2) === 0) boothRender(booth.liveRT);
-  stepPolas(dt);
+  stepPolas(dt); stepPlush(dt);
 }
 // put your saved outfit back on once your avatar has loaded
 (function boothRestore() {
