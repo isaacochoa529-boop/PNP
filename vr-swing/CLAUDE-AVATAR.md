@@ -36,7 +36,7 @@ send hzf7bn "wave"
 | `say <text>` | Speech bubble + text-to-speech voice (up to 220 characters). Waits until it's done talking |
 | `walk <x> <z>` | Walk to a spot (world meters). Grove spawn is about `0 0`. Gives up and says "I'm stuck" if blocked for 3 s |
 | `come` | Walk over to Isaiah (pops next to him if he's more than 35 m away, e.g. another area) |
-| `follow` / `stay` | Keep following Isaiah around / stop following |
+| `follow` / `stay` | Keep following Isaiah around (keeps following while it talks or waves; hops when stuck, pops next to him if left far behind) / stop following |
 | `look me` / `look <x> <z>` | Where to look while standing still (default: looks at Isaiah) |
 | `wave` `nod` `jump` `dance` `spin` | Little animations |
 | `grab <ball\|cone\|star\|nearest\|toyN>` | Walk to that toy and pick it up (nearest of that kind). Says so if it's too high or Isaiah has it |
@@ -77,6 +77,10 @@ Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
   poke again (or it stops after 10 s). A small Whisper model (tiny.en, transformers.js) turns it into words right in the
   browser, no account or key. It downloads about 40 MB the first time, then the browser keeps it. A clip takes a few seconds.
   The mic turns yellow 🧠 while it's thinking. The quick-talk board pops up too, as a backup.
+- **Always listening 👂:** the 👂 button (PC/phone) or the little flip switch on the front of the mic post (VR). It remembers the
+  choice. With real speech-to-text it just keeps listening; on Quest it notices when he starts and stops talking and sends each
+  sentence to the in-browser Whisper on its own (the mic glows green while waiting, red while recording, yellow while thinking).
+  It ignores the buddy's own voice. Words said while it's still thinking about the last sentence can get missed.
 - Everything he says shows as a toast ("🎤 You: ...") and lands on the `-out` topic as `ev: heard`.
 
 ## Honest limits
@@ -84,7 +88,8 @@ Tip: send `status` first, wait 2-3 s, then read `-out` to plan where to walk.
 - **It's not real time.** Claude only acts when Isaiah sends a chat message, and each turn takes some seconds.
   The relay itself is fast (about a second). Line up a few commands at once so the buddy keeps busy.
 - Only Isaiah sees his own buddy. Friends in a room see toys it moves, but not the buddy itself.
-- Voice uses the browser's built-in text-to-speech. Some browsers (sometimes the Quest browser) have no voice: the bubble still shows.
+- Voice: the browser's text-to-speech where it works. On Quest (no text-to-speech) and anywhere the browser voice doesn't start, it
+  switches to a robot voice (eSpeak via meSpeak.js, ~1.2 MB, played through the game's audio).
 - Grabbing works on the grove toys (balls, cones, stars), not swords, cubes or ragdolls.
 - Speech-to-text works in Chrome / Edge / Safari on PC and phones. The Quest browser doesn't, so there it uses push-to-talk with the in-browser Whisper model (English only).
 - Anyone who knows the code can send commands, so keep it in the chat.
