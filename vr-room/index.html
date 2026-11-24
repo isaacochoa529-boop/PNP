@@ -73,6 +73,7 @@ button.big:active { transform: translateY(4px); box-shadow: 0 1px 0 #b8901f; }
     <div><b>Grip</b> = grab a ball (point at a far ball to pull it to you 🧲)</div>
     <div><b>A / X</b> = change ball type &nbsp; <b>B / Y</b> = show room scan</div>
     <div><b>Press the thumbstick</b> = clear all balls 🧹</div>
+    <div>⚽ <b>Kick!</b> Step or lunge into a ball on the floor (the faster you move, the harder you kick)</div>
     <div>✋ <b>No controllers? Use your hands!</b> Pinch 🤏 to make or grab a ball, let go with a flick to throw, slap balls 👋, turn your left palm up for the menu</div>
     <div>On a PC: <b>click</b> to throw, <b>drag</b> to look, <b>WASD</b> to walk</div>
   </div>
@@ -180,6 +181,15 @@ const superTex = canvasTex(256, 128, (g, w, h) => {
   g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 6;
   for (let i = -2; i < 8; i++) { g.beginPath(); g.moveTo(i * 40, 0); g.bezierCurveTo(i * 40 + 30, h * .3, i * 40 - 20, h * .7, i * 40 + 20, h); g.stroke(); }
 });
+const soccerTex = canvasTex(512, 256, (g, w, h) => {
+  g.fillStyle = '#fafafa'; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#151515';
+  const spot = (x, y, r) => { g.beginPath(); for (let k = 0; k < 5; k++) { const a = k / 5 * Math.PI * 2 - Math.PI / 2; g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r * 1.15); } g.fill(); };
+  for (let i = 0; i < 5; i++) { spot(i * w / 5 + 51, h * .3, 26); spot(i * w / 5 + 102 - 51 + 51, h * .7, 26); }
+  g.fillRect(0, 0, w, 12); g.fillRect(0, h - 12, w, 12);
+  g.strokeStyle = 'rgba(0,0,0,.25)'; g.lineWidth = 2;
+  for (let i = 0; i < 10; i++) { g.beginPath(); g.moveTo(i * w / 10, 0); g.lineTo(i * w / 10 + 25, h); g.stroke(); }
+});
 const goldTex = canvasTex(256, 128, (g, w, h) => {
   const gr = g.createLinearGradient(0, 0, 0, h);
   gr.addColorStop(0, '#fff3a8'); gr.addColorStop(.5, '#f2b51d'); gr.addColorStop(1, '#a8680a');
@@ -193,9 +203,10 @@ const TYPES = {
   bouncy: { name: 'Bouncy Ball 🔴', r: .07, rest: .84, drag: .05, mass: 1 },
   beach:  { name: 'Beach Ball 🏖️', r: .2, rest: .66, drag: .9, mass: .35 },
   super:  { name: 'Super Ball ⚡', r: .045, rest: .94, drag: .02, mass: .6 },
+  soccer: { name: 'Soccer Ball ⚽', r: .11, rest: .7, drag: .12, mass: 1.3 },
   gold:   { name: 'GOLDEN Ball 👑', r: .085, rest: .9, drag: .03, mass: 1.6 },
 };
-const typeOrder = ['bouncy', 'beach', 'super'];
+const typeOrder = ['bouncy', 'soccer', 'beach', 'super'];
 let typeIdx = 0;
 const curType = () => typeOrder[typeIdx];
 const sphereGeo = new THREE.SphereGeometry(1, 28, 18);
@@ -210,6 +221,7 @@ function makeBall(type, pos, vel) {
   if (type === 'bouncy') mat = new THREE.MeshLambertMaterial({ map: bouncyTex[Math.floor(Math.random() * bouncyTex.length)] });
   else if (type === 'beach') mat = new THREE.MeshLambertMaterial({ map: beachTex });
   else if (type === 'super') mat = new THREE.MeshBasicMaterial({ map: superTex });
+  else if (type === 'soccer') mat = new THREE.MeshLambertMaterial({ map: soccerTex });
   else mat = new THREE.MeshLambertMaterial({ map: goldTex, emissive: 0x5a3a00 });
   const holder = new THREE.Group();     // squash happens on this one (lined up with the bounce)
   const mesh = new THREE.Mesh(sphereGeo, mat);
@@ -363,6 +375,7 @@ function stepBalls(dt) {
   }
   ballVsBall();
   handSwats(dt);
+  bodyKicks(dt);
   for (const b of balls) {
     b.holder.position.copy(b.pos);
     // roll / spin
@@ -793,6 +806,91 @@ function placePalmMenu(h) {
   }
 }
 
+// ---------------------------------------------------------------- kicking ⚽ + your body
+// The Quest can't see your feet, so your "kick foot" is a spot on the floor just in front of you.
+// Step or lunge into a ball near the floor to boot it: the faster you move, the harder the kick.
+const headPrev = new V3(), headVel = new V3(), foot = new V3(), kdir = new V3(), hv = new V3(), tmp2 = new V3();
+let headInit = false, lastMega = 0, feetToast = false;
+// If the Quest ever shares body tracking with web pages, use those real feet 🦶 (it's checked every frame)
+let realFeet = [];
+function readBody(frame) {
+  const body = frame?.body;
+  if (!body || typeof body.forEach !== 'function') { realFeet = []; return; }
+  const ref = renderer.xr.getReferenceSpace(), old = realFeet, out = [];
+  body.forEach((space, name) => {
+    if (!/foot|ankle|toe/i.test(String(name))) return;
+    const pose = frame.getPose(space, ref); if (!pose) return;
+    const p = new V3().copy(pose.transform.position);
+    const prev = old.find(f => f.name === name);
+    out.push({ name, p, v: prev ? p.clone().sub(prev.p).multiplyScalar(72) : new V3() });
+  });
+  realFeet = out;
+  if (out.length && !feetToast) { feetToast = true; toast('🦶 Real foot tracking ON! Kick away!'); }
+}
+const kickRing = new THREE.Mesh(new THREE.RingGeometry(.15, .18, 40), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .22, depthWrite: false }));
+kickRing.rotation.x = -Math.PI / 2; kickRing.visible = false; scene.add(kickRing);
+function kickSound(power) { tone(90, .18, 'sine', clamp(power / 8, .15, .45), 0, .4); tone(260 + power * 30, .07, 'triangle', .1); }
+function bodyKicks(dt) {
+  if (mode === 'menu') { kickRing.visible = false; return; }
+  const hp = headPos();
+  if (!headInit) { headPrev.copy(hp); headInit = true; }
+  tmp2.subVectors(hp, headPrev).divideScalar(Math.max(dt, 1 / 120)); headPrev.copy(hp);
+  if (tmp2.lengthSq() < 100) headVel.lerp(tmp2, .3);
+  const fwd = headFwd(); fwd.y = 0; if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1); fwd.normalize();
+  foot.set(hp.x + fwd.x * .14, 0, hp.z + fwd.z * .14);
+  kickRing.visible = true; kickRing.position.set(foot.x, .006, foot.z);
+  kickRing.material.opacity = Math.max(.22, kickRing.material.opacity - dt * 2);
+  hv.set(headVel.x, 0, headVel.z); const hs = hv.length();
+  const now = performance.now();
+  if (realFeet.length) kickRing.visible = false;
+  for (const b of balls) {
+    if (b.held || b.pull) continue;
+    // real feet (only if the browser gives us body tracking)
+    let booted = false;
+    for (const f of realFeet) {
+      d.subVectors(b.pos, f.p); const dist = d.length();
+      if (dist > b.r + .07 || now - (b.kickT || 0) < 250) continue;
+      d.divideScalar(Math.max(dist, 1e-4));
+      const fs = f.v.length(), power = clamp(1.2 + fs * 1.4, 1.2, 12);
+      kdir.copy(fs > .5 ? f.v : d).setY(0).normalize();
+      b.vel.set(kdir.x * power, .6 + power * .3, kdir.z * power);
+      b.pos.copy(f.p).addScaledVector(d, b.r + .075);
+      b.kickT = now; b.air = 0; b.bounces = 0; kickSound(power); booted = true;
+      if (power > 6.5 && now - lastMega > 2500) { lastMega = now; toast('⚽ MEGA KICK!'); confetti(b.pos.clone(), 25, 1.5); }
+      break;
+    }
+    if (booted) continue;
+    // 🦶 pretend foot (no body tracking): kick zone on the floor in front of you
+    if (!realFeet.length && kickZone(b, fwd, hs, now)) continue;
+    // 🧍 your body: balls bonk off you instead of flying through you
+    bodyBonk(b, hp, fwd, now);
+  }
+}
+function kickZone(b, fwd, hs, now) {
+  const dx = b.pos.x - foot.x, dz = b.pos.z - foot.z, flat = Math.hypot(dx, dz);
+  if (b.pos.y - b.r >= .38 || flat >= .18 + b.r || now - (b.kickT || 0) < 350) return false;
+  if (flat > 1e-3) kdir.set(dx / flat, 0, dz / flat); else kdir.copy(fwd);
+  if (hs > .35) kdir.addScaledVector(hv, 1 / hs).normalize();     // aim where you're moving
+  const power = clamp(1.3 + hs * 4.5, 1.3, 11) * (b.type === 'beach' ? .8 : 1);
+  b.vel.set(kdir.x * power, .7 + power * .32, kdir.z * power);
+  b.pos.x = foot.x + kdir.x * (.19 + b.r); b.pos.z = foot.z + kdir.z * (.19 + b.r);
+  b.kickT = now; b.air = 0; b.bounces = 0;
+  kickSound(power); kickRing.material.opacity = .9;
+  ripple(new V3(b.pos.x, .008, b.pos.z), UP, 0xffffff, .3 + power * .05);
+  if (power > 6.5 && now - lastMega > 2500) { lastMega = now; toast('⚽ MEGA KICK!'); confetti(b.pos.clone(), 25, 1.5); }
+  return true;
+}
+function bodyBonk(b, hp, fwd, now) {
+  const top = hp.y - .28, bot = .4;
+  if (top <= bot) return;
+  tmp2.set(hp.x - fwd.x * .06, clamp(b.pos.y, bot, top), hp.z - fwd.z * .06);
+  d.subVectors(b.pos, tmp2); const dist = d.length(), min = .16 + b.r;
+  if (dist >= min || dist < 1e-6) return;
+  d.divideScalar(dist); b.pos.addScaledVector(d, min - dist);
+  const rel = tmp.subVectors(b.vel, headVel).dot(d);
+  if (rel < 0) { b.vel.addScaledVector(d, -1.5 * rel); if (-rel > 1.5 && now - b.lastSnd > 80) { tone(140, .1, 'sine', .2, 0, .6); b.lastSnd = now; } }
+}
+
 function cycleType() {
   typeIdx = (typeIdx + 1) % typeOrder.length;
   toast(TYPES[curType()].name); tone(660, .1, 'triangle', .12); tone(880, .1, 'triangle', .12, .08);
@@ -813,7 +911,7 @@ async function startAR() {
   ac();
   try {
     const session = await navigator.xr.requestSession('immersive-ar', {
-      optionalFeatures: ['local-floor', 'plane-detection', 'mesh-detection', 'hand-tracking', 'anchors'],
+      optionalFeatures: ['local-floor', 'plane-detection', 'mesh-detection', 'hand-tracking', 'anchors', 'body-tracking'],
     });
     renderer.xr.setReferenceSpaceType('local-floor');
     await renderer.xr.setSession(session);
@@ -894,6 +992,7 @@ renderer.setAnimationLoop((t, frame) => {
   const dt = Math.min(clock.getDelta(), 1 / 30);
   if (mode === 'ar' && frame) {
     if (t - lastScanCheck > 1000) { lastScanCheck = t; readRoom(frame); }
+    readBody(frame);
     if (!gotRoom && !warned && performance.now() - arStart > 6000) {
       warned = true;
       toast('🤔 No room scan yet. Do "Space Setup" in Quest settings! Floor works for now.');
