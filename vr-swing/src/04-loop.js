@@ -39,6 +39,7 @@ function respawn() {
   if (typeof PT !== 'undefined' && PT && PT.inside) return partyRespawn();
   if (state.area === 'arena') return arenaRespawn();
   if (state.area === 'wilds') return wildRespawn();
+  if (state.area === 'beach') return beachRespawn();
   rig.position.copy(SPAWN); rig.position.y += state.bodyH - eyeLocal(_e).y + .05;
   state.vel.set(0, 0, 0); state.velBuf.length = 0; state.wasStuck = false;
   hands.forEach(h => { h.stuck = false; h.ready = false; });
@@ -504,7 +505,7 @@ function update(dt) {
   if (horrorFrozen(dt)) return;   // the fake crash: the world stops dead
   if (state.mode === 'play') {
     if (state.xr || sim.on) { pollGamepads(); if (!CS.on && !rcRiding()) stepArms(dt); } else if (!CS.on && !rcRiding()) stepDesktop(dt);
-    if (state.area === 'wilds' ? rig.position.y < -40 : state.area === 'arena' ? rig.position.y < -14 : (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45)) respawn();
+    if (state.area === 'wilds' ? rig.position.y < -40 : state.area === 'beach' ? rig.position.y < -20 : state.area === 'arena' ? rig.position.y < -14 : (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45)) respawn();
     stepProps(dt);
     stepArena(dt);
     poseAvatar(dt);
@@ -520,7 +521,7 @@ function update(dt) {
   const focus = CS.on && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
   sun.position.set(focus.x + 12, focus.y + 24, focus.z + 8); sun.target.position.copy(focus);
   scene.userData.sky.position.copy(focus);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepBeach(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt);
 
 }
 window.__kg.calibrate = () => calibrate();
