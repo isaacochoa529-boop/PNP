@@ -75,7 +75,8 @@ function rwSide(rd, i) {
 }
 function rwPulled(rd) {
   if (!rd.W) return; let up = false, lo = false;
-  RD.held.forEach(x => { if (!x || x.rd !== rd) return; const s = rwSide(rd, x.i); if (s === 1) up = true; else if (s === 2) lo = true; });
+  // only when both paws pull the TORSO itself (top half + bottom half). Holding an arm or the head doesn't count (Isaiah)
+  RD.held.forEach(x => { if (!x || x.rd !== rd) return; if (RW.U.includes(x.i)) up = true; else if (RW.L.includes(x.i)) lo = true; });
   rd.W.pulled = up && lo && !rd.W.ripped;
 }
 function rwStrain(rd, h) {   // from rdStep: how far the waist is stretched, and tear it when pulled long enough
