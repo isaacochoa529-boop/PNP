@@ -74,6 +74,7 @@ button.big:active { transform: translateY(4px); box-shadow: 0 1px 0 #b8901f; }
     <div><b>A / X</b> = change ball type &nbsp; <b>B / Y</b> = show room scan</div>
     <div><b>Press the thumbstick</b> = clear all balls 🧹</div>
     <div>⚽ <b>Kick!</b> Step or lunge into a ball on the floor (the faster you move, the harder you kick)</div>
+    <div>📡 <b>Quest 3:</b> live scan, so balls bounce off people and moving stuff too (B/Y shows the dots)</div>
     <div>✋ <b>No controllers? Use your hands!</b> Pinch 🤏 to make or grab a ball, let go with a flick to throw, slap balls 👋, turn your left palm up for the menu</div>
     <div>On a PC: <b>click</b> to throw, <b>drag</b> to look, <b>WASD</b> to walk</div>
   </div>
@@ -376,6 +377,7 @@ function stepBalls(dt) {
   ballVsBall();
   handSwats(dt);
   bodyKicks(dt);
+  depthHits();
   for (const b of balls) {
     b.holder.position.copy(b.pos);
     // roll / spin
@@ -530,6 +532,156 @@ function buildScanLines() {
   scanLines = new THREE.LineSegments(g, scanMat); scanLines.frustumCulled = false;
   scene.add(scanLines); scanLines.visible = scanOn || scanFade > 0;
 }
+// ---------------------------------------------------------------- 📡 LIVE scan (depth sensing)
+// The Quest 3 measures how far away everything is, many times a second. We grab a small grid of those
+// distances, turn them into dots in the room, and balls bounce off the dots. Dots move when people move!
+const LN = 40;                                   // 40 x 40 dots
+let live = null, liveOn = false, liveTold = false;
+const livePos = new Float32Array(LN * LN * 3), liveVel = new Float32Array(LN * LN * 3), liveOk = new Uint8Array(LN * LN);
+const liveCol = new Float32Array(LN * LN * 3);
+const liveGeo = new THREE.BufferGeometry();
+liveGeo.setAttribute('position', new THREE.BufferAttribute(livePos, 3));
+liveGeo.setAttribute('color', new THREE.BufferAttribute(liveCol, 3));
+const liveDots = new THREE.Points(liveGeo, new THREE.PointsMaterial({ size: .022, vertexColors: true, transparent: true, opacity: .8, depthWrite: false }));
+liveDots.frustumCulled = false; liveDots.visible = false; scene.add(liveDots);
+const LCELL = .2, lgrid = new Map();
+let liveT = 0, liveFrame = 0, liveFade = 0;
+function liveStart(session) {
+  live = null; liveOn = false; liveTold = false; liveOk.fill(0); lgrid.clear();
+  if (!session) return;
+  const usage = session.depthUsage;
+  if (!usage) { setTimeout(() => { if (!liveOn) toast('📡 Live scan needs a Quest 3 (saved room scan still works!)'); }, 7000); return; }
+  live = { usage, fmt: session.depthDataFormat };
+  if (usage === 'gpu-optimized') {
+    try {
+      const gl = renderer.getContext();
+      live.gl = gl; live.binding = new XRWebGLBinding(session, gl);
+      const vs = `#version 300 es
+in vec2 p; out vec2 uv; void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
+      const fs = (arr) => `#version 300 es
+precision highp float; ${arr ? 'precision highp sampler2DArray; uniform sampler2DArray t;' : 'uniform sampler2D t;'}
+in vec2 uv; out vec4 o;
+void main(){ float d = ${arr ? 'texture(t, vec3(uv, 0.)).r' : 'texture(t, uv).r'};
+  vec4 e = fract(d * vec4(1., 255., 65025., 16581375.)); e -= e.yzww * vec4(1./255., 1./255., 1./255., 0.); o = e; }`;
+      const mk = (src) => {
+        const pr = gl.createProgram();
+        [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, src]].forEach(([ty, code]) => { const sh = gl.createShader(ty); gl.shaderSource(sh, code); gl.compileShader(sh); gl.attachShader(pr, sh); });
+        gl.bindAttribLocation(pr, 0, 'p'); gl.linkProgram(pr); return pr;
+      };
+      live.progA = mk(fs(true)); live.prog2 = mk(fs(false));
+      live.buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, live.buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      live.tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, live.tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, LN, LN, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      live.fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, live.fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, live.tex, 0);
+      live.px = new Uint8Array(LN * LN * 4);
+      renderer.resetState();
+    } catch (e) { live = null; renderer.resetState(); }
+  }
+}
+const _inv = new THREE.Matrix4(), _vm = new THREE.Matrix4(), _lp = new V3();
+function rawToMeters(info, d) {
+  if (live.usage === 'cpu-optimized') return d;               // already meters
+  const n = info.depthNear || .1, f = info.depthFar;
+  if (d >= 1) return Infinity;
+  if (!f || !isFinite(f)) return n / (1 - d);
+  const z = d * 2 - 1; return 2 * n * f / (f + n - z * (f - n));
+}
+function readDepth(frame) {
+  if (!live || ++liveFrame % 6) return;
+  const ref = renderer.xr.getReferenceSpace();
+  const pose = frame.getViewerPose(ref); if (!pose) return;
+  const view = pose.views[0];
+  let info, get;
+  try {
+    if (live.usage === 'cpu-optimized') {
+      info = frame.getDepthInformation(view); if (!info) return;
+      get = (u, v) => info.getDepthInMeters(u, 1 - v);
+    } else {
+      info = live.binding.getDepthInformation(view); if (!info || !info.texture) return;
+      const gl = live.gl, arr = info.textureType ? info.textureType === 'texture-array' : true;
+      const target = arr ? gl.TEXTURE_2D_ARRAY : gl.TEXTURE_2D;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, live.fb); gl.viewport(0, 0, LN, LN);
+      gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE); gl.disable(gl.SCISSOR_TEST);
+      gl.colorMask(true, true, true, true);
+      const prog = arr ? live.progA : live.prog2; gl.useProgram(prog);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(target, info.texture);
+      gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.NEAREST); gl.texParameteri(target, gl.TEXTURE_COMPARE_MODE, gl.NONE);
+      gl.uniform1i(gl.getUniformLocation(prog, 't'), 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, live.buf); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.readPixels(0, 0, LN, LN, gl.RGBA, gl.UNSIGNED_BYTE, live.px);
+      renderer.resetState();
+      const px = live.px;
+      get = (u, v) => {
+        const i = (Math.min(LN - 1, Math.floor(v * LN)) * LN + Math.min(LN - 1, Math.floor(u * LN))) * 4;
+        return rawToMeters(info, px[i] / 255 + px[i + 1] / 65025 + px[i + 2] / 16581375 + px[i + 3] / 4228250625);
+      };
+    }
+  } catch (e) { renderer.resetState(); return; }
+  const now = performance.now(), dtu = Math.max(.03, (now - liveT) / 1000); liveT = now;
+  _inv.fromArray(view.projectionMatrix).invert();
+  _vm.fromArray(view.transform.matrix);
+  const head = headPos();
+  lgrid.clear();
+  let good = 0;
+  for (let j = 0; j < LN; j++) for (let i = 0; i < LN; i++) {
+    const k = j * LN + i, u = (i + .5) / LN, v = (j + .5) / LN;   // v = 0 at the bottom
+    let m; try { m = get(u, v); } catch (e) { m = 0; }
+    if (!(m > .2 && m < 5)) { liveOk[k] = 0; continue; }
+    _lp.set(u * 2 - 1, v * 2 - 1, 1).applyMatrix4(_inv);           // a direction through this pixel
+    _lp.multiplyScalar(m / -_lp.z).applyMatrix4(_vm);              // out to the measured distance, into the room
+    if (_lp.y < .06 || _lp.distanceTo(head) < .25) { liveOk[k] = 0; continue; }  // floor + your own face
+    const o = k * 3;
+    if (liveOk[k]) {
+      const vx = (_lp.x - livePos[o]) / dtu, vy = (_lp.y - livePos[o + 1]) / dtu, vz = (_lp.z - livePos[o + 2]) / dtu;
+      const sp = Math.hypot(vx, vy, vz);
+      if (sp < 6) { liveVel[o] = vx; liveVel[o + 1] = vy; liveVel[o + 2] = vz; } else liveVel.fill(0, o, o + 3);
+    } else liveVel.fill(0, o, o + 3);
+    livePos[o] = _lp.x; livePos[o + 1] = _lp.y; livePos[o + 2] = _lp.z; liveOk[k] = 1; good++;
+    const c = clamp((m - .3) / 3, 0, 1);                           // close = pink, far = blue
+    liveCol[o] = 1 - c * .7; liveCol[o + 1] = .35 + c * .5; liveCol[o + 2] = .8 + c * .2;
+    const kk = key(Math.floor(_lp.x / LCELL), Math.floor(_lp.y / LCELL), Math.floor(_lp.z / LCELL));
+    let a = lgrid.get(kk); if (!a) lgrid.set(kk, a = []); a.push(k);
+  }
+  for (let k = 0; k < LN * LN; k++) if (!liveOk[k]) livePos.fill(0, k * 3, k * 3 + 3), livePos[k * 3 + 1] = -99;
+  liveGeo.attributes.position.needsUpdate = true; liveGeo.attributes.color.needsUpdate = true;
+  if (good > 50 && !liveTold) { liveTold = true; liveOn = true; liveFade = 4; toast('📡 LIVE scan ON! Balls bounce off people now 🚶'); }
+}
+const ln = new V3(), lv = new V3();
+function depthHits() {
+  liveFade = Math.max(0, liveFade - 1 / 72);
+  liveDots.visible = liveOn && (scanOn || liveFade > 0);
+  if (!liveOn || !lgrid.size) return;
+  const now = performance.now();
+  for (const b of balls) {
+    if (b.held || b.pull) continue;
+    if (b.relT && now - b.relT < 300) continue;      // just thrown out of your hand
+    const r = b.r + .015;
+    ln.set(0, 0, 0); lv.set(0, 0, 0); let pen = 0, cnt = 0;
+    for (let x = Math.floor((b.pos.x - r) / LCELL); x <= Math.floor((b.pos.x + r) / LCELL); x++)
+      for (let y = Math.floor((b.pos.y - r) / LCELL); y <= Math.floor((b.pos.y + r) / LCELL); y++)
+        for (let z = Math.floor((b.pos.z - r) / LCELL); z <= Math.floor((b.pos.z + r) / LCELL); z++) {
+          const cell = lgrid.get(key(x, y, z)); if (!cell) continue;
+          for (const k of cell) {
+            const o = k * 3;
+            const dx = b.pos.x - livePos[o], dy = b.pos.y - livePos[o + 1], dz = b.pos.z - livePos[o + 2];
+            const dd = Math.hypot(dx, dy, dz);
+            if (dd >= r || dd < 1e-5) continue;
+            ln.x += dx / dd; ln.y += dy / dd; ln.z += dz / dd; pen = Math.max(pen, r - dd);
+            lv.x += liveVel[o]; lv.y += liveVel[o + 1]; lv.z += liveVel[o + 2]; cnt++;
+          }
+        }
+    if (!cnt) continue;
+    ln.normalize(); lv.divideScalar(cnt);
+    // bounce like a wall, but if the thing is moving (a person, your leg!) it shoves the ball too
+    b.vel.sub(lv); hitSurface(b, ln, pen); b.vel.add(lv);
+    const push = lv.dot(ln);
+    if (push > 1.2 && now - (b.kickT || 0) > 300) { b.kickT = now; b.vel.addScaledVector(ln, push * .4); kickSound(push * 1.5); }
+  }
+}
+
 function toggleScan() { scanOn = !scanOn; toast(scanOn ? '🟦 Room scan ON: this is what the ball can see' : '🟦 Room scan OFF'); }
 
 // ---------------------------------------------------------------- pretend room (PC / phone preview)
@@ -910,9 +1062,17 @@ function startPreview() {
 async function startAR() {
   ac();
   try {
-    const session = await navigator.xr.requestSession('immersive-ar', {
-      optionalFeatures: ['local-floor', 'plane-detection', 'mesh-detection', 'hand-tracking', 'anchors', 'body-tracking'],
-    });
+    const feats = ['local-floor', 'plane-detection', 'mesh-detection', 'hand-tracking', 'anchors', 'body-tracking'];
+    let session;
+    try {
+      // 📡 live depth (Quest 3 / 3S): lets balls hit things that move, like people
+      session = await navigator.xr.requestSession('immersive-ar', {
+        optionalFeatures: [...feats, 'depth-sensing'],
+        depthSensing: { usagePreference: ['gpu-optimized', 'cpu-optimized'], dataFormatPreference: ['float32', 'luminance-alpha', 'unsigned-short'] },
+      });
+    } catch (e) {
+      session = await navigator.xr.requestSession('immersive-ar', { optionalFeatures: feats });
+    }
     renderer.xr.setReferenceSpaceType('local-floor');
     await renderer.xr.setSession(session);
   } catch (e) {
@@ -926,6 +1086,7 @@ renderer.xr.addEventListener('sessionstart', () => {
   arStart = performance.now();
   [...balls].forEach(removeBall);
   $('start').hidden = true;
+  liveStart(renderer.xr.getSession());
   setTimeout(() => toast('👋 Pull the trigger to throw a ball!'), 600);
 });
 renderer.xr.addEventListener('sessionend', () => {
@@ -993,6 +1154,7 @@ renderer.setAnimationLoop((t, frame) => {
   if (mode === 'ar' && frame) {
     if (t - lastScanCheck > 1000) { lastScanCheck = t; readRoom(frame); }
     readBody(frame);
+    readDepth(frame);
     if (!gotRoom && !warned && performance.now() - arStart > 6000) {
       warned = true;
       toast('🤔 No room scan yet. Do "Space Setup" in Quest settings! Floor works for now.');
