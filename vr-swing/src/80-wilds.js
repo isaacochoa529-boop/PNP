@@ -48,7 +48,7 @@ function wildH(x, z) {
     h = wmix(h, .35, sst(26, 10, d) * m); h = wmix(h, -1.45, sst(7, 3.5, d) * m);
   }
   const ld = Math.hypot((x - LAKE.x) / LAKE.rx, (z - LAKE.z) / LAKE.rz);
-  if (ld < 1.35) h = wmix(-1.75 + sst(.5, 1, ld) * 1.45, h, sst(.95, 1.35, ld));
+  if (ld < 1.35) h = wmix(-4.6 + sst(.2, 1, ld) * 4.3, h, sst(.95, 1.35, ld));   // deep enough to dive in (97-swim)
   const id = Math.hypot(x - ISLE.x, z - ISLE.z); if (id < 15) h = Math.max(h, 2.2 - id * id / 70);
   const od = Math.hypot(x - OASIS.x, z - OASIS.z); if (od < 30) h = wmix(-1.4 + sst(2, 14, od) * 1.1, h, sst(13, 30, od));
   h += sst(238, 300, r) * (52 + fbm(x * .02 + 2, z * .02, 3) * 24 + ridge(x * .03, z * .03) * 18);
@@ -685,7 +685,7 @@ function stepWilds(dt) {
   } else ZIP_HANDLE_M.position.lerp(ZIP_HANDLE, Math.min(1, dt * .8));
   // wading: water slows you down a little, with a splash when you land in it
   const feet = _wz1.y - WILD.y - state.bodyH;
-  if (feet < WL - .05 && gy(lx, lz) < WL) { const k = Math.exp(-dt * 1.6); state.vel.x *= k; state.vel.z *= k; if (!WD.wet && state.vel.y < -3 && ac) noiseHit(ac.currentTime, .25, .4, 'lowpass', 900, .7); WD.wet = true; } else WD.wet = false;
+  if (!SW.on && feet < WL - .05 && gy(lx, lz) < WL) { const k = Math.exp(-dt * 1.6); state.vel.x *= k; state.vel.z *= k; if (!WD.wet && state.vel.y < -3 && ac) noiseHit(ac.currentTime, .25, .4, 'lowpass', 900, .7); WD.wet = true; } else WD.wet = false;
   // wKeep inside the world: the edge mountains are huge, but just in case
   const r = Math.hypot(lx, lz); if (r > 296) { rig.position.x -= lx / r * (r - 296); rig.position.z -= lz / r * (r - 296); }
   // life

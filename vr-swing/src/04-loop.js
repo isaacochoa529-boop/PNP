@@ -199,8 +199,10 @@ function stepArms(dt) {
     if (pushing) pushVel(_tmp.copy(_mv).multiplyScalar(1 / dt));   // frames where you're just peeling the paw off don't water down your jump
   } else {
     if (state.wasStuck) launch();
-    state.vel.y -= G * bmGrav() * dt; if (BM.nograv) state.vel.multiplyScalar(Math.exp(-dt * .8));
-    if (state.grounded) { const f = Math.exp(-(onPuddle() ? .35 : 7) * dt); state.vel.x *= f; state.vel.z *= f; }
+    if (!swimArms(dt)) {   // in deep water your arms swim instead (97-swim)
+      state.vel.y -= G * bmGrav() * dt; if (BM.nograv) state.vel.multiplyScalar(Math.exp(-dt * .8));
+      if (state.grounded) { const f = Math.exp(-(onPuddle() ? .35 : 7) * dt); state.vel.x *= f; state.vel.z *= f; }
+    }
     rig.position.addScaledVector(state.vel, dt);
   }
   state.wasStuck = ns > 0;
@@ -247,10 +249,12 @@ function stepDesktop(dt) {
   const fx = -Math.sin(state.yaw), fz = -Math.cos(state.yaw), rx = Math.cos(state.yaw), rz = -Math.sin(state.yaw);
   let wx = fx * f + rx * s, wz = fz * f + rz * s; const L = Math.hypot(wx, wz); if (L > 0) { wx /= L; wz /= L; }
   const acc = state.grounded ? (onPuddle() ? 1.1 : 14) : 3.5, v = state.vel;
-  v.x += (wx * sp - v.x) * Math.min(1, acc * dt); v.z += (wz * sp - v.z) * Math.min(1, acc * dt);
-  if (k.Space && BM.nograv && !state.grounded) v.y = 3;
-  if (k.Space && state.grounded) { v.y = 5.3 * brJump(); state.grounded = false; sfxTap('grass', .3); }
-  v.y -= G * bmGrav() * dt;
+  if (!swimDesk(dt, f, s)) {   // in deep water you swim instead (97-swim)
+    v.x += (wx * sp - v.x) * Math.min(1, acc * dt); v.z += (wz * sp - v.z) * Math.min(1, acc * dt);
+    if (k.Space && BM.nograv && !state.grounded) v.y = 3;
+    if (k.Space && state.grounded) { v.y = 5.3 * brJump(); state.grounded = false; sfxTap('grass', .3); }
+    v.y -= G * bmGrav() * dt;
+  }
   pcClimb(dt, f);
   rig.position.addScaledVector(v, dt);
   resolveBody(false);
@@ -504,6 +508,7 @@ function update(dt) {
   tAll += dt;
   if (horrorFrozen(dt)) return;   // the fake crash: the world stops dead
   if (state.mode === 'play') {
+    swimCheck(dt);
     if (state.xr || sim.on) { pollGamepads(); if (!CS.on && !rcRiding()) stepArms(dt); } else if (!CS.on && !rcRiding()) stepDesktop(dt);
     if (state.area === 'wilds' ? rig.position.y < -40 : state.area === 'beach' ? rig.position.y < -20 : state.area === 'arena' ? rig.position.y < -14 : (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45)) respawn();
     stepProps(dt);
@@ -521,7 +526,7 @@ function update(dt) {
   const focus = CS.on && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
   sun.position.set(focus.x + 12, focus.y + 24, focus.z + 8); sun.target.position.copy(focus);
   scene.userData.sky.position.copy(focus);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepBeach(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepBeach(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt); stepSwim(dt);
 
 }
 window.__kg.calibrate = () => calibrate();
