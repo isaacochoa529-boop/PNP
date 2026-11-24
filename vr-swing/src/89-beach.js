@@ -17,14 +17,14 @@ const _bz1 = V(), _bz2 = V(), _bz3 = V();
 /* ---------- the land: sand, wet sand, dunes, rocky ends ---------- */
 function beachH(x, z) {
   const s = Math.sin;
-  const base = z < 0 ? Math.max(-.42, .12 + z * .06) : .12 + z * .045;          // sea floor levels off so your eyes stay above the water
+  const base = z < 0 ? Math.max(-.42, .12 + z * .06) - 4.4 * sst(-8.5, -24, z) - 2 * sst(-28, -50, z) : .12 + z * .045;   // a wading shelf, then it drops off: deep water to swim + dive in (97-swim)
   const dune = sst(20, 34, z) * (2.2 + 1.2 * s(x * .13) + .8 * s(x * .31 + 1.3));
   const rip = z > 0 ? .05 * s(x * .21 + z * .17) * s(z * .23 - x * .07) : .02 * s(x * .9) * s(z * .7);
   const ends = sst(46, 60, Math.abs(x)) * 5.5;                                   // rocky headlands make a cove
   return base + dune + rip + ends;
 }
 const BT_S = { tag: 'grass' };
-const BFIELD = { t: 4, tag: 'grass', last: BT_S, minx: BEACH.x - 62, maxx: BEACH.x + 62, minz: BEACH.z - 62, maxz: BEACH.z + 48, miny: BEACH.y - 4, maxy: BEACH.y + 14,
+const BFIELD = { t: 4, tag: 'grass', last: BT_S, minx: BEACH.x - 62, maxx: BEACH.x + 62, minz: BEACH.z - 62, maxz: BEACH.z + 48, miny: BEACH.y - 9, maxy: BEACH.y + 14,
   sdf(p, n) {
     const lx = p.x - BEACH.x, lz = p.z - BEACH.z, e = .15, h = beachH(lx, lz);
     n.set(-(beachH(lx + e, lz) - beachH(lx - e, lz)) / (2 * e), 1, -(beachH(lx, lz + e) - beachH(lx, lz - e)) / (2 * e));
@@ -173,9 +173,9 @@ const PIER = { x: 18, z0: 3.6, z1: -26, top: .64 };
   bpart(new THREE.BoxGeometry(2.4, .12, L), plank, PIER.x, PIER.top - .06, mz);
   for (let z = PIER.z1 + .4; z < PIER.z0; z += .55) bpart(new THREE.BoxGeometry(2.42, .02, .06), dark, PIER.x, PIER.top + .005, z);
   for (let z = PIER.z1 + .3; z < PIER.z0; z += 3.2) [-1, 1].forEach(s => {
-    bpart(new THREE.CylinderGeometry(.1, .11, 1.6, 8), dark, PIER.x + s * 1.1, PIER.top - .7, z);
+    { const fy = bh(PIER.x + s * 1.1, z) - .2, ph = PIER.top + .1 - fy; bpart(new THREE.CylinderGeometry(.1, .11, ph, 8), dark, PIER.x + s * 1.1, fy + ph / 2, z); }   // posts reach the (now deep) sea floor
     bpart(new THREE.CylinderGeometry(.05, .05, .75, 6), dark, PIER.x + s * 1.15, PIER.top + .37, z);
-    bCol({ t: 1, x: PIER.x + s * 1.1, z, cy: PIER.top - .7, hy: .8, r: .11, tag: 'wood' });
+    { const fy = bh(PIER.x + s * 1.1, z) - .2; bCol({ t: 1, x: PIER.x + s * 1.1, z, cy: (PIER.top + .1 + fy) / 2, hy: (PIER.top + .1 - fy) / 2, r: .11, tag: 'wood' }); }
   });
   [-1, 1].forEach(s => { bpart(new THREE.BoxGeometry(.08, .08, L), plank, PIER.x + s * 1.15, PIER.top + .72, mz); bCol({ t: 0, x: PIER.x + s * 1.15, y: PIER.top + .4, z: mz, hx: .05, hy: .36, hz: L / 2, tag: 'wood' }); });
   bCol({ t: 0, x: PIER.x, y: PIER.top - .1, z: mz, hx: 1.2, hy: .1, hz: L / 2, tag: 'wood' });
@@ -407,9 +407,9 @@ function stepBeach(dt) {
   headWorld(_bz1); const hx = _bz1.x - BEACH.x, hz = _bz1.z - BEACH.z, feet = _bz1.y - BEACH.y - state.bodyH;
   if (state.mode === 'play') {
     // stay in the cove
-    const cx = clamp(hx, -51, 51), cz = clamp(hz, -12, 40); if (cx !== hx || cz !== hz) { rig.position.x += cx - hx; rig.position.z += cz - hz; }
+    const cx = clamp(hx, -51, 51), cz = clamp(hz, -56, 40); if (cx !== hx || cz !== hz) { rig.position.x += cx - hx; rig.position.z += cz - hz; }
     // wading slows you down; splash when you land in the water
-    if (feet < -.05 && bh(hx, hz) < -.02) {
+    if (!SW.on && feet < -.05 && bh(hx, hz) < -.02) {
       const k = Math.exp(-dt * 1.8); state.vel.x *= k; state.vel.z *= k;
       if (!BC.wet && state.vel.y < -2.5) { if (ac) noiseHit(ac.currentTime, .3, .45, 'lowpass', 1000, .7); confetti(_bz2.set(_bz1.x, BEACH.y + .05, _bz1.z), 18, [0xffffff, 0xaeeeff, 0x7fd8ff]); }
       BC.wet = true;
