@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bouncy Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Fredoka:wght@400;600&display=swap">
+<style>
+/* Mixed reality: your real room through the Quest cameras, balls bounce off it.
+   On a PC/phone there is a pretend room so you can try it. */
+:root {
+  --panel: rgba(20, 18, 48, .9);
+  --line: rgba(255, 255, 255, .22);
+  --ink: #fff8f0;
+  --muted: #cfc8ff;
+  --hot: #ff4f7b;
+  --sun: #ffd35a;
+  --display: "Lilita One", Impact, system-ui, sans-serif;
+  --body: "Fredoka", "Trebuchet MS", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { background: #1b1640; color: var(--ink); font-family: var(--body); }
+[hidden] { display: none !important; }
+#stage canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.card {
+  position: fixed; z-index: 5; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(420px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; box-sizing: border-box;
+  background: var(--panel); border: 2px solid var(--line); border-radius: 24px; padding: 22px;
+  display: grid; gap: 12px; backdrop-filter: blur(8px); box-shadow: 0 14px 50px rgba(0,0,0,.4);
+}
+h1 { font-family: var(--display); font-weight: 400; font-size: 40px; margin: 0; letter-spacing: .5px;
+  background: linear-gradient(90deg, var(--hot), var(--sun)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+p { margin: 0; line-height: 1.4; color: var(--muted); }
+button.big {
+  font: 600 19px var(--body); color: #241a00; background: var(--sun); border: 0; border-radius: 16px;
+  padding: 14px 16px; cursor: pointer; box-shadow: 0 5px 0 #b8901f; transition: transform .08s;
+}
+button.big.alt { background: #8f86ff; color: #fff; box-shadow: 0 5px 0 #5a50c8; }
+button.big:active { transform: translateY(4px); box-shadow: 0 1px 0 #b8901f; }
+.how { font-size: 14px; color: var(--muted); display: grid; gap: 4px; background: rgba(255,255,255,.06); border-radius: 14px; padding: 10px 12px; }
+.how b { color: var(--ink); }
+#note { color: var(--sun); font-size: 14px; }
+#hud {
+  position: fixed; z-index: 4; top: calc(env(safe-area-inset-top, 0px) + 12px); left: 16px; right: 16px;
+  display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none;
+}
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 14px; }
+#tools { position: fixed; z-index: 4; bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); left: 16px; right: 16px;
+  display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+#tools button { font: 600 15px var(--body); background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 14px; padding: 10px 14px; cursor: pointer; }
+#toast {
+  position: fixed; z-index: 6; left: 50%; top: 22%; transform: translate(-50%, -10px); opacity: 0; transition: .25s;
+  background: var(--panel); border: 2px solid var(--line); border-radius: 18px; padding: 10px 18px;
+  font: 600 18px var(--body); pointer-events: none; text-align: center; max-width: calc(100% - 32px);
+}
+#toast.on { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div class="card" id="start">
+  <h1>Bouncy Room 🏀</h1>
+  <p>Put on your Quest and see your <b>real room</b>. Throw balls and watch them bounce off your floor, walls, bed, couch and tables!</p>
+  <button class="big" id="goAR" hidden>🥽 Play in my real room</button>
+  <div id="note" hidden>To see your real room, open this page on your Quest 👓</div>
+  <button class="big alt" id="goPreview">🖥️ Try the pretend room</button>
+  <div class="how">
+    <div><b>Trigger</b> = throw a new ball 🏀</div>
+    <div><b>Grip</b> = grab a ball (point at a far ball to pull it to you 🧲)</div>
+    <div><b>A / X</b> = change ball type &nbsp; <b>B / Y</b> = show room scan</div>
+    <div><b>Press the thumbstick</b> = clear all balls 🧹</div>
+    <div>On a PC: <b>click</b> to throw, <b>drag</b> to look, <b>WASD</b> to walk</div>
+  </div>
+</div>
+
+<div id="hud" hidden>
+  <span class="chip" id="hType">Bouncy Ball 🔴</span>
+  <span class="chip" id="hBounce">🏀 0 bounces</span>
+  <span class="chip" id="hSec">🤫 0/4</span>
+</div>
+<div id="tools" hidden>
+  <button id="bType">🔄 Ball type</button>
+  <button id="bScan">🟦 Scan lines</button>
+  <button id="bClear">🧹 Clear</button>
+</div>
+<div id="toast"></div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+
+const $ = id => document.getElementById(id);
+const V3 = THREE.Vector3;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------------------------------------------------------------- renderer + scene
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+$('stage').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const SKY = new THREE.Color(0x1b1640);
+scene.background = SKY;
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.02, 60);
+camera.rotation.order = 'YXZ';
+const rig = new THREE.Group();
+scene.add(rig); rig.add(camera);
+camera.position.set(0, 1.6, 1.7);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a7a70, 1.6));
+const sun = new THREE.DirectionalLight(0xfff0dd, 1.6);
+sun.position.set(1, 3, 2); scene.add(sun);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------------------------------------------------------------- sound
+let AC = null, master;
+function ac() {
+  if (!AC) { AC = new (window.AudioContext || window.webkitAudioContext)(); master = AC.createGain(); master.gain.value = .7; master.connect(AC.destination); }
+  if (AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function tone(f, dur, type = 'sine', vol = .2, when = 0, slide = 0) {
+  const a = ac(), t = a.currentTime + when;
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f * slide), t + dur);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + .008);
+  g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + .05);
+}
+// Every bounce is a musical note: higher bounce spot = higher note. Your room is an instrument 🎵
+const SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
+function bounceSound(b, y, power) {
+  const n = SCALE[clamp(Math.floor(y / .25), 0, SCALE.length - 1)];
+  const f = 220 * 2 ** (n / 12) * (b.type === 'beach' ? .5 : b.type === 'super' ? 2 : 1);
+  const v = clamp(power / 6, .04, .3);
+  tone(f, .35, b.type === 'super' ? 'square' : 'triangle', v * (b.type === 'super' ? .4 : 1), 0, 1.02);
+  tone(f * .5, .12, 'sine', v * .8, 0, .5); // the "boing" thump
+}
+function jingle() { [0, 4, 7, 12, 16].forEach((n, i) => tone(523 * 2 ** (n / 12), .4, 'triangle', .18, i * .09)); }
+function whoosh() { tone(300, .35, 'sawtooth', .05, 0, 3); }
+
+// ---------------------------------------------------------------- textures
+function canvasTex(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); draw(g, w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.g = g;
+  return t;
+}
+const bouncyTex = [0, 50, 140, 200, 280, 320].map(hue => canvasTex(256, 128, (g, w, h) => {
+  g.fillStyle = `hsl(${hue},85%,55%)`; g.fillRect(0, 0, w, h);
+  g.fillStyle = `hsl(${(hue + 180) % 360},90%,62%)`; g.fillRect(0, h * .42, w, h * .16);
+  g.fillStyle = '#fff';
+  for (let i = 0; i < 4; i++) { g.beginPath(); g.arc(i * 64 + 32, h * .22, 9, 0, 7); g.fill(); g.beginPath(); g.arc(i * 64, h * .78, 9, 0, 7); g.fill(); }
+}));
+const beachTex = canvasTex(512, 256, (g, w, h) => {
+  const cols = ['#ff4040', '#ffffff', '#2f7bff', '#ffd23f', '#ffffff', '#24c46b'];
+  cols.forEach((c, i) => { g.fillStyle = c; g.fillRect(i * w / 6, 0, w / 6 + 1, h); });
+  g.fillStyle = '#fff'; g.fillRect(0, 0, w, 14); g.fillRect(0, h - 14, w, 14);
+});
+const superTex = canvasTex(256, 128, (g, w, h) => {
+  const gr = g.createLinearGradient(0, 0, w, h);
+  ['#00f0ff', '#ff2bd6', '#fff200', '#00ff8c', '#00f0ff'].forEach((c, i) => gr.addColorStop(i / 4, c));
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 6;
+  for (let i = -2; i < 8; i++) { g.beginPath(); g.moveTo(i * 40, 0); g.bezierCurveTo(i * 40 + 30, h * .3, i * 40 - 20, h * .7, i * 40 + 20, h); g.stroke(); }
+});
+const goldTex = canvasTex(256, 128, (g, w, h) => {
+  const gr = g.createLinearGradient(0, 0, 0, h);
+  gr.addColorStop(0, '#fff3a8'); gr.addColorStop(.5, '#f2b51d'); gr.addColorStop(1, '#a8680a');
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#fff8d0'; g.font = 'bold 54px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (let i = 0; i < 4; i++) g.fillText('★', i * 64 + 32, h / 2);
+});
+
+// ---------------------------------------------------------------- ball types
+const TYPES = {
+  bouncy: { name: 'Bouncy Ball 🔴', r: .07, rest: .84, drag: .05, mass: 1 },
+  beach:  { name: 'Beach Ball 🏖️', r: .2, rest: .66, drag: .9, mass: .35 },
+  super:  { name: 'Super Ball ⚡', r: .045, rest: .94, drag: .02, mass: .6 },
+  gold:   { name: 'GOLDEN Ball 👑', r: .085, rest: .9, drag: .03, mass: 1.6 },
+};
+const typeOrder = ['bouncy', 'beach', 'super'];
+let typeIdx = 0;
+const curType = () => typeOrder[typeIdx];
+const sphereGeo = new THREE.SphereGeometry(1, 28, 18);
+
+const balls = [];
+const MAX_BALLS = 16;
+let totalBounces = 0;
+
+function makeBall(type, pos, vel) {
+  const T = TYPES[type];
+  let mat;
+  if (type === 'bouncy') mat = new THREE.MeshLambertMaterial({ map: bouncyTex[Math.floor(Math.random() * bouncyTex.length)] });
+  else if (type === 'beach') mat = new THREE.MeshLambertMaterial({ map: beachTex });
+  else if (type === 'super') mat = new THREE.MeshBasicMaterial({ map: superTex });
+  else mat = new THREE.MeshLambertMaterial({ map: goldTex, emissive: 0x5a3a00 });
+  const holder = new THREE.Group();     // squash happens on this one (lined up with the bounce)
+  const mesh = new THREE.Mesh(sphereGeo, mat);
+  mesh.scale.setScalar(T.r);
+  holder.add(mesh); scene.add(holder);
+  // tiny shadow blob so you can tell how high it is
+  const b = { type, ...T, holder, mesh, pos: pos.clone(), vel: vel.clone(), held: null, pull: null,
+    bounces: 0, air: 0, squash: 0, lastSnd: 0, born: performance.now() };
+  holder.position.copy(b.pos);
+  balls.push(b);
+  if (balls.length > MAX_BALLS) {
+    const old = balls.find(x => !x.held && !x.pull);
+    if (old) removeBall(old);
+  }
+  updateHud();
+  return b;
+}
+function removeBall(b) {
+  scene.remove(b.holder); b.mesh.material.dispose();
+  balls.splice(balls.indexOf(b), 1);
+  hands.forEach(h => { if (h.held === b) h.held = null; if (h.pull === b) h.pull = null; });
+}
+function clearBalls() { [...balls].forEach(removeBall); toast('🧹 All clean!'); whoosh(); updateHud(); }
+
+// ---------------------------------------------------------------- the room's surfaces (triangles + grid)
+// All the surfaces the ball can hit live here as triangles: your real room (from the Quest scan) or the pretend room.
+let triData = new Float32Array(0), triCount = 0;
+let triStamp = new Int32Array(0), stamp = 1;
+const CELL = .4, grid = new Map();
+const key = (x, y, z) => x + ',' + y + ',' + z;
+function setTriangles(list) {           // list = flat array of numbers, 9 per triangle
+  triData = new Float32Array(list); triCount = list.length / 9;
+  triStamp = new Int32Array(triCount);
+  grid.clear();
+  for (let i = 0; i < triCount; i++) {
+    const o = i * 9;
+    const x0 = Math.min(triData[o], triData[o + 3], triData[o + 6]), x1 = Math.max(triData[o], triData[o + 3], triData[o + 6]);
+    const y0 = Math.min(triData[o + 1], triData[o + 4], triData[o + 7]), y1 = Math.max(triData[o + 1], triData[o + 4], triData[o + 7]);
+    const z0 = Math.min(triData[o + 2], triData[o + 5], triData[o + 8]), z1 = Math.max(triData[o + 2], triData[o + 5], triData[o + 8]);
+    for (let x = Math.floor(x0 / CELL); x <= Math.floor(x1 / CELL); x++)
+      for (let y = Math.floor(y0 / CELL); y <= Math.floor(y1 / CELL); y++)
+        for (let z = Math.floor(z0 / CELL); z <= Math.floor(z1 / CELL); z++) {
+          const k = key(x, y, z); let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(i);
+        }
+  }
+  buildScanLines();
+}
+
+// closest point on a triangle (Ericson)
+const A = new V3(), B = new V3(), C = new V3(), ab = new V3(), ac_ = new V3(), ap = new V3(), bp = new V3(), cp = new V3(), bc = new V3();
+function closestPt(p, out) {
+  ab.subVectors(B, A); ac_.subVectors(C, A); ap.subVectors(p, A);
+  const d1 = ab.dot(ap), d2 = ac_.dot(ap);
+  if (d1 <= 0 && d2 <= 0) return out.copy(A);
+  bp.subVectors(p, B); const d3 = ab.dot(bp), d4 = ac_.dot(bp);
+  if (d3 >= 0 && d4 <= d3) return out.copy(B);
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) return out.copy(A).addScaledVector(ab, d1 / (d1 - d3));
+  cp.subVectors(p, C); const d5 = ab.dot(cp), d6 = ac_.dot(cp);
+  if (d6 >= 0 && d5 <= d6) return out.copy(C);
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) return out.copy(A).addScaledVector(ac_, d2 / (d2 - d6));
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) return out.copy(B).addScaledVector(bc.subVectors(C, B), (d4 - d3) / ((d4 - d3) + (d5 - d6)));
+  const den = 1 / (va + vb + vc);
+  return out.copy(A).addScaledVector(ab, vb * den).addScaledVector(ac_, vc * den);
+}
+
+// ---------------------------------------------------------------- physics
+const GRAV = -9.8;
+const q = new V3(), d = new V3(), nrm = new V3(), tmp = new V3(), UP = new V3(0, 1, 0);
+function hitSurface(b, n, pen) {
+  b.pos.addScaledVector(n, pen);
+  const vn = b.vel.dot(n);
+  if (vn >= 0) return;
+  const impact = -vn;
+  if (impact < .35) b.vel.addScaledVector(n, -vn);           // rest / roll: no tiny jitter bounces
+  else b.vel.addScaledVector(n, -(1 + b.rest) * vn);
+  // a bit of friction along the surface
+  tmp.copy(n).multiplyScalar(b.vel.dot(n));
+  const tang = b.vel.clone().sub(tmp);
+  b.vel.sub(tang.multiplyScalar(impact < .35 ? .02 : .08));
+  b.air = 0;
+  if (impact > .6) onBounce(b, b.pos.clone().addScaledVector(n, -b.r), n.clone(), impact);
+}
+function collideBall(b) {
+  // the floor is always there (even with no room scan)
+  if (b.pos.y < b.r) { nrm.set(0, 1, 0); hitSurface(b, nrm, b.r - b.pos.y); }
+  if (!triCount) return;
+  stamp++;
+  const r = b.r;
+  const x0 = Math.floor((b.pos.x - r) / CELL), x1 = Math.floor((b.pos.x + r) / CELL);
+  const y0 = Math.floor((b.pos.y - r) / CELL), y1 = Math.floor((b.pos.y + r) / CELL);
+  const z0 = Math.floor((b.pos.z - r) / CELL), z1 = Math.floor((b.pos.z + r) / CELL);
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) {
+    const cell = grid.get(key(x, y, z)); if (!cell) continue;
+    for (const i of cell) {
+      if (triStamp[i] === stamp) continue; triStamp[i] = stamp;
+      const o = i * 9;
+      A.set(triData[o], triData[o + 1], triData[o + 2]); B.set(triData[o + 3], triData[o + 4], triData[o + 5]); C.set(triData[o + 6], triData[o + 7], triData[o + 8]);
+      closestPt(b.pos, q);
+      d.subVectors(b.pos, q); const dist = d.length();
+      if (dist >= r) continue;
+      if (dist < 1e-5) { nrm.subVectors(B, A).cross(tmp.subVectors(C, A)).normalize(); if (nrm.dot(b.vel) > 0) nrm.negate(); }
+      else nrm.copy(d).divideScalar(dist);
+      hitSurface(b, nrm, r - dist);
+    }
+  }
+}
+function ballVsBall() {
+  for (let i = 0; i < balls.length; i++) for (let j = i + 1; j < balls.length; j++) {
+    const a = balls[i], c = balls[j];
+    if (a.held || c.held) continue;
+    d.subVectors(c.pos, a.pos); const dist = d.length(), min = a.r + c.r;
+    if (dist >= min || dist < 1e-6) continue;
+    d.divideScalar(dist);
+    const ma = a.mass, mc = c.mass, tot = ma + mc, pen = min - dist;
+    a.pos.addScaledVector(d, -pen * mc / tot); c.pos.addScaledVector(d, pen * ma / tot);
+    const rel = c.vel.dot(d) - a.vel.dot(d);
+    if (rel < 0) {
+      const j2 = -(1 + .85) * rel / tot;
+      a.vel.addScaledVector(d, -j2 * mc); c.vel.addScaledVector(d, j2 * ma);
+      if (-rel > 1) tone(700 + Math.random() * 300, .08, 'square', .05);
+    }
+  }
+}
+const spinQ = new THREE.Quaternion(), spinAxis = new V3();
+function stepBalls(dt) {
+  for (const b of balls) {
+    if (b.held) continue;
+    if (b.pull) {
+      const hp = handPos(b.pull);
+      d.subVectors(hp, b.pos); const dist = d.length();
+      if (dist < .18) { grabBall(b.pull, b, true); continue; }
+      b.vel.lerp(d.normalize().multiplyScalar(Math.min(7, dist * 6 + 2)), .25);
+      b.pos.addScaledVector(b.vel, dt);
+      continue;
+    }
+    const speed = b.vel.length();
+    const steps = clamp(Math.ceil(speed * dt / (b.r * .5)), 1, 10);
+    const h = dt / steps;
+    for (let s = 0; s < steps; s++) {
+      b.vel.y += GRAV * h;
+      b.vel.multiplyScalar(1 - b.drag * h);
+      b.pos.addScaledVector(b.vel, h);
+      collideBall(b);
+    }
+    b.air += dt;
+    // fell out of the world? bring it back
+    if (b.pos.y < -3 || b.pos.lengthSq() > 900) { b.pos.set(0, 1.5, 0); b.vel.set(0, 0, 0); }
+  }
+  ballVsBall();
+  for (const b of balls) {
+    b.holder.position.copy(b.pos);
+    // roll / spin
+    if (!b.held) {
+      spinAxis.set(b.vel.z, 0, -b.vel.x); const w = spinAxis.length();
+      if (w > 1e-4) { spinQ.setFromAxisAngle(spinAxis.divideScalar(w), w / b.r * dt); b.mesh.quaternion.premultiply(spinQ); }
+    }
+    // squash after a bounce
+    b.squash = Math.max(0, b.squash - dt * 6);
+    const s = Math.sin(b.squash * Math.PI) * .32 * b.squash;
+    b.holder.scale.set(1 + s * .6, 1 - s, 1 + s * .6);
+  }
+}
+
+// ---------------------------------------------------------------- bounce effects: ripples + confetti
+const ringGeo = new THREE.RingGeometry(.8, 1, 32);
+const ripples = [];
+for (let i = 0; i < 24; i++) {
+  const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+  m.visible = false; scene.add(m); ripples.push({ m, t: 1 });
+}
+let ripIdx = 0;
+const Z = new V3(0, 0, 1);
+function ripple(p, n, color, size = .25) {
+  const r = ripples[ripIdx++ % ripples.length];
+  r.m.position.copy(p).addScaledVector(n, .006);
+  r.m.quaternion.setFromUnitVectors(Z, n);
+  r.m.material.color.set(color); r.t = 0; r.size = size; r.m.visible = true;
+}
+const CONF = 220;
+const confMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(.025, .016), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), CONF);
+confMesh.frustumCulled = false; scene.add(confMesh);
+const conf = [];
+const dummy = new THREE.Object3D();
+for (let i = 0; i < CONF; i++) {
+  conf.push({ p: new V3(0, -99, 0), v: new V3(), r: new V3(), life: 0 });
+  confMesh.setColorAt(i, new THREE.Color().setHSL(Math.random(), .9, .6));
+}
+let confIdx = 0;
+function confetti(p, n = 80, up = 2.5) {
+  for (let i = 0; i < n; i++) {
+    const c = conf[confIdx++ % CONF];
+    c.p.copy(p); c.v.set((Math.random() - .5) * 3, Math.random() * up + .5, (Math.random() - .5) * 3);
+    c.r.set(Math.random() * 6, Math.random() * 6, Math.random() * 6); c.life = 3 + Math.random() * 2;
+  }
+}
+function stepFx(dt) {
+  for (const r of ripples) {
+    if (!r.m.visible) continue;
+    r.t += dt * 2.2;
+    if (r.t >= 1) { r.m.visible = false; continue; }
+    r.m.scale.setScalar(.02 + r.t * r.size);
+    r.m.material.opacity = (1 - r.t) * .9;
+  }
+  for (let i = 0; i < CONF; i++) {
+    const c = conf[i];
+    if (c.life > 0) {
+      c.life -= dt; c.v.y = Math.max(c.v.y - 4 * dt, -.6); c.v.x *= .98; c.v.z *= .98;
+      c.p.addScaledVector(c.v, dt); if (c.p.y < .01) { c.p.y = .01; c.v.set(0, 0, 0); }
+      c.r.x += dt * 5; c.r.y += dt * 3;
+    }
+    dummy.position.copy(c.life > 0 ? c.p : tmp.set(0, -99, 0));
+    dummy.rotation.set(c.r.x, c.r.y, c.r.z); dummy.updateMatrix();
+    confMesh.setMatrixAt(i, dummy.matrix);
+  }
+  confMesh.instanceMatrix.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------- secrets 🤫 (only the count is shown)
+const SECRET_IDS = ['s1', 's2', 's3', 's4'];
+let found = new Set();
+try { found = new Set(JSON.parse(localStorage.getItem('bouncy-room-secrets') || '[]')); } catch (e) {}
+let ceilingHits = 0;
+function secret(id, msg, where) {
+  if (id === 's1' || found.has('s1')) unlockGold();
+  if (found.has(id)) return;
+  found.add(id);
+  try { localStorage.setItem('bouncy-room-secrets', JSON.stringify([...found])); } catch (e) {}
+  jingle(); confetti(where || headPos().addScaledVector(headFwd(), .8), 140, 3);
+  toast(`🤫 SECRET FOUND! ${msg} (${found.size}/4)`);
+  updateHud();
+}
+function unlockGold() { if (!typeOrder.includes('gold')) typeOrder.push('gold'); }
+if (found.has('s1')) unlockGold();
+
+function onBounce(b, p, n, impact) {
+  const now = performance.now();
+  if (now - b.lastSnd > 45) { bounceSound(b, p.y, impact); b.lastSnd = now; }
+  ripple(p, n, b.type === 'beach' ? 0xffe066 : b.type === 'super' ? 0x00f0ff : b.type === 'gold' ? 0xffc928 : 0xff6fa0, b.r * 3.5 + impact * .05);
+  b.squash = Math.min(1, impact / 4);
+  b.bounces++; totalBounces++;
+  if (totalBounces % 5 === 0) updateHud();
+  if (b.type === 'gold' && impact > 2) confetti(p, 10, 1.5);
+  // secret: one ball, lots of bounces in a row without anyone touching it
+  if (b.bounces >= 25) secret('s1', 'The GOLDEN ball is yours 👑 (A/X to pick it)', p);
+  // secret: bonk the ceiling
+  if (n.y < -.7 && impact > 1.2 && ++ceilingHits >= 3) { secret('s2', 'Ceiling champion 🙃', p); confetti(p, 100, .3); }
+}
+
+// ---------------------------------------------------------------- toasts (screen + floating in the headset)
+const toastTex = canvasTex(1024, 200, () => {});
+const toastMesh = new THREE.Mesh(new THREE.PlaneGeometry(.62, .121), new THREE.MeshBasicMaterial({ map: toastTex, transparent: true, depthTest: false }));
+toastMesh.position.set(0, -.12, -.8); toastMesh.renderOrder = 10; toastMesh.visible = false;
+camera.add(toastMesh);
+let toastTimer = 0;
+function toast(msg) {
+  const el = $('toast'); el.textContent = msg; el.classList.add('on');
+  const words = msg.split(/\s+/).length;
+  const secs = Math.max(2.6, words / 2.3 + 1);   // long enough to read
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), secs * 1000);
+  const g = toastTex.g; g.clearRect(0, 0, 1024, 200);
+  g.fillStyle = 'rgba(20,18,48,.88)'; g.beginPath(); g.roundRect(8, 8, 1008, 184, 40); g.fill();
+  g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 5; g.stroke();
+  g.fillStyle = '#fff8f0'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  let size = 64; g.font = `600 ${size}px Fredoka, sans-serif`;
+  while (g.measureText(msg).width > 960 && size > 30) { size -= 2; g.font = `600 ${size}px Fredoka, sans-serif`; }
+  g.fillText(msg, 512, 100); toastTex.needsUpdate = true;
+  toastTimer = secs; toastMesh.visible = renderer.xr.isPresenting;
+}
+
+// wrist screen on the left hand
+const wristTex = canvasTex(512, 256, () => {});
+const wrist = new THREE.Mesh(new THREE.PlaneGeometry(.12, .06), new THREE.MeshBasicMaterial({ map: wristTex, transparent: true }));
+wrist.position.set(0, .03, .07); wrist.rotation.set(-1.1, 0, 0);
+function updateHud() {
+  $('hType').textContent = TYPES[curType()].name;
+  $('hBounce').textContent = `🏀 ${totalBounces} bounces`;
+  $('hSec').textContent = `🤫 ${found.size}/4`;
+  const g = wristTex.g; g.clearRect(0, 0, 512, 256);
+  g.fillStyle = 'rgba(20,18,48,.9)'; g.beginPath(); g.roundRect(4, 4, 504, 248, 36); g.fill();
+  g.fillStyle = '#ffd35a'; g.font = '600 52px Fredoka, sans-serif'; g.textAlign = 'center';
+  g.fillText(TYPES[curType()].name, 256, 80);
+  g.fillStyle = '#fff'; g.font = '600 44px Fredoka, sans-serif';
+  g.fillText(`🏀 ${totalBounces}   ⚽ ${balls.length}`, 256, 150);
+  g.fillText(`🤫 ${found.size}/4`, 256, 215);
+  wristTex.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------- scan lines (see what the Quest knows about your room)
+let scanOn = false, scanFade = 0;
+const scanMat = new THREE.LineBasicMaterial({ color: 0x5ff2ff, transparent: true, opacity: .45, depthWrite: false });
+let scanLines = null;
+function buildScanLines() {
+  if (scanLines) { scene.remove(scanLines); scanLines.geometry.dispose(); }
+  const pos = new Float32Array(triCount * 18);
+  for (let i = 0; i < triCount; i++) {
+    const o = i * 9, w = i * 18;
+    const v = triData;
+    pos.set([v[o], v[o + 1], v[o + 2], v[o + 3], v[o + 4], v[o + 5], v[o + 3], v[o + 4], v[o + 5], v[o + 6], v[o + 7], v[o + 8], v[o + 6], v[o + 7], v[o + 8], v[o], v[o + 1], v[o + 2]], w);
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scanLines = new THREE.LineSegments(g, scanMat); scanLines.frustumCulled = false;
+  scene.add(scanLines); scanLines.visible = scanOn || scanFade > 0;
+}
+function toggleScan() { scanOn = !scanOn; toast(scanOn ? '🟦 Room scan ON: this is what the ball can see' : '🟦 Room scan OFF'); }
+
+// ---------------------------------------------------------------- pretend room (PC / phone preview)
+const pretend = new THREE.Group(); scene.add(pretend);
+(function buildPretend() {
+  const lam = c => new THREE.MeshLambertMaterial({ color: c });
+  const box = (w, h, dd, c, x, y, z, ry = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, dd), lam(c)); m.position.set(x, y, z); m.rotation.y = ry; pretend.add(m); return m; };
+  const floorTex = canvasTex(512, 512, (g, w, h) => {
+    for (let r = 0; r < 8; r++) for (let x = -(r % 2) * 90; x < w; x += 180) {
+      g.fillStyle = `hsl(28,45%,${36 + (r * 7 + x) % 9}%)`; g.fillRect(x, r * 64, 180, 64);
+      g.fillStyle = 'rgba(40,20,5,.5)'; g.fillRect(x, r * 64, 2, 64); g.fillRect(x, r * 64, 180, 2);
+    }
+  });
+  floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping; floorTex.repeat.set(2.5, 2.5);
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(5, .1, 5), new THREE.MeshLambertMaterial({ map: floorTex })); floor.position.y = -.05; pretend.add(floor);
+  box(5, .1, 5, 0xfbf7f0, 0, 2.65, 0);                         // ceiling
+  box(5, 2.6, .1, 0xbfe0ff, 0, 1.3, -2.55); box(5, 2.6, .1, 0xbfe0ff, 0, 1.3, 2.55);
+  box(.1, 2.6, 5, 0xc9f2c4, -2.55, 1.3, 0); box(.1, 2.6, 5, 0xc9f2c4, 2.55, 1.3, 0);
+  // couch
+  box(1.8, .42, .8, 0x7b5cff, -1.3, .21, -2.05); box(1.8, .5, .2, 0x6a4ce8, -1.3, .67, -2.4);
+  box(.2, .6, .8, 0x6a4ce8, -2.3, .3, -2.05); box(.2, .6, .8, 0x6a4ce8, -.3, .3, -2.05);
+  // coffee table + legs
+  box(1, .05, .55, 0xc98a4b, -1.2, .42, -.9);
+  [[-1.62, -1.1], [-.78, -1.1], [-1.62, -.7], [-.78, -.7]].forEach(([x, z]) => box(.05, .4, .05, 0x8b5a2b, x, .2, z));
+  // bed
+  box(1.1, .45, 2, 0xffffff, 1.9, .22, -1.4); box(1.1, .1, 1.4, 0xff6f91, 1.9, .5, -1.1); box(1.2, 1, .08, 0x8b5a2b, 1.9, .5, -2.45);
+  // dresser, a ramp and a box tower to bounce off
+  box(1, .9, .45, 0xd9a066, 2.25, .45, 1.2);
+  const ramp = box(1.2, .06, 1, 0xffd35a, 0, .25, 1.3); ramp.rotation.x = -.4;
+  box(.4, .4, .4, 0xff7a3a, -1.9, .2, 1.5); box(.35, .35, .35, 0x24c46b, -1.9, .58, 1.5); box(.3, .3, .3, 0x2f7bff, -1.9, .9, 1.5);
+  const tv = box(1.1, .65, .05, 0x111111, 2.47, 1.4, 1.2, Math.PI / 2);
+  // a window and posters for looks
+  box(1.2, .9, .02, 0x9fd8ff, 0, 1.5, -2.49); box(.6, .8, .02, 0xff4f7b, -2.49, 1.5, .6, Math.PI / 2);
+})();
+function pretendTriangles() {
+  const out = [];
+  pretend.updateMatrixWorld(true);
+  pretend.traverse(m => {
+    if (!m.isMesh) return;
+    const g = m.geometry, p = g.attributes.position, idx = g.index;
+    const v = new V3();
+    for (let i = 0; i < idx.count; i++) { v.fromBufferAttribute(p, idx.getX(i)).applyMatrix4(m.matrixWorld); out.push(v.x, v.y, v.z); }
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------- real room from the Quest (planes + room mesh)
+let lastScanCheck = 0, scanSig = '', gotRoom = false, arStart = 0, warned = false;
+const M4 = new THREE.Matrix4();
+function readRoom(frame) {
+  const ref = renderer.xr.getReferenceSpace();
+  const planes = frame.detectedPlanes, meshes = frame.detectedMeshes;
+  let sig = '';
+  planes?.forEach(p => sig += p.lastChangedTime + ',');
+  meshes?.forEach(m => sig += m.lastChangedTime + ';');
+  if (sig === scanSig) return;
+  const out = [];
+  const v = new V3();
+  planes?.forEach(p => {
+    const pose = frame.getPose(p.planeSpace, ref); if (!pose) return;
+    M4.fromArray(pose.transform.matrix);
+    const poly = p.polygon; if (!poly || poly.length < 3) return;
+    const pts = poly.map(pt => new V3(pt.x, pt.y, pt.z).applyMatrix4(M4));
+    for (let i = 1; i < pts.length - 1; i++) out.push(pts[0].x, pts[0].y, pts[0].z, pts[i].x, pts[i].y, pts[i].z, pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
+  });
+  meshes?.forEach(m => {
+    const pose = frame.getPose(m.meshSpace, ref); if (!pose) return;
+    M4.fromArray(pose.transform.matrix);
+    const vs = m.vertices, ix = m.indices; if (!vs || !ix) return;
+    for (let i = 0; i < ix.length; i++) { const k = ix[i] * 3; v.set(vs[k], vs[k + 1], vs[k + 2]).applyMatrix4(M4); out.push(v.x, v.y, v.z); }
+  });
+  scanSig = sig;
+  if (out.length) {
+    setTriangles(out);
+    if (!gotRoom) { gotRoom = true; scanFade = 2.5; toast('✨ Found your room! Throw a ball 🏀'); }
+  }
+}
+
+// ---------------------------------------------------------------- hands / controllers
+const factory = new XRControllerModelFactory();
+const lineGeo = new THREE.BufferGeometry().setFromPoints([new V3(0, 0, 0), new V3(0, 0, -1)]);
+const hands = [0, 1].map(i => {
+  const ray = renderer.xr.getController(i), grip = renderer.xr.getControllerGrip(i);
+  grip.add(factory.createControllerModel(grip));
+  const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .5 }));
+  line.scale.z = .4; ray.add(line);
+  rig.add(ray, grip);
+  const h = { i, ray, grip, line, src: null, held: null, pull: null, hist: [], prev: [] };
+  ray.addEventListener('connected', e => { h.src = e.data; if (e.data.handedness === 'left') grip.add(wrist); });
+  ray.addEventListener('disconnected', () => { h.src = null; });
+  ray.addEventListener('selectstart', () => throwNew(h));
+  ray.addEventListener('squeezestart', () => tryGrab(h));
+  ray.addEventListener('squeezeend', () => letGo(h));
+  return h;
+});
+const _p = new V3(), _q = new THREE.Quaternion();
+function handPos(h) { (h.src?.gripSpace ? h.grip : h.ray).getWorldPosition(_p); return _p.clone(); }
+function handFwd(h) { h.ray.getWorldQuaternion(_q); return new V3(0, 0, -1).applyQuaternion(_q); }
+function headPos() { return camera.getWorldPosition(new V3()); }
+function headFwd() { return camera.getWorldDirection(new V3()); }
+function buzz(h, s = .5, ms = 40) { try { h.src?.gamepad?.hapticActuators?.[0]?.pulse(s, ms); } catch (e) {} }
+
+function throwNew(h) {
+  ac();
+  const f = handFwd(h);
+  const p = handPos(h).addScaledVector(f, .12);
+  const b = makeBall(curType(), p, f.multiplyScalar(curType() === 'beach' ? 3 : 5.5).add(new V3(0, .8, 0)));
+  tone(500, .12, 'sine', .1, 0, 1.6); buzz(h, .3, 30);
+  return b;
+}
+function tryGrab(h) {
+  ac();
+  const hp = handPos(h);
+  let best = null, bd = 1e9;
+  for (const b of balls) { if (b.held) continue; const dd = b.pos.distanceTo(hp) - b.r; if (dd < .16 && dd < bd) { bd = dd; best = b; } }
+  if (best) return grabBall(h, best, false);
+  // nothing close: pull the ball you're pointing at 🧲
+  const f = handFwd(h), o = h.ray.getWorldPosition(new V3());
+  bd = 1e9;
+  for (const b of balls) {
+    if (b.held) continue;
+    tmp.subVectors(b.pos, o); const along = tmp.dot(f); if (along < 0 || along > 8) continue;
+    const off = tmp.addScaledVector(f, -along).length();
+    if (off < b.r + .25 + along * .04 && along < bd) { bd = along; best = b; }
+  }
+  if (best) { best.pull = h; h.pull = best; whoosh(); buzz(h, .2, 80); }
+}
+function grabBall(h, b, pulled) {
+  if (!pulled && b.bounces >= 1 && b.air > .25 && b.vel.length() > 1.5) secret('s4', 'Nice catch 🧤', b.pos.clone());
+  if (b.pull) { b.pull.pull = null; b.pull = null; }
+  h.held = b; b.held = h; b.bounces = 0; h.hist.length = 0;
+  tone(330, .08, 'sine', .12); buzz(h, .6, 40);
+}
+function letGo(h) {
+  if (h.pull) { h.pull.pull = null; h.pull = null; }
+  const b = h.held; if (!b) return;
+  h.held = null; b.held = null;
+  // throw speed = how fast your hand was moving
+  const hs = h.hist;
+  if (hs.length >= 2) {
+    const a = hs[0], z = hs[hs.length - 1], dt = Math.max(.016, (z.t - a.t) / 1000);
+    b.vel.subVectors(z.p, a.p).divideScalar(dt).multiplyScalar(1.25);
+  } else b.vel.set(0, 0, 0);
+  b.air = 0;
+  const sp = b.vel.length();
+  if (sp > 2) whoosh();
+  if (sp > 9) { secret('s3', 'SONIC BOING 💥', b.pos.clone()); ripple(b.pos.clone(), headFwd().negate(), 0xffffff, 1.5); }
+}
+function pollHands(dt) {
+  for (const h of hands) {
+    if (!h.src) continue;
+    const hp = handPos(h);
+    h.hist.push({ p: hp, t: performance.now() }); if (h.hist.length > 6) h.hist.shift();
+    if (h.held) { const b = h.held; b.pos.copy(hp).addScaledVector(handFwd(h), b.r * .6); b.vel.set(0, 0, 0); }
+    const gp = h.src.gamepad; if (!gp) continue;
+    const pressed = gp.buttons.map(b => b?.pressed);
+    const was = h.prev;
+    if (pressed[4] && !was[4]) cycleType();
+    if (pressed[5] && !was[5]) toggleScan();
+    if (pressed[3] && !was[3]) clearBalls();
+    h.prev = pressed;
+    // aim line: longer when pointing at a ball you could pull
+    h.line.material.color.set(h.pull ? 0x5ff2ff : 0xffffff);
+  }
+}
+function cycleType() {
+  typeIdx = (typeIdx + 1) % typeOrder.length;
+  toast(TYPES[curType()].name); tone(660, .1, 'triangle', .12); tone(880, .1, 'triangle', .12, .08);
+  updateHud();
+}
+
+// ---------------------------------------------------------------- start buttons
+let mode = 'menu';
+function startPreview() {
+  ac(); mode = 'preview';
+  $('start').hidden = true; $('hud').hidden = false; $('tools').hidden = false;
+  pretend.visible = true; scene.background = SKY;
+  setTriangles(pretendTriangles());
+  if (!balls.length) for (let i = 0; i < 3; i++) makeBall('bouncy', new V3(-.6 + i * .6, 1.8 + i * .3, -.3), new V3((Math.random() - .5) * 2, 0, (Math.random() - .5) * 2));
+  toast('🖥️ Pretend room! Click to throw 🏀');
+}
+async function startAR() {
+  ac();
+  try {
+    const session = await navigator.xr.requestSession('immersive-ar', {
+      optionalFeatures: ['local-floor', 'plane-detection', 'mesh-detection', 'hand-tracking', 'anchors'],
+    });
+    renderer.xr.setReferenceSpaceType('local-floor');
+    await renderer.xr.setSession(session);
+  } catch (e) {
+    toast('😬 Could not start: ' + (e.message || e));
+  }
+}
+renderer.xr.addEventListener('sessionstart', () => {
+  mode = 'ar';
+  scene.background = null; renderer.setClearColor(0x000000, 0);
+  pretend.visible = false; setTriangles([]); scanSig = ''; gotRoom = false; warned = false;
+  arStart = performance.now();
+  [...balls].forEach(removeBall);
+  $('start').hidden = true;
+  setTimeout(() => toast('👋 Pull the trigger to throw a ball!'), 600);
+});
+renderer.xr.addEventListener('sessionend', () => {
+  mode = 'menu'; scene.background = SKY; pretend.visible = true;
+  camera.position.set(0, 1.6, 1.7); camera.rotation.set(0, 0, 0); toastMesh.visible = false;
+  $('start').hidden = false; $('hud').hidden = true; $('tools').hidden = true;
+});
+$('goPreview').onclick = startPreview;
+$('goAR').onclick = startAR;
+if (navigator.xr?.isSessionSupported) navigator.xr.isSessionSupported('immersive-ar').then(ok => {
+  $('goAR').hidden = !ok; $('note').hidden = ok;
+}).catch(() => { $('note').hidden = false; });
+else $('note').hidden = false;
+
+$('bType').onclick = cycleType;
+$('bScan').onclick = toggleScan;
+$('bClear').onclick = clearBalls;
+
+// ---------------------------------------------------------------- PC / phone controls for the pretend room
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (mode !== 'preview') return;
+  if (e.code === 'KeyT') cycleType();
+  if (e.code === 'KeyG') toggleScan();
+  if (e.code === 'KeyR') clearBalls();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+let drag = null;
+const cvs = renderer.domElement;
+cvs.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() }; cvs.setPointerCapture(e.pointerId); });
+cvs.addEventListener('pointermove', e => {
+  if (!drag || mode !== 'preview') return;
+  camera.rotation.y -= (e.clientX - drag.x) * .005;
+  camera.rotation.x = clamp(camera.rotation.x - (e.clientY - drag.y) * .005, -1.4, 1.4);
+  drag.x = e.clientX; drag.y = e.clientY;
+});
+const ray = new THREE.Raycaster();
+cvs.addEventListener('pointerup', e => {
+  if (!drag) return;
+  const moved = Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy), held = performance.now() - drag.t;
+  drag = null;
+  if (mode !== 'preview' || moved > 8) return;
+  ray.setFromCamera(new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1), camera);
+  const dir = ray.ray.direction.clone();
+  const power = clamp(4 + held / 120, 4, 13);   // hold longer = throw harder
+  const b = makeBall(curType(), camera.position.clone().addScaledVector(dir, .3).add(new V3(0, -.15, 0)), dir.multiplyScalar(curType() === 'beach' ? Math.min(power, 5) : power).add(new V3(0, .6, 0)));
+  if (power > 9) { whoosh(); if (power >= 12.9) secret('s3', 'SONIC BOING 💥', b.pos.clone()); }
+  tone(500, .12, 'sine', .1, 0, 1.6);
+});
+function stepPreview(dt) {
+  const f = new V3(-Math.sin(camera.rotation.y), 0, -Math.cos(camera.rotation.y)), r = new V3(-f.z, 0, f.x);
+  const mv = new V3();
+  if (keys.KeyW || keys.ArrowUp) mv.add(f); if (keys.KeyS || keys.ArrowDown) mv.sub(f);
+  if (keys.KeyD || keys.ArrowRight) mv.add(r); if (keys.KeyA || keys.ArrowLeft) mv.sub(r);
+  if (mv.lengthSq()) camera.position.addScaledVector(mv.normalize(), 2.2 * dt);
+  camera.position.x = clamp(camera.position.x, -2.3, 2.3); camera.position.z = clamp(camera.position.z, -2.3, 2.3);
+}
+
+// ---------------------------------------------------------------- main loop
+const clock = new THREE.Clock();
+let sinceHud = 0;
+renderer.setAnimationLoop((t, frame) => {
+  const dt = Math.min(clock.getDelta(), 1 / 30);
+  if (mode === 'ar' && frame) {
+    if (t - lastScanCheck > 1000) { lastScanCheck = t; readRoom(frame); }
+    if (!gotRoom && !warned && performance.now() - arStart > 6000) {
+      warned = true;
+      toast('🤔 No room scan yet. Do "Space Setup" in Quest settings! Floor works for now.');
+    }
+    pollHands(dt);
+  }
+  if (mode === 'preview') stepPreview(dt);
+  stepBalls(dt);
+  stepFx(dt);
+  // scan lines: flash on when the room is found, or stay on when you switch them on
+  scanFade = Math.max(0, scanFade - dt);
+  if (scanLines) { scanLines.visible = scanOn || scanFade > 0; scanMat.opacity = scanOn ? .45 : Math.min(.45, scanFade * .3); }
+  if (toastTimer > 0) { toastTimer -= dt; if (toastTimer <= 0) toastMesh.visible = false; }
+  if ((sinceHud += dt) > .5) { sinceHud = 0; updateHud(); }
+  renderer.render(scene, camera);
+});
+updateHud();
+window.__room = { balls, secret, found, startPreview, triCount: () => triCount };
+</script>
+</body>
+</html>
