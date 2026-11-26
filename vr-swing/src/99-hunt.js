@@ -614,22 +614,143 @@ function huMonsterParts(f, sc = 1) {   // corrupt a Thumpling: glowing eyes, tee
   f.paws.forEach(p => { for (let k = 0; k < 3; k++) { const c = new THREE.Mesh(new THREE.ConeGeometry(.016, .2, 5), dark); c.rotation.x = -Math.PI / 2 - .35; c.position.set(-.04 + k * .04, -.02, -.13); p.add(c); add.push(c); } });
   return add;
 }
+/* ---------- 👹 THE THUMPLING MONSTER: its own detailed model (front = -z, about 1.35 m tall at sc 1, floats) ---------- */
+function huMonGeoColor(g, fn) { const p = g.attributes.position, c = new Float32Array(p.count * 3), col = new THREE.Color(); for (let i = 0; i < p.count; i++) { fn(col, p.getX(i), p.getY(i), p.getZ(i)); c.set([col.r, col.g, col.b], i * 3); } g.setAttribute('color', new THREE.BufferAttribute(c, 3)); return g; }
+function huBent(r, h, bend, seg = 8) {   // a cone that curls forward (-z) toward its tip: claws, spikes
+  const g = new THREE.ConeGeometry(r, h, seg, 6); g.translate(0, h / 2, 0); const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) { const k = p.getY(i) / h; p.setZ(i, p.getZ(i) - bend * k * k * h * .45); }
+  g.computeVertexNormals(); return g;
+}
+const HU_MONM = (() => {
+  const fur = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .88, metalness: 0 });
+  return {
+    fur, flesh: new THREE.MeshStandardMaterial({ color: 0x6a0b14, emissive: 0x2a0006, roughness: .35 }), dark: new THREE.MeshStandardMaterial({ color: 0x060404, roughness: .6 }),
+    bone: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .35 }), tooth: new THREE.MeshStandardMaterial({ color: 0xece2c8, roughness: .3 }), gum: new THREE.MeshStandardMaterial({ color: 0x5a0a12, roughness: .4 }),
+    stuff: new THREE.MeshStandardMaterial({ color: 0xd8d0bc, roughness: 1, flatShading: true }), muzzle: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .85 }),
+    pink: new THREE.MeshStandardMaterial({ color: 0x8a4a58, roughness: .8 }), stitch: new THREE.MeshStandardMaterial({ color: 0x1a1210, roughness: .9 }),
+    eye: new THREE.MeshBasicMaterial({ color: 0xff2414 }), sprout: new THREE.MeshStandardMaterial({ color: 0x4a5a22, roughness: .8 }), leaf: new THREE.MeshStandardMaterial({ color: 0x5a5a1c, roughness: .8, side: THREE.DoubleSide }),
+    tail: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .9, transparent: true, opacity: .92, side: THREE.DoubleSide })
+  };
+})();
+// mottled, rotting teal: lighter on top, darker blotches, almost black near the bottom
+const huFurCol = (c, x, y, z, base = .9) => { const n = hsh(x * 9, y * 9, z * 9, 3) * .5 + hsh(x * 23, y * 23, z * 23, 5) * .25, blot = Math.sin(x * 11 + y * 7) * Math.sin(z * 9 - y * 5) > .55 ? -.07 : 0;
+  c.setHSL(.47 + n * .02, .45 - n * .1, Math.max(.04, (.16 + n * .06 + blot) * Math.min(1, Math.max(.25, (y - .05) * base * 1.5)))); };
 function huMakeMon() {
-  const f = makeFriend(HU_MON_FUR, 0x163a35, ''); f.label.visible = false;
-  f.parts = huMonsterParts(f); f.g.traverse(o => { if (o.isMesh) o.castShadow = false; });
-  f.mon = { arm: 0, rise: 0, sc: 1.7 };
+  const M = HU_MONM, g = new THREE.Group(), f = { g, eyes: [], tails: [], wisps: [], arms: [] }; scene.add(g);
+  const mesh = (geo, m, x = 0, y = 0, z = 0, parent = g) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
+  const furGeo = (geo, base) => huMonGeoColor(geo, (c, x, y, z) => huFurCol(c, x, y + (base || 0), z));
+  // body: a lumpy pear, a little hunched forward
+  const body = new THREE.Group(); body.position.y = .12; body.rotation.x = .12; g.add(body); f.body = body;
+  const prof = [[0, 0], [.16, .02], [.29, .12], [.36, .3], [.37, .45], [.33, .6], [.26, .72], [.16, .79], [0, .81]].map(([r, y]) => new THREE.Vector2(r, y));
+  const bg = new THREE.LatheGeometry(prof, 28); { const p = bg.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), w = 1 + hsh(x * 6, y * 6, z * 6, 1) * .06 + (z < 0 ? .04 : -.02); p.setXYZ(i, x * w * 1.05, y, z * w * .92); } bg.computeVertexNormals(); }
+  mesh(furGeo(bg, .12), M.fur, 0, 0, 0, body);
+  // the corrupted belly patch, cracked
+  const belly = new THREE.SphereGeometry(.24, 20, 14); belly.scale(1, 1.15, .32); huMonGeoColor(belly, (c, x, y) => c.setHSL(.46, .3, .3 + hsh(x * 30, y * 30, 0, 2) * .05 - (Math.abs(Math.sin(x * 40 + y * 25)) < .08 ? .2 : 0)));
+  mesh(belly, M.muzzle, 0, .4, -.27, body);
+  // the torn-open chest: dark meat, three ribs, ragged fur edge, stuffing spilling out
+  const wound = mesh(new THREE.SphereGeometry(.13, 16, 12), M.flesh, .1, .52, -.29, body); wound.scale.set(.85, 1.25, .35);
+  for (let i = 0; i < 3; i++) { const rib = mesh(new THREE.TorusGeometry(.09, .011, 6, 14, Math.PI * .9), M.bone, .1, .44 + i * .07, -.32, body); rib.rotation.set(0, 0, Math.PI * .05 + Math.PI / 2 * 0); rib.scale.set(1, .5, 1);
+    huMonGeoColor(rib.geometry, c => c.set(0xd8ccb0)); }
+  for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2, s = mesh(new THREE.ConeGeometry(.018, .06, 5), M.fur, .1 + Math.cos(a) * .11, .52 + Math.sin(a) * .16, -.3, body); s.rotation.z = a + Math.PI / 2; s.geometry = furGeo(s.geometry, .5); }
+  for (let i = 0; i < 7; i++) mesh(new THREE.IcosahedronGeometry(.025 + Math.random() * .03, 0), M.stuff, .1 + (Math.random() - .5) * .2, .38 + Math.random() * .28, -.31 - Math.random() * .05, body);
+  // a second rip on the side + back spikes + stitched seams
+  const w2 = mesh(new THREE.SphereGeometry(.08, 12, 8), M.flesh, -.31, .35, -.08, body); w2.scale.set(.3, 1.2, .9);
+  for (let i = 0; i < 4; i++) mesh(new THREE.IcosahedronGeometry(.02 + Math.random() * .02, 0), M.stuff, -.34, .27 + i * .05, -.06 + (Math.random() - .5) * .08, body);
+  for (let i = 0; i < 5; i++) { const s = mesh(huBent(.035 - i * .003, .17 - i * .015, -1.1), M.bone, 0, .7 - i * .12, .2 + i * .02, body); s.rotation.x = -1.2 + i * .05; huMonGeoColor(s.geometry, (c, x, y) => c.setHSL(.1, .2, .12 + y * 2.4)); }
+  for (let i = 0; i < 6; i++) { const st = mesh(new THREE.CylinderGeometry(.006, .006, .06, 4), M.stitch, -.2 + i * .016, .22 + i * .05, -.3 + i * .005, body); st.rotation.set(Math.PI / 2, 0, .8); }
+  // ghostly tattered tail instead of legs
+  const tg = new THREE.ConeGeometry(.3, .7, 22, 6, true); tg.rotateX(Math.PI); tg.translate(0, -.22, 0); { const p = tg.attributes.position; for (let i = 0; i < p.count; i++) { const y = p.getY(i); if (y < -.45) p.setY(i, y - Math.abs(hsh(p.getX(i) * 20, 0, p.getZ(i) * 20, 4)) * .25); } tg.computeVertexNormals(); }
+  huMonGeoColor(tg, (c, x, y) => c.setHSL(.47, .35, Math.max(.02, .1 + y * .15)));
+  mesh(tg, M.tail, 0, .14, 0);
+  for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 + .3, piv = new THREE.Group(); piv.position.set(Math.cos(a) * .2, .05, Math.sin(a) * .2); piv.rotation.y = -a; g.add(piv);
+    const sg = new THREE.PlaneGeometry(.12, .5, 1, 5); sg.translate(0, -.25, 0); huMonGeoColor(sg, (c, x, y) => c.setHSL(.47, .35, Math.max(.02, .09 + y * .12)));
+    const sm = mesh(sg, M.tail, 0, 0, 0, piv); sm.rotation.y = Math.PI / 2; f.tails.push({ piv, ph: i * 1.3 }); }
+  for (let i = 0; i < 7; i++) { const w = new THREE.Sprite(new THREE.SpriteMaterial({ map: HU_GLOW, color: 0x0b1c18, transparent: true, opacity: .55, depthWrite: false })); w.scale.setScalar(.35); g.add(w); f.wisps.push({ w, t: i / 7 }); }
+  // HEAD (pivot at the neck so it can twitch)
+  const head = new THREE.Group(); head.position.set(0, .9, -.04); g.add(head); f.head = head;
+  const hg = new THREE.SphereGeometry(.31, 28, 20); { const p = hg.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i); p.setXYZ(i, x * 1.12 * (1 + hsh(x * 8, y * 8, z * 8, 2) * .04), y * .94, z * (z < 0 ? 1.02 : .96)); } hg.computeVertexNormals(); }
+  mesh(furGeo(hg, .9), M.fur, 0, .2, 0, head);
+  // ears: one whole (with a dirty pink inside), one torn off with stuffing
+  const ear = (sx, torn) => { const e = new THREE.Group(); e.position.set(sx * .27, .45, .02); e.rotation.z = -sx * .35; head.add(e);
+    const eg = new THREE.SphereGeometry(.11, 16, 12, 0, Math.PI * 2, 0, torn ? Math.PI * .55 : Math.PI); eg.scale(1, 1, .45); mesh(furGeo(eg, 1.3), M.fur, 0, 0, 0, e);
+    const ig = new THREE.SphereGeometry(.065, 12, 8, 0, Math.PI * 2, 0, torn ? Math.PI * .55 : Math.PI); ig.scale(1, 1, .3); mesh(ig, M.pink, 0, 0, -.035, e);
+    if (torn) for (let i = 0; i < 4; i++) mesh(new THREE.IcosahedronGeometry(.022, 0), M.stuff, (Math.random() - .5) * .14, -.01, (Math.random() - .5) * .04, e); };
+  ear(-1, false); ear(1, true);
+  // stitched scar across the top of the head
+  for (let i = 0; i < 7; i++) { const st = mesh(new THREE.CylinderGeometry(.006, .006, .07, 4), M.stitch, -.17 + i * .045, .43 - Math.abs(i - 3) * .012, -.12, head); st.rotation.set(.5, 0, .15); }
+  // muzzle + nose
+  const mg = new THREE.SphereGeometry(.17, 20, 14); mg.scale(1.15, .78, .55); huMonGeoColor(mg, (c, x, y) => c.setHSL(.46, .22, .26 + hsh(x * 30, y * 30, 0, 7) * .04));
+  mesh(mg, M.muzzle, 0, .1, -.25, head);
+  const nose = mesh(new THREE.SphereGeometry(.045, 12, 8), M.dark, 0, .16, -.34, head); nose.scale.set(1.3, .8, .8);
+  // eyes: deep black sockets, glowing red pupils (the left one a bit bigger)
+  [[-1, 1.12], [1, .92]].forEach(([s, k]) => {
+    const so = mesh(new THREE.SphereGeometry(.075 * k, 16, 12), M.dark, s * .12, .3, -.24, head); so.scale.set(1.1, .85, .45);
+    const pu = mesh(new THREE.SphereGeometry(.026 * k, 12, 8), M.eye, s * .12, .29, -.272, head);
+    const gl = huGlow(0xff2010, .28 * k, .9); pu.add(gl); f.eyes.push(pu);
+    const brow = mesh(new THREE.BoxGeometry(.13, .025, .04), M.dark, s * .12, .37, -.25, head); brow.rotation.z = s * -.45; });
+  // the mouth: a wide jagged grin that opens into a roar
+  const mouth = new THREE.Group(); mouth.position.set(0, .03, -.27); head.add(mouth); f.mouth = mouth;
+  const cav = mesh(new THREE.SphereGeometry(.16, 20, 12), M.dark, 0, 0, 0, mouth); cav.scale.set(1.25, .4, .4); f.cav = cav;
+  const gumU = mesh(new THREE.TorusGeometry(.17, .02, 6, 20, Math.PI), M.gum, 0, .005, -.02, mouth); gumU.scale.set(1.15, .35, 1);
+  const jaw = new THREE.Group(); mouth.add(jaw); f.jaw = jaw;
+  const gumL = mesh(new THREE.TorusGeometry(.17, .02, 6, 20, Math.PI), M.gum, 0, -.005, -.02, jaw); gumL.rotation.z = Math.PI; gumL.scale.set(1.15, .35, 1);
+  for (let i = 0; i < 11; i++) { const a = (i + .5) / 11 * Math.PI, x = Math.cos(a) * .19, h = .05 + (i % 3 === 1 ? .04 : 0) + (i === 2 || i === 8 ? .035 : 0);
+    const t = mesh(new THREE.ConeGeometry(.013 + h * .12, h, 5), M.tooth, x, .045 + Math.sin(a) * .02 - h / 2, -.06 + Math.sin(a) * .01, mouth); t.rotation.x = Math.PI; }
+  for (let i = 0; i < 10; i++) { const a = (i + .5) / 10 * Math.PI, x = Math.cos(a) * .18, h = .045 + (i % 3 === 0 ? .03 : 0);
+    mesh(new THREE.ConeGeometry(.012 + h * .12, h, 5), M.tooth, x, -.045 - Math.sin(a) * .02 + h / 2, -.06 + Math.sin(a) * .01, jaw); }
+  for (let i = 0; i < 3; i++) { const d = mesh(new THREE.CylinderGeometry(.004, .002, .09 + i * .03, 4), new THREE.MeshStandardMaterial({ color: 0x9ab8a8, roughness: .1, transparent: true, opacity: .6 }), -.1 + i * .1, -.08 - i * .01, -.06, jaw); }
+  // wilted sprout with a dead bud
+  const pts = [V(0, 0, 0), V(.03, .1, 0), V(.12, .16, -.02), V(.2, .1, -.04)];
+  mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 12, .014, 6), M.sprout, .02, .48, 0, head);
+  [[.12, .64, -.02, .8], [.06, .58, .02, -.6]].forEach(([x, y, z, r]) => { const lg = new THREE.SphereGeometry(.06, 10, 6); lg.scale(1.6, .15, .7); const l = mesh(lg, M.leaf, x, y, z, head); l.rotation.set(.3, r, -.9); });
+  mesh(new THREE.SphereGeometry(.025, 8, 6), M.flesh, .22, .58, -.04, head);
+  // ARMS: long, thin, three joints, knuckly hands with long curved claws
+  [-1, 1].forEach(s => {
+    const sh = new THREE.Group(); sh.position.set(s * .33, .78, -.02); g.add(sh);
+    mesh(new THREE.SphereGeometry(.09, 14, 10), M.fur, 0, 0, 0, sh).geometry = furGeo(new THREE.SphereGeometry(.09, 14, 10), .8);
+    const ug = new THREE.CylinderGeometry(.075, .055, .5, 14, 4); ug.translate(0, -.25, 0); mesh(furGeo(ug, 1), M.fur, 0, 0, 0, sh);
+    if (s > 0) { const rp = mesh(new THREE.SphereGeometry(.05, 10, 8), M.flesh, .045, -.22, -.02, sh); rp.scale.set(.35, 1.4, .8); mesh(new THREE.IcosahedronGeometry(.02, 0), M.stuff, .06, -.2, -.02, sh); }
+    const el = new THREE.Group(); el.position.y = -.5; sh.add(el); mesh(furGeo(new THREE.SphereGeometry(.06, 12, 8), .6), M.fur, 0, 0, 0, el);
+    const fg = new THREE.CylinderGeometry(.055, .04, .58, 14, 4); fg.translate(0, -.29, 0); mesh(furGeo(fg, 1), M.fur, 0, 0, 0, el);
+    for (let i = 0; i < 4; i++) { const st = mesh(new THREE.CylinderGeometry(.005, .005, .05, 4), M.stitch, s * .045, -.12 - i * .04, -.02, el); st.rotation.z = Math.PI / 2 + .4; }
+    const wr = new THREE.Group(); wr.position.y = -.58; el.add(wr);
+    const pg = new THREE.SphereGeometry(.085, 16, 12); pg.scale(1.1, .7, 1.15); mesh(furGeo(pg, 1), M.fur, 0, -.05, -.02, wr);
+    const claws = [];
+    for (let k = 0; k < 4; k++) { const fx = -.06 + k * .04, kn = mesh(new THREE.SphereGeometry(.026, 10, 8), M.fur, fx, -.07, -.08, wr); kn.geometry = furGeo(kn.geometry, .6);
+      const cp = new THREE.Group(); cp.position.set(fx, -.08, -.1); wr.add(cp);
+      const cg = huBent(.017, .2 + (k === 1 || k === 2 ? .05 : 0), 1.4); huMonGeoColor(cg, (c, x, y) => c.setHSL(.1, .15, .06 + Math.min(.7, y * 3.2)));
+      const cl = mesh(cg, M.bone, 0, 0, 0, cp); cl.rotation.x = -Math.PI / 2 - .2; claws.push(cp); }
+    f.arms.push({ s, sh, el, wr, claws });
+  });
+  // a dim red glow from the mouth and chest so it reads in the dark
+  const light = new THREE.PointLight(0xff2a1a, 1.4, 3.2, 1.6); light.position.set(0, .85, -.6); g.add(light); f.light = light;
+  g.traverse(o => { if (o.isMesh) o.receiveShadow = false; });
+  f.mon = { arm: 0, rise: 0, sc: 1.7, jaw: 0, twitch: 0, tw: V(), twT: 0, roarT: -99 };
   return f;
 }
 function huPoseMon(f, P, yaw, t) {
-  const M = f.mon, sc = M.sc, bh = (state.bodyH || .85) * .95, fq = _huQ.setFromEuler(new THREE.Euler(0, yaw, 0));
-  const bob = Math.sin(t * 1.7) * .08, base = P.y + .35 * M.rise + bob;
-  f.root.position.set(P.x, base, P.z); f.root.rotation.set(0, yaw, 0); f.root.scale.setScalar(sc);
-  f.head.position.set(P.x, base + bh * sc, P.z); f.head.quaternion.copy(fq); f.head.rotateZ(Math.sin(t * .9) * .15); f.head.rotateX(Math.sin(t * 1.3) * .08); f.head.scale.setScalar(sc);
-  const reach = .25 + M.arm * .95;
-  f.paws.forEach((p, i) => { const s = i ? 1 : -1; p.scale.setScalar(1.2 + M.arm * .5); p.position.copy(f.head.position).add(_hu3.set(s * (.42 + M.arm * .35) * sc * .6, -bh * sc * reach + Math.sin(t * 2 + i) * .06, -.25 - M.arm * .25).applyQuaternion(fq));
-    p.position.y = Math.max(P.y + .12, p.position.y); p.quaternion.copy(fq); p.rotateX(.6 * M.arm); });
-  poseFriendArms(f, sc, yaw);
-  if (f.eyes) f.eyes.forEach(e => { e.children[0].material.opacity = .65 + Math.sin(t * 9) * .2; });
+  const M = f.mon, sc = M.sc * .82, dt = Math.min(.05, Math.max(0, t - (M.lastT || t))); M.lastT = t;
+  const bob = Math.sin(t * 1.6) * .06, roar = Math.max(0, 1 - Math.abs(t - M.roarT - .7) / .9);   // 0..1 around the roar
+  f.g.position.set(P.x, P.y + (.12 + .35 * M.rise + bob) * sc / 1.6, P.z); f.g.rotation.set(0, yaw, Math.sin(t * .8) * .04); f.g.scale.setScalar(sc);
+  // breathing + a slow hunch
+  const br = 1 + Math.sin(t * 2.2) * .025; f.body.scale.set(br, 1 + (br - 1) * .5, br); f.body.rotation.x = .12 + Math.sin(t * .7) * .04 - roar * .15;
+  // head: slow lolling, plus sudden twitches (snaps to a new angle, holds, snaps again)
+  if ((M.twT -= dt) < 0) { M.twT = .6 + Math.random() * 1.6; M.tw.set((Math.random() - .5) * .35, (Math.random() - .5) * .5, (Math.random() - .5) * .7); if (Math.random() < .4) M.tw.multiplyScalar(.2); }
+  const hz = f.head.rotation; hz.x += (M.tw.x - roar * .35 + Math.sin(t * .9) * .05 - hz.x) * Math.min(1, dt * 14); hz.y += (M.tw.y * (1 - roar) - hz.y) * Math.min(1, dt * 14); hz.z += (M.tw.z * (1 - roar) + Math.sin(t * .6) * .08 - hz.z) * Math.min(1, dt * 14);
+  // jaw: chattering a little, wide open on the roar
+  const jaw = Math.max(M.jaw || 0, roar, .08 + Math.max(0, Math.sin(t * 3.1)) * .1);
+  f.jaw.position.y = -jaw * .11; f.jaw.rotation.x = jaw * .35; f.cav.scale.set(1.25, .4 + jaw * 1.1, .4);
+  // arms: folded against the body (arm 0) -> long and reaching (arm 1) -> thrown wide on the roar
+  const A = M.arm;
+  f.arms.forEach((a, i) => { const s = a.s, sw = Math.sin(t * 1.3 + i * 2.1);
+    a.sh.rotation.set(.1 + A * .5 + sw * .12 + roar * .5, 0, s * (.2 + A * .38 + roar * .8));
+    a.el.rotation.set((1 - A) * 2.1 + .45 + Math.max(0, sw) * .3 - roar * .2, 0, s * -.25 * A);
+    a.wr.rotation.set(.25 + Math.sin(t * 2.4 + i) * .2, 0, s * .2);
+    a.claws.forEach((c, k) => { c.rotation.x = -.25 + Math.sin(t * 3 + k * .7 + i) * .25 - roar * .4; }); });
+  f.tails.forEach(T => { T.piv.rotation.x = Math.sin(t * 2 + T.ph) * .35; T.piv.rotation.z = Math.cos(t * 1.6 + T.ph) * .2; });
+  f.wisps.forEach(W => { W.t = (W.t + dt * .35) % 1; const a = W.t * 9 + W.w.id; W.w.position.set(Math.sin(a) * .18, .05 - W.t * .7, Math.cos(a) * .18); W.w.material.opacity = Math.sin(W.t * Math.PI) * .55; W.w.scale.setScalar(.25 + W.t * .35); });
+  f.eyes.forEach((e, i) => { const fl = .75 + Math.sin(t * 9 + i) * .15 + roar * .4; e.children[0].material.opacity = Math.min(1, fl); e.children[0].scale.setScalar(.28 * (1 + roar * .8)); });
+  f.light.intensity = 1.2 + roar * 2.5 + Math.sin(t * 7) * .15;
 }
 function huClearMons() { HU.mons.forEach(m => scene.remove(m.f.g)); HU.mons.length = 0; if (HU.decorF) { HU.decorF.parts.forEach(m => m.parent && m.parent.remove(m)); HU.decorF = null; } }
 // YOU become the Thumpling: dark torn fur, glowing eyes + teeth on your head, claws on your paws, red vignette
@@ -730,7 +851,7 @@ function stepHuntCs(dt) {
   if (C.mon) {
     const M = C.mon.mon, k = Math.min(1, (t - T.burst) / .7); M.sc = .7 + k * 1.0; M.rise = Math.min(1, (t - T.burst) / 1.2); M.arm = Math.min(1, Math.max(0, (t - T.burst - .3) / .9));
     huPoseMon(C.mon, P, C.yaw, t);
-    if (!C.roared && t >= T.roar) { C.roared = true; if (ac) { tone('sawtooth', 110, 38, 2.2, .3); tone('square', 70, 30, 2, .12); noiseHit(ac.currentTime, 1.8, .4, 'lowpass', 700, .5); } hands.forEach(h => buzz(h, 1, 900)); C.kick = .25;
+    if (!C.roared && t >= T.roar) { C.roared = true; C.mon.mon.roarT = t; if (ac) { tone('sawtooth', 110, 38, 2.2, .3); tone('square', 70, 30, 2, .12); noiseHit(ac.currentTime, 1.8, .4, 'lowpass', 700, .5); } hands.forEach(h => buzz(h, 1, 900)); C.kick = .25;
       C.mon.eyes.forEach((e, i) => shine(e.getWorldPosition(V()), .45, i * .12)); }
     if (!C.titled && t >= T.title) { C.titled = true; artCap(''); const w = C.w;
       huTitle(w.me ? 'YOU ARE THE THUMPLING' : `${w.name.toUpperCase()} IS THE THUMPLING`, w.me ? 'everyone else is the prey now...' : 'RUN.'); }
@@ -738,7 +859,7 @@ function stepHuntCs(dt) {
   // camera
   C.kick = Math.max(0, (C.kick || 0) - dt * .5);
   if (!state.xr) {
-    const cam = CS.cam; const bh = state.bodyH || .85, look = _hu1.copy(P); look.y += C.mon ? .35 * C.mon.mon.rise + bh * .95 * C.mon.mon.sc * .7 : bh * .8;
+    const cam = CS.cam; const bh = state.bodyH || .85, look = _hu1.copy(P); if (C.mon) { C.mon.head.getWorldPosition(look); look.y -= .35 * C.mon.mon.sc / 1.7; } else look.y += bh * .8;
     if (t < T.burst) { const a = -.45 + ease(Math.min(1, t / T.burst)) * .75, r = 2.7 - t * .06; cam.position.set(P.x + Math.sin(a) * r, P.y + .95 + t * .04, P.z + Math.cos(a) * r); }
     else { const k = ease(Math.min(1, Math.max(0, (t - T.roar) / 1.4))), r = 5 - k * 1.4, a = .3; cam.position.set(P.x + Math.sin(a) * r, P.y + .75 + k * .2, P.z + Math.cos(a) * r); }
     if (C.kick > 0) cam.position.add(_hu2.set((Math.random() - .5) * C.kick, (Math.random() - .5) * C.kick, (Math.random() - .5) * C.kick));
@@ -887,7 +1008,7 @@ function stepHunt(dt) {
   else if (HU.phase === 'count' || HU.phase === 'race' || HU.phase === 'ready') stepRace(dt);
   else HU.bots.forEach(b => artPoseTwin(b.f, hL(b.x, b.y, b.z), 0, .2));
   if (HU.cs) stepHuntCs(dt);
-  for (const M of HU.mons) { M.a += dt * .12; const P = _hu2.set(HUNT.x + Math.sin(M.a) * 6, 0, HUNT.z + Math.cos(M.a * .8) * 6); headWorld(_hu1); const yaw = Math.atan2(-(_hu1.x - P.x), -(_hu1.z - P.z)); M.f.mon.sc = 1.7; M.f.mon.rise = 1; M.f.mon.arm = 1; huPoseMon(M.f, P, yaw, t); }
+  for (const M of HU.mons) { M.a += dt * .12; const P = _hu2.set(HUNT.x + Math.sin(M.a) * 6, 0, HUNT.z + Math.cos(M.a * .8) * 6); headWorld(_hu1); const yaw = Math.atan2(-(_hu1.x - P.x), -(_hu1.z - P.z)); M.f.mon.sc = 1.7; M.f.mon.rise = 1; M.f.mon.arm = 1; if (t - M.f.mon.roarT > 14 && Math.random() < .004) { M.f.mon.roarT = t; const d = _hu1.distanceTo(P); if (ac && d < 20) { const v = 1 - d / 20; tone('sawtooth', 110, 40, 1.6, .2 * v); noiseHit(ac.currentTime, 1.2, .25 * v, 'lowpass', 600, .5); } } huPoseMon(M.f, P, yaw, t); }
   if (HU.phase === 'after') huHud(HU.iAmMon ? '🩸 You are the THUMPLING  •  hunting comes next update  •  🔁 race again  •  🚪 lobby' : '🩸 The THUMPLING is awake  •  🔁 race again  •  🚪 lobby');
   // VR: the start pedestals (race again, tour) and walking into the exit
   if (state.mode === 'play' && !HU.cs && !HU.tour) {
