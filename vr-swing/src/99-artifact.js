@@ -102,16 +102,40 @@ function artCutscene() {
   Object.assign(ART_CS, { on: true, t: 0, pin: rig.position.clone(), yaw: state.xr ? Math.atan2(-camera.getWorldDirection(_ar1).x, -_ar1.z) : state.yaw });
   // 🎥 THIRD PERSON: a stand-in of you stays where you were, and your view steps back so you watch it happen
   const fur = myFur(), paw = myPawCol(); ART_CS.actor = makeFriend(fur < 0 ? 0xffffff : fur, paw < 0 ? 0xffffff : paw, ''); ART_CS.actor.label.visible = false;
+  // 🚧 no clipping: try angles around you until the camera spot and both twins' spots are clear of walls, the altar and playground toys
+  const look = ART_CS.yaw; let best = null;
+  for (const da of [0, .5, -.5, 1, -1, 1.6, -1.6, 2.2, -2.2, Math.PI]) {
+    const y = look + da, f = V(-Math.sin(y), 0, -Math.cos(y)), r = V(Math.cos(y), 0, -Math.sin(y)), P = ART_CS.pin;
+    const pts = [[V().copy(P).addScaledVector(f, -3.6).addScaledVector(r, .5), .45], [V().copy(P).addScaledVector(f, -2.7).addScaledVector(r, .45), .45],
+      [V().copy(P).addScaledVector(r, 1.2).addScaledVector(f, -.5), .5], [V().copy(P).addScaledVector(r, -1.2).addScaledVector(f, -.5), .5], [V().copy(P).addScaledVector(r, .6).addScaledVector(f, -.25), .4], [V().copy(P).addScaledVector(r, -.6).addScaledVector(f, -.25), .4]];
+    const bad = pts.reduce((n, [q, rad]) => n + (artBlocked(q, rad) ? 1 : 0), 0);
+    if (!best || bad < best.bad) best = { y, bad }; if (!bad) break;
+  }
+  ART_CS.yaw = best.y; ART_CS.turn = best.y - look; ART_CS.rot0 = rig.rotation.y;
+  if (state.xr && ART_CS.turn) rig.rotation.y = ART_CS.rot0 + ART_CS.turn;   // VR: turn you so the stand-in is in front of you
   const fwd = V(-Math.sin(ART_CS.yaw), 0, -Math.cos(ART_CS.yaw)), rt = V(Math.cos(ART_CS.yaw), 0, -Math.sin(ART_CS.yaw));
   ART_CS.cam = V().copy(ART_CS.pin).addScaledVector(fwd, -3.6).addScaledVector(rt, .5); ART_CS.fwd = fwd; ART_CS.rt = rt;
-  ART_CS.avVis = AV.root.visible; AV.root.visible = false;
+  // push loose playground toys (balls, dominoes...) out of the stage so nothing pokes through the twins
+  if (typeof PGND !== 'undefined') for (const D of PGND.dyn) { const t = D.b.translation(), dx = t.x + ARENA.x - ART_CS.pin.x, dz = t.z + ARENA.z - ART_CS.pin.z, d = Math.hypot(dx, dz); if (d < 2.2 && D.kind !== 'crate') { const k = (2.3 - d) / Math.max(d, .1); D.b.setTranslation({ x: t.x + dx * k, y: Math.max(t.y, .4), z: t.z + dz * k }, true); D.b.setLinvel({ x: 0, y: 0, z: 0 }, true); } }
+  ART_CS.avVis = AV.root.visible; artHideMe(true);
   if (!state.xr) ART_CS.bars.style.display = 'block', requestAnimationFrame(() => ART_CS.bars.classList.add('on'));
   artCap('Something is happening to you...');
   hands.forEach(h => buzz(h, 1, 900)); ART_CS.song = artSongPlay();
   if (!ART_CS.song && ac) { tone('sawtooth', 50, 120, 1.1, .18); noiseHit(ac.currentTime, 1.1, .12, 'bandpass', 2000, .6); }
 }
+function artBlocked(p, r) {
+  if (Math.abs(p.x - ARENA.x) > 17.4 || Math.abs(p.z - ARENA.z) > 17.4) return true;   // off the yard floor
+  for (const h of [.3, .9, 1.4]) { _ar3.set(p.x, p.y + h, p.z); if (pawHit(_ar3, r)) return true; }
+  if (typeof PGND !== 'undefined') for (const D of PGND.dyn) { if (D.kind !== 'crate') continue; const t = D.b.translation(); if (Math.hypot(t.x + ARENA.x - p.x, t.z + ARENA.z - p.z) < r + .5) return true; }
+  return false;
+}
+function artHideMe(hide) {
+  AV.root.visible = !hide; if (hide) { AV.fpRoot.visible = false; AV.head.visible = false; }
+  AV.arms.forEach(a => { a.up.visible = a.fore.visible = a.elbow.visible = !hide; });
+  hands.forEach(h => { h.paw.visible = !hide; });
+}
 function artEndCutscene() {
-  ART_CS.on = false; rig.position.copy(ART_CS.pin); AV.root.visible = ART_CS.avVis !== false; if (ART_CS.actor) { scene.remove(ART_CS.actor.g); ART_CS.actor = null; } ART_CS.bars.classList.remove('on'); setTimeout(() => { ART_CS.bars.style.display = 'none'; }, 500); artCap('');
+  ART_CS.on = false; rig.position.copy(ART_CS.pin); artHideMe(false); if (state.xr) rig.rotation.y = ART_CS.rot0; if (ART_CS.actor) { scene.remove(ART_CS.actor.g); ART_CS.actor = null; } ART_CS.bars.classList.remove('on'); setTimeout(() => { ART_CS.bars.style.display = 'none'; }, 500); artCap('');
   (ART_CS.twins || []).forEach(f => { scene.remove(f.g); }); ART_CS.twins = null;
   const P = ART_POWERS.fly; toast(`${P.e} NEW POWER: ${P.n}! ${P.how()}`, 9);
   ARTM.lab.material.map = sprite('⚫⚪ (it\'s inside you now)', 1.8, '#888888', 46).material.map;
@@ -122,7 +146,8 @@ function stepArtCutscene(dt) {
   // the camera (you) slowly drifts in toward the stand-in
   const dolly = Math.min(1, t / T.merge) * .9;
   rig.position.copy(C.cam).addScaledVector(C.fwd, dolly); state.vel.set(0, 0, 0); if (state.velBuf) state.velBuf.length = 0;
-  if (!state.xr) { rig.rotation.y = Math.atan2(-(C.pin.x - rig.position.x + C.rt.x * .5), -(C.pin.z - rig.position.z + C.rt.z * .5)); camera.position.set(0, 1.25, 0); camera.rotation.set(-.2, 0, 0); hands.forEach(h => { h.paw.visible = false; }); }
+  if (!state.xr) { rig.rotation.y = Math.atan2(-(C.pin.x - rig.position.x + C.rt.x * .5), -(C.pin.z - rig.position.z + C.rt.z * .5)); camera.position.set(0, 1.25, 0); camera.rotation.set(-.2, 0, 0); }
+  artHideMe(true);   // you're watching from outside: no floating paws or body in the shot
   // the stand-in: SPAZZES, then stands there while the twins come out of it
   const A = C.actor, sp = t < T.spaz ? 1 : 0;
   if (A) {
