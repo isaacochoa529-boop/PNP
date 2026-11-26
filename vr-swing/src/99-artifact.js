@@ -78,12 +78,16 @@ function artTwin(white) {
   if (white) { const l = new THREE.PointLight(0xffffff, 2.5, 4); f.head.add(l); }
   return f;
 }
-function artPoseTwin(f, P, yaw, k) {
+function artPoseTwin(f, P, yaw, k, mirror) {
   const bh = state.bodyH || .85, sc = clamp(bh / AVATAR_EYE, .75, 1.1);
   f.head.position.set(P.x, P.y + bh, P.z); f.head.quaternion.setFromEuler(new THREE.Euler(0, yaw, 0));
   if (f.root) { f.root.position.set(P.x, P.y, P.z); f.root.rotation.set(0, yaw, 0); f.root.scale.setScalar(sc); f.head.scale.setScalar(sc); }
   const fq = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0));
   f.paws.forEach((p, i) => { p.visible = true; const up = Math.sin(tAll * 9 + i * 3) * .05 * k; p.position.copy(f.head.position).add(V(i ? .22 : -.22, -.32 + up, -.2).applyQuaternion(fq)); p.quaternion.copy(fq); });
+  if (mirror) {   // the stand-in copies YOUR real paws: move your hands and you see your body do it from outside
+    headWorld(_ar1); camera.getWorldDirection(_ar2); const myYaw = Math.atan2(-_ar2.x, -_ar2.z), dq = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw - myYaw, 0));
+    f.paws.forEach((p, i) => { const h = hands[i]; if (!h || !h.pos) return; p.position.copy(h.pos).sub(_ar1).applyQuaternion(dq).add(f.head.position); p.quaternion.copy(dq).multiply(h.paw.quaternion); });
+  }
   if (f.thump) poseFriendArms(f, sc, yaw);
 }
 // 🎵 Isaiah's Artifact song: the cutscene is timed to it. The song's pause (6.15 s in) is the merge flash = the end of the cutscene, then the beat drops as you get your powers.
@@ -117,7 +121,7 @@ function artCutscene() {
   ART_CS.cam = V().copy(ART_CS.pin).addScaledVector(fwd, -3.6).addScaledVector(rt, .5); ART_CS.fwd = fwd; ART_CS.rt = rt;
   // push loose playground toys (balls, dominoes...) out of the stage so nothing pokes through the twins
   if (typeof PGND !== 'undefined') for (const D of PGND.dyn) { const t = D.b.translation(), dx = t.x + ARENA.x - ART_CS.pin.x, dz = t.z + ARENA.z - ART_CS.pin.z, d = Math.hypot(dx, dz); if (d < 2.2 && D.kind !== 'crate') { const k = (2.3 - d) / Math.max(d, .1); D.b.setTranslation({ x: t.x + dx * k, y: Math.max(t.y, .4), z: t.z + dz * k }, true); D.b.setLinvel({ x: 0, y: 0, z: 0 }, true); } }
-  ART_CS.avVis = AV.root.visible; artHideMe(true);
+  ART_CS.avVis = AV.root.visible;
   if (!state.xr) ART_CS.bars.style.display = 'block', requestAnimationFrame(() => ART_CS.bars.classList.add('on'));
   artCap('Something is happening to you...');
   hands.forEach(h => buzz(h, 1, 900)); ART_CS.song = artSongPlay();
@@ -129,13 +133,8 @@ function artBlocked(p, r) {
   if (typeof PGND !== 'undefined') for (const D of PGND.dyn) { if (D.kind !== 'crate') continue; const t = D.b.translation(); if (Math.hypot(t.x + ARENA.x - p.x, t.z + ARENA.z - p.z) < r + .5) return true; }
   return false;
 }
-function artHideMe(hide) {
-  AV.root.visible = !hide; if (hide) { AV.fpRoot.visible = false; AV.head.visible = false; }
-  AV.arms.forEach(a => { a.up.visible = a.fore.visible = a.elbow.visible = !hide; });
-  hands.forEach(h => { h.paw.visible = !hide; });
-}
 function artEndCutscene() {
-  ART_CS.on = false; rig.position.copy(ART_CS.pin); artHideMe(false); if (state.xr) rig.rotation.y = ART_CS.rot0; if (ART_CS.actor) { scene.remove(ART_CS.actor.g); ART_CS.actor = null; } ART_CS.bars.classList.remove('on'); setTimeout(() => { ART_CS.bars.style.display = 'none'; }, 500); artCap('');
+  ART_CS.on = false; rig.position.copy(ART_CS.pin); if (state.xr) rig.rotation.y = ART_CS.rot0; if (ART_CS.actor) { scene.remove(ART_CS.actor.g); ART_CS.actor = null; } ART_CS.bars.classList.remove('on'); setTimeout(() => { ART_CS.bars.style.display = 'none'; }, 500); artCap('');
   (ART_CS.twins || []).forEach(f => { scene.remove(f.g); }); ART_CS.twins = null;
   const P = ART_POWERS.fly; toast(`${P.e} NEW POWER: ${P.n}! ${P.how()}`, 9);
   ARTM.lab.material.map = sprite('⚫⚪ (it\'s inside you now)', 1.8, '#888888', 46).material.map;
@@ -147,12 +146,11 @@ function stepArtCutscene(dt) {
   const dolly = Math.min(1, t / T.merge) * .9;
   rig.position.copy(C.cam).addScaledVector(C.fwd, dolly); state.vel.set(0, 0, 0); if (state.velBuf) state.velBuf.length = 0;
   if (!state.xr) { rig.rotation.y = Math.atan2(-(C.pin.x - rig.position.x + C.rt.x * .5), -(C.pin.z - rig.position.z + C.rt.z * .5)); camera.position.set(0, 1.25, 0); camera.rotation.set(-.2, 0, 0); }
-  artHideMe(true);   // you're watching from outside: no floating paws or body in the shot
   // the stand-in: SPAZZES, then stands there while the twins come out of it
   const A = C.actor, sp = t < T.spaz ? 1 : 0;
   if (A) {
     const P = V().copy(C.pin); if (sp) P.add(V((Math.random() - .5) * .12, Math.random() * .06, (Math.random() - .5) * .12));
-    artPoseTwin(A, P, C.yaw + Math.PI + (sp ? (Math.random() - .5) * 1.2 : 0), sp ? 3 : .4);
+    artPoseTwin(A, P, C.yaw + Math.PI + (sp ? (Math.random() - .5) * 1.2 : 0), sp ? 3 : .4, !sp);
     if (sp) A.head.rotateZ((Math.random() - .5) * .8);
   }
   if (t < T.spaz && !state.xr) camera.rotation.z = (Math.random() - .5) * .03;
