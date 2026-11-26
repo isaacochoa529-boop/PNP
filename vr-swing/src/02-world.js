@@ -79,9 +79,11 @@ const oakB = bigTree('oak', 14, -9, 1.45, 5);
 const oakC = bigTree('oak', -17, 12, 1.5, 8);
 const oakD = bigTree('oak', 11, 14, 1.35, 11);
 bigTree('birch', 4, -22, 1.4, 3); bigTree('birch', -24, -2, 1.3, 6); bigTree('birch', 22, 4, 1.3, 9);
+const HUNT_HOLE_A = -.95;   // where THE HUNT's red hole is in the cliff wall (99-hunt)
 { // ring of pines by the cliffs
   const pl = [];
   for (let i = 0; i < 26; i++) { const a = i / 26 * 6.283 + rnd() * .15, r = 26 + rnd() * 2.5; pl.push({ x: Math.cos(a) * r, y: -.1, z: Math.sin(a) * r, s: .9 + rnd() * .6, ry: rnd() * 6 }); }
+  for (let i = pl.length - 1; i >= 0; i--) { const d = Math.atan2(pl[i].z, pl[i].x) - HUNT_HOLE_A; if (Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) < .26) pl.splice(i, 1); }   // keep THE HUNT's red hole clear (99-hunt)
   TreeKit.scatter('pine', pl, { variants: 4 }).meshes.forEach(m => scene.add(m));
   pl.forEach(p => addCol({ t: 1, x: p.x, z: p.z, cy: 1.8 * p.s, hy: 1.8 * p.s, r: .32 * p.s, tag: 'wood' }));
 }

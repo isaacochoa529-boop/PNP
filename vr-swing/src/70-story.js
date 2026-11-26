@@ -173,6 +173,9 @@ function csRenderRT() {   // VR only: film the shot into the screen's texture (e
   csDraw(CS.vr.ov.getContext('2d'), 1024, 576); CS.vr.ot.needsUpdate = true;
 }
 function csRender() {   // called by the main loop instead of renderer.render
+  const hc = huCam();   // 🩸 THE HUNT map tour / Thumpling cutscene camera (99-hunt)
+  if (hc && !state.xr) { hc.aspect = innerWidth / innerHeight; hc.updateProjectionMatrix(); renderer.render(scene, hc); return; }
+  if (hc && HU.tour) { huRenderRT(); renderer.render(scene, camera); return; }
   if (CS.on && !state.xr) { CS.cam.aspect = innerWidth / innerHeight; CS.cam.updateProjectionMatrix(); renderer.render(scene, CS.cam);
     const c = CS.cv, d = Math.min(2, devicePixelRatio || 1); if (c.width !== Math.round(innerWidth * d)) { c.width = Math.round(innerWidth * d); c.height = Math.round(innerHeight * d); } csDraw(c.getContext('2d'), c.width, c.height); return; }
   if (CS.on) csRenderRT();

@@ -40,6 +40,7 @@ function respawn() {
   if (state.area === 'arena') return arenaRespawn();
   if (state.area === 'wilds') return wildRespawn();
   if (state.area === 'beach') return beachRespawn();
+  if (state.area === 'hunt') return huRespawn();
   rig.position.copy(SPAWN); rig.position.y += state.bodyH - eyeLocal(_e).y + .05;
   state.vel.set(0, 0, 0); state.velBuf.length = 0; state.wasStuck = false;
   hands.forEach(h => { h.stuck = false; h.ready = false; });
@@ -405,7 +406,7 @@ canvas.addEventListener('pointerdown', e => {
   dragging = true; lastX = e.clientX; lastY = e.clientY;
 });
 addEventListener('pointerup', () => { dragging = false; });
-document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && state.mode === 'play' && !state.xr && !dragging && !CS.on && !state.freeMouse && !BM.open) openMenu(); });   // U / Berry Menu free the mouse without pausing
+document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && state.mode === 'play' && !state.xr && !dragging && !CS.on && !huCam() && !state.freeMouse && !BM.open) openMenu(); });   // U / Berry Menu free the mouse without pausing
 
 function openMenu() { if (state.mode === 'play') state.savedPos = rig.position.clone(); state.mode = 'menu'; if ($('touch')) $('touch').hidden = true; state.joy.x = state.joy.y = 0; state.keys = {}; $('menu').hidden = false; $('hud').hidden = true; $('cross').hidden = true; hands.forEach(h => h.paw.visible = false); }
 function startDesktop() {
@@ -511,7 +512,7 @@ function update(dt) {
   if (state.mode === 'play') {
     swimCheck(dt);
     if (state.xr || sim.on) { pollGamepads(); if (!CS.on && !rcRiding()) stepArms(dt); } else if (!CS.on && !rcRiding()) stepDesktop(dt);
-    if (state.area === 'wilds' ? rig.position.y < -40 : state.area === 'beach' ? rig.position.y < -20 : state.area === 'arena' ? rig.position.y < -14 : (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45)) respawn();
+    if (state.area === 'hunt' ? rig.position.y < -10 : state.area === 'wilds' ? rig.position.y < -40 : state.area === 'beach' ? rig.position.y < -20 : state.area === 'arena' ? rig.position.y < -14 : (rig.position.y < -12 || Math.hypot(rig.position.x, rig.position.z) > 45)) respawn();
     stepProps(dt);
     stepArena(dt);
     poseAvatar(dt);
@@ -524,10 +525,10 @@ function update(dt) {
   animateWorld(dt, tAll); animPortals(dt, tAll); stepFx(dt);
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').style.opacity = 0; }
   if (vrToastT > 0) { vrToastT -= dt; if (vrToastT <= 0) vrToastMesh.visible = false; }
-  const focus = CS.on && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
+  const focus = (CS.on || huCam()) && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
   sun.position.set(focus.x + 12, focus.y + 24, focus.z + 8); sun.target.position.copy(focus);
   scene.userData.sky.position.copy(focus);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepBeach(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt); stepSwim(dt); stepModes(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepBeach(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt); stepSwim(dt); stepModes(dt); stepHunt(dt);
 
 }
 window.__kg.calibrate = () => calibrate();

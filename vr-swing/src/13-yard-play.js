@@ -160,6 +160,7 @@ function letGoHold(h) { if (h.hold) { if (h.hold.plat) h.hold.m.userData.fade = 
 function grabAny(h) {
   if (BR.phase === 'play' && brGrab(h)) return;
   if (hsGrab(h)) return;
+  if (huntGrab(h)) return;
   if (wildGrab(h)) return;
   if (partyGrab(h)) return;
   if (BM.stop && h.side === 'right') { bmStatue(true); return; }   // stop-motion: R grip freezes another you
@@ -180,6 +181,7 @@ function grabAny(h) {
 }
 function dropAny(h) {
   if (hsDrop(h)) return;
+  if (huntDrop(h)) return;
   if (artDrop(h)) return;
   if (plDrop(h)) return;
   if (rdDrop(h)) return;
@@ -206,6 +208,7 @@ function aimAt(maxD, test) {
 function aimButton() { return aimAt(2.6, f => buttons.forEach(b => f(b, b.top, .09))); }
 function deskInteract() {
   if (rdDesk()) return;
+  if (huntDesk()) return;
   if (compDesk()) return;
   if (brDesk()) return;
   if (wildDesk()) return;
