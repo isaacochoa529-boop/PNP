@@ -11,7 +11,7 @@ function bmSummon() {   // 7: call the dark figure right now (friends see it, ju
   HZ.rollT = 0; spawnFig(); toast('👤 ...it heard you.', 3);
   if (ac) tone('sawtooth', 80, 40, .6, .12);
 }
-function bmGrav() { return BM.nograv ? 0 : BM.grab ? .45 : 1; }
+function bmGrav() { return (BM.nograv ? 0 : BM.grab ? .45 : 1) * playGrav() * artGrav(); }
 function bmUnlock() {
   if (BM.unlocked) return; BM.unlocked = true; store.set('kg-bm', '1'); bmHudBtn();
   setTimeout(() => toast(state.xr ? '🫐 BERRY MENU unlocked! Press X to open it.' : '🫐 BERRY MENU unlocked! Press M (or tap 🫐) to open it.', 6), 2500);

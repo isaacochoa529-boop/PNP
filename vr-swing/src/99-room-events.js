@@ -367,7 +367,7 @@ function stepModes(dt) {
     for (const h of hands) { if (!h.tracked || !(state.xr || sim.on)) continue; const inside = h.pos.distanceTo(P.top) < .13; if (inside && !P.in[h.i]) { buzz(h, .7, 40); go(); } P.in[h.i] = inside; }
   }
   const showBtns = state.mode === 'play' && !state.xr ? 'block' : 'none'; $('mdTagBtn').style.display = showBtns; $('mdHideBtn').style.display = showBtns;
-  stepCards(dt); stepEvents(dt); stepTag(dt); stepHideSeek(dt);
+  stepCards(dt); stepEvents(dt); stepTag(dt); stepHideSeek(dt); stepPlayground(dt); stepArtifact(dt);
   if (!TG.on && HS.phase === 'off') { mdHud(null); $('mdRed').style.display = 'none'; mdFreeze(false); }
 }
 window.__kg.modes = { EV, TG, CARDS, evStartVote, evGo, evNet, evFinish, tgStartAsk, tgStart, tgNet, tgSendTag, cardsShow, cardsPick, mdHud, blind, modeSpeed };
