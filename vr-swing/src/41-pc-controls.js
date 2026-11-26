@@ -13,7 +13,7 @@ const _pcA = V(), _pcD = V(), _pcP = V(), _pcF = V();
 function pcPunchOff(i) { const a = PUNCH.anim[i]; return a > 0 ? Math.sin(a / .2 * Math.PI) * .32 : 0; }
 function pcPunch() {
   if (PUNCH.cd > 0 || state.mode !== 'play' || state.xr || BM.open) return;
-  if (hands.some(h => h.piece || h.cup || h.sword || h.holding || h.grabF) || BR.held[1] || HZ.phase === 'tpose') return;   // busy hands (or a weapon) don't punch
+  if (hands.some(h => h.piece || h.cup || h.sword || h.holding || h.grabF) || BR.held[1] || HZ.phase === 'tpose' || hsHasGun()) return;   // busy hands (or a weapon) don't punch
   if (state.area === 'arena' && aimButton()) return;                                   // that click is for a button
   PUNCH.cd = .3; PUNCH.side ^= 1; PUNCH.anim[PUNCH.side] = .2;
   headWorld(_pcA); camera.getWorldDirection(_pcD);

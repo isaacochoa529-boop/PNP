@@ -32,8 +32,10 @@ function ridge(x, z) { let s = 0, a = .5, f = 1; for (let k = 0; k < 4; k++) { s
 const RIV = z => 52 + 16 * Math.sin(z / 38) + 6 * Math.sin(z / 17 + 1);
 const LAKE = { x: 10, z: 195, rx: 85, rz: 62 }, OASIS = { x: 185, z: 150 }, TOWN = { x: -165, z: 160 }, CAVE = { x: -72, z: -112 },
   W_ELDER = { x: -205, z: -35 }, PYR = { x: 215, z: 25 }, PEAK = { x: 30, z: -235 }, SKY = { x: 112, z: -78 }, TOWER = { x: -16, z: -12 }, ISLE = { x: 22, z: 200 };
+// hide-and-seek buildings (99-hide-seek): a 3-story mall in the plains, a 2-story cabin hotel in the snow, a 3-story pyramid in the desert
+const MALL = { x: -62, z: 74, r0: 34, r1: 50 }, CABIN = { x: -48, z: -176, r0: 22, r1: 36 }, TOMB = { x: 196, z: -52, r0: 27, r1: 40 };
 const wPad = (h, x, z, P, r0, r1, y) => wmix(y, h, sst(r0, r1, Math.hypot(x - P.x, z - P.z)));
-function wildH(x, z) {
+function wildH0(x, z) {
   const r = Math.hypot(x, z);
   let h = (fbm(x * .011, z * .011) * 7 + fbm(x * .05, z * .05, 2) * 1.2) * sst(28, 75, r);   // flat Plaza in the middle
   const north = sst(-95, -210, z);
@@ -54,6 +56,9 @@ function wildH(x, z) {
   h += sst(238, 300, r) * (52 + fbm(x * .02 + 2, z * .02, 3) * 24 + ridge(x * .03, z * .03) * 18);
   return h;
 }
+// flat pads for the hide-and-seek buildings (each one sits at the height its middle had)
+[MALL, CABIN, TOMB].forEach(P => { P.y = wildH0(P.x, P.z); });
+function wildH(x, z) { let h = wildH0(x, z); for (const P of [MALL, CABIN, TOMB]) { const d = Math.hypot(x - P.x, z - P.z); if (d < P.r1) h = wmix(P.y, h, sst(P.r0, P.r1, d)); } return h; }
 /* the height grid: the mesh and the collider both read it, so you stand exactly on what you see */
 const HG = new Float32Array((WN + 1) * (WN + 1));
 for (let j = 0; j <= WN; j++) for (let i = 0; i <= WN; i++) HG[j * (WN + 1) + i] = wildH(-WS + i * WCELL, -WS + j * WCELL);
@@ -164,6 +169,7 @@ const gy = (x, z) => wildAt(x, z);
 const groundMax = (x, z, r) => Math.max(gy(x, z), gy(x + r, z), gy(x - r, z), gy(x, z + r), gy(x, z - r));
 const noTree = [];   // wKeep-out circles for trees and rocks
 const wKeep = (x, z, r) => noTree.push({ x, z, r });
+[MALL, CABIN, TOMB].forEach(P => wKeep(P.x, P.z, P.r0 + 4));
 
 /* ---------- the Plaza ---------- */
 {
@@ -251,7 +257,7 @@ const IDOL = (() => {
   // cacti
   const cg = mat(0x4f9a46), R = seeded(77), cacti = new THREE.Group(); WG.add(cacti);
   for (let i = 0; i < 26; i++) {
-    const x = 150 + R() * 130, z = -70 + R() * 200; if (Math.hypot(x - PYR.x, z - PYR.z) < 26 || Math.hypot(x - OASIS.x, z - OASIS.z) < 20 || Math.hypot(x, z) > 270) continue;
+    const x = 150 + R() * 130, z = -70 + R() * 200; if (Math.hypot(x - PYR.x, z - PYR.z) < 26 || Math.hypot(x - TOMB.x, z - TOMB.z) < TOMB.r0 + 4 || Math.hypot(x - OASIS.x, z - OASIS.z) < 20 || Math.hypot(x, z) > 270) continue;
     const y = gy(x, z), h = 1.6 + R() * 2; if (y < WL + .4) continue;
     const c = new THREE.Group(); c.position.set(x, y, z); cacti.add(c);
     part(new THREE.CylinderGeometry(.28, .32, h, 8), cg, 0, h / 2, 0, c); part(new THREE.SphereGeometry(.28, 8, 6), cg, 0, h, 0, c);
@@ -431,7 +437,7 @@ const BOTTLE = (() => {
   // rocks
   for (let k = 0; k < 140; k++) { const x = (R() - .5) * 560, z = (R() - .5) * 560; if (Math.hypot(x, z) < 290 && !noTree.some(q => Math.hypot(x - q.x, z - q.z) < q.r)) rocks.push([x, z]); }
   const rg = rockGeo(1, 3), rt = new Map(), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
-  rocks.forEach(([x, z], k) => { const h = wildAt(x, z); if (h < WL - .3) return; const s = .5 + R() * 1.6, key = Math.floor((x + WS) / 160) * 4 + Math.floor((z + WS) / 160);
+  rocks.forEach(([x, z], k) => { const h = wildAt(x, z); if (h < WL - .3 || [MALL, CABIN, TOMB].some(P => Math.hypot(x - P.x, z - P.z) < P.r0 + 3)) return; const s = .5 + R() * 1.6, key = Math.floor((x + WS) / 160) * 4 + Math.floor((z + WS) / 160);
     (rt.get(key) || rt.set(key, []).get(key)).push(m4.compose(V(x, h + s * .2, z), q.setFromEuler(e.set(0, R() * 6, 0)), V(s, s * .75, s)).clone());
     wprop({ t: 2, c: V(WILD.x + x, WILD.y + h + s * .2, WILD.z + z), r: s * .8, tag: 'rock' }); });
   for (const list of rt.values()) { const im = new THREE.InstancedMesh(rg, vcMat, list.length); list.forEach((mm, i) => im.setMatrixAt(i, mm)); im.castShadow = im.receiveShadow = true; im.computeBoundingSphere(); WG.add(im); }
@@ -440,7 +446,7 @@ const BOTTLE = (() => {
   const tg = new THREE.ConeGeometry(.08, .4, 4); tg.translate(0, .18, 0);
   const tufts = new THREE.InstancedMesh(tg, mat(0x3f9b3c), 1600); let ti = 0;
   for (let k = 0; k < 4000 && ti < 1600; k++) { const a = R() * 6.283, r = 12 + Math.sqrt(R()) * 110, x = Math.cos(a) * r, z = Math.sin(a) * r, h = wildAt(x, z);
-    if (h < WL + .6 || sst(105, 165, x) > .3) continue; const s = .6 + R() * .9; tufts.setMatrixAt(ti++, m4.compose(V(x, h, z), q.setFromEuler(e.set((R() - .5) * .5, R() * 3, (R() - .5) * .5)), V(s, s, s))); }
+    if (h < WL + .6 || sst(105, 165, x) > .3 || Math.hypot(x - MALL.x, z - MALL.z) < MALL.r0) continue; const s = .6 + R() * .9; tufts.setMatrixAt(ti++, m4.compose(V(x, h, z), q.setFromEuler(e.set((R() - .5) * .5, R() * 3, (R() - .5) * .5)), V(s, s, s))); }
   tufts.count = ti; tufts.computeBoundingSphere(); WG.add(tufts);
 }
 

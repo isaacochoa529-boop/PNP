@@ -106,6 +106,7 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
     <h2>🎮 Play with friends</h2>
     <label class="row">Your name: <input id="mpName" maxlength="12" autocomplete="off"></label>
     <div class="two" id="mpStart"><button id="btnHost">🏠 Make a room</button><button class="alt" id="btnJoin">🔢 Join a room</button></div>
+    <div class="two" id="mpModes" hidden><button id="btnRand">🎲 Random Events</button><button class="alt" id="btnReg">🙂 Regular</button></div>
     <div id="mpPad" hidden><div class="code" id="mpCode">_ _ _ _</div><div class="keys" id="mpKeys"></div></div>
     <div id="mpIn" hidden><div class="info" id="mpInfo"></div><button class="alt" id="btnMute" style="width:100%;margin-top:8px">🎤 Turn on mic</button><button class="alt" id="btnLeave" style="width:100%;margin-top:8px">👋 Leave room</button></div>
     <div class="note" id="mpNote">Make a room, then tell friends the 4 numbers. Then press Enter VR!</div>
@@ -153,7 +154,7 @@ button:disabled { background: #6a8f7c; box-shadow: none; color: #234; cursor: de
 <script type="module">
 // The game's code lives in src/ as small files by feature (see README.md). They are joined back together
 // here and run as ONE module, exactly like before, so every part still sees every other part.
-const PARTS = ['00-treekit.js', '01-core.js', '02-world.js', '03-player.js', '04-loop.js', '10-yard.js', '11-cubes.js', '12-glass.js', '13-yard-play.js', '20-horror.js', '21-extras.js', '30-multiplayer.js', '31-computer.js', '32-shared-world.js', '33-phones.js', '34-voice.js', '40-berry-menu.js', '41-pc-controls.js', '50-water.js', '60-royale.js', '70-story.js', '80-wilds.js', '85-party.js', '86-photo-booth.js', '87-plush.js', '87-coaster.js', '88-party-perf.js', '89-beach.js', '90-ragdolls.js', '91-cheese-saw.js', '95-claude-avatar.js', '96-spawn.js', '97-swim.js'];
+const PARTS = ['00-treekit.js', '01-core.js', '02-world.js', '03-player.js', '04-loop.js', '10-yard.js', '11-cubes.js', '12-glass.js', '13-yard-play.js', '20-horror.js', '21-extras.js', '30-multiplayer.js', '31-computer.js', '32-shared-world.js', '33-phones.js', '34-voice.js', '40-berry-menu.js', '41-pc-controls.js', '50-water.js', '60-royale.js', '70-story.js', '80-wilds.js', '85-party.js', '86-photo-booth.js', '87-plush.js', '87-coaster.js', '88-party-perf.js', '89-beach.js', '90-ragdolls.js', '91-cheese-saw.js', '95-claude-avatar.js', '96-spawn.js', '97-swim.js', '98-hs-buildings.js', '99-room-events.js', '99-hide-seek.js'];
 try {
   const txt = await Promise.all(PARTS.map(n => fetch('src/' + n, { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error(n + ' ' + r.status); return r.text(); })));
   await import(URL.createObjectURL(new Blob([txt.join('') + '\n//# sourceURL=knuckle-grove.js'], { type: 'text/javascript' })));

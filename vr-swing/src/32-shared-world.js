@@ -120,6 +120,9 @@ function netGot(d) {
   else if (d.t === 'bm') bmNet(d);
   else if (d.t === 'wat') watNet(d);
   else if (d.t === 'br') brNet(d);
+  else if (d.t === 'ev') evNet(d);
+  else if (d.t === 'tg') tgNet(d);
+  else if (d.t === 'hs') hsNet(d);
 }
 function quietIfAway(f) { const keep = ac; if (state.area !== 'arena') ac = null; try { return f(); } finally { ac = keep; } }
 function packCut(c) {

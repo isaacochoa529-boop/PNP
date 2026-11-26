@@ -573,7 +573,7 @@ function rdUi() {
 
 /* ---------------- VR stick clicks ---------------- */
 function rdSticks(dt) {
-  const s = renderer.xr.getSession && renderer.xr.getSession(); if (!s) return;
+  const s = renderer.xr.getSession && renderer.xr.getSession(); if (!s || HS.phase !== 'off') return;
   for (const src of s.inputSources) {
     const gp = src.gamepad; if (!gp || !gp.buttons[3]) continue; const i = src.handedness === 'left' ? 0 : 1, on = gp.buttons[3].pressed;
     if (i === 0 && on && !RD.stickPrev[0]) rdSpawn();

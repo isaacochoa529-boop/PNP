@@ -69,13 +69,26 @@ const colliders = [];
 function addCol(c) {
   if (c.t === 0) { const e = Math.hypot(c.hx, c.hz); Object.assign(c, { minx: c.x - e, maxx: c.x + e, minz: c.z - e, maxz: c.z + e, miny: c.y - c.hy, maxy: c.y + c.hy, cs: Math.cos(c.yaw || 0), sn: Math.sin(c.yaw || 0) }); }
   else if (c.t === 1) Object.assign(c, { minx: c.x - c.r, maxx: c.x + c.r, minz: c.z - c.r, maxz: c.z + c.r, miny: c.cy - c.hy, maxy: c.cy + c.hy });
+  else if (c.t === 5) {   // a box tilted any way (ramps, stairs, roofs): c.q = its rotation
+    c.iq = c.q.clone().invert(); let a = [1e9, -1e9, 1e9, -1e9, 1e9, -1e9]; const v = V();
+    for (let k = 0; k < 8; k++) { v.set(k & 1 ? c.hx : -c.hx, k & 2 ? c.hy : -c.hy, k & 4 ? c.hz : -c.hz).applyQuaternion(c.q); a = [Math.min(a[0], c.x + v.x), Math.max(a[1], c.x + v.x), Math.min(a[2], c.y + v.y), Math.max(a[3], c.y + v.y), Math.min(a[4], c.z + v.z), Math.max(a[5], c.z + v.z)]; }
+    Object.assign(c, { minx: a[0], maxx: a[1], miny: a[2], maxy: a[3], minz: a[4], maxz: a[5] });
+  }
   else if (c.t !== 3 && c.t !== 4) Object.assign(c, { minx: c.c.x - c.r, maxx: c.c.x + c.r, miny: c.c.y - c.r, maxy: c.c.y + c.r, minz: c.c.z - c.r, maxz: c.c.z + c.r });
   colliders.push(c); return c;
 }
+const _t5 = V();
 // signed distance from p to the collider surface; writes the outward normal into n
 function sdf(c, p, n) {
   if (c.t === 3) return paneSdf(c.pane, p, n);   // glass
   if (c.t === 4) return c.sdf(p, n);             // a whole landscape (the Wilds): it remembers what it hit in c.last
+  if (c.t === 5) {
+    _t5.set(p.x - c.x, p.y - c.y, p.z - c.z).applyQuaternion(c.iq);
+    const qx = Math.abs(_t5.x) - c.hx, qy = Math.abs(_t5.y) - c.hy, qz = Math.abs(_t5.z) - c.hz; let d;
+    if (qx <= 0 && qy <= 0 && qz <= 0) { n.set(0, 0, 0); if (qx > qy && qx > qz) { d = qx; n.x = Math.sign(_t5.x) || 1; } else if (qy > qz) { d = qy; n.y = Math.sign(_t5.y) || 1; } else { d = qz; n.z = Math.sign(_t5.z) || 1; } }
+    else { const ox = Math.max(qx, 0), oy = Math.max(qy, 0), oz = Math.max(qz, 0); d = Math.hypot(ox, oy, oz); n.set(Math.sign(_t5.x) * ox / d, Math.sign(_t5.y) * oy / d, Math.sign(_t5.z) * oz / d); }
+    n.applyQuaternion(c.q); return d;
+  }
   if (c.t === 0) {
     const wx = p.x - c.x, wz = p.z - c.z;
     const lx = c.cs * wx - c.sn * wz, lz = c.sn * wx + c.cs * wz, ly = p.y - c.y;

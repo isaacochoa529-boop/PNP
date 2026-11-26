@@ -91,12 +91,18 @@ function compDraw() {
     btn(g, 12 + i * 202, 12, 192, 84, l, CP.page === k ? '#ffd25a' : '#2fc6a3', () => { CP.page = k; if (k === 'name') CP.nameT = MP.name || store.get('kg-name') || ''; compDraw(); }, 32));
   const st = MP.status;
   if (CP.page === 'join') {
-    if (st === 'off') {
+    if (st === 'off' && CP.pickMode) {
+      txt(g, 'What kind of room?', 512, 150, 50, '#ffd25a');
+      btn(g, 90, 220, 410, 150, '🎲 Random Events', '#8b6bff', () => { CP.pickMode = false; mpHost('rand'); }, 40);
+      btn(g, 524, 220, 410, 150, '🙂 Regular', '#2fc6a3', () => { CP.pickMode = false; mpHost('reg'); }, 40);
+      txt(g, 'Random Events = a vote for a new game every 5 minutes!', 512, 420, 30, '#bfe9dc');
+      btn(g, 362, 460, 300, 80, '⬅️ Back', '#6a8f7c', () => { CP.pickMode = false; compDraw(); });
+    } else if (st === 'off') {
       txt(g, 'Type a room code on the keyboard:', 512, 145, 40);
       g.fillStyle = 'rgba(255,255,255,.1)'; g.beginPath(); g.roundRect(312, 180, 400, 110, 20); g.fill();
       txt(g, (CP.code + '____').slice(0, 4).split('').join(' '), 512, 238, 84, '#ffd25a');
       btn(g, 120, 330, 360, 100, '✅ Join room', CP.code.length === 4 ? '#36e06a' : '#6a8f7c', () => compJoin());
-      btn(g, 544, 330, 360, 100, '🏠 Make a room', '#ffd25a', () => { mpHost(); });
+      btn(g, 544, 330, 360, 100, '🏠 Make a room', '#ffd25a', () => { CP.pickMode = true; compDraw(); });
       txt(g, MP.note || 'Make a room, then tell friends the 4 numbers!', 512, 500, 32, '#bfe9dc');
     } else {
       txt(g, st === 'host' ? `🏠 Your room: ${MP.code}` : `🎉 In room ${MP.code}`, 512, 150, 62, '#ffd25a');

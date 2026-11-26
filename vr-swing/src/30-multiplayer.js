@@ -22,27 +22,27 @@ function mpName() { const el = $('mpName'); let n = (el && el.value || '').trim(
 function mpLeave(quiet) {
   voiceStop();
   try { if (MP.peer) MP.peer.destroy(); } catch (e) {}
-  MP.peer = null; MP.hostConn = null; MP.conns.clear(); MP.host = false; MP.code = ''; MP.status = 'off';
+  MP.peer = null; MP.hostConn = null; MP.conns.clear(); MP.host = false; MP.code = ''; MP.status = 'off'; MP.mode = 'reg';
   for (const id of [...MP.others.keys()]) dropOther(id);
   MP.me = null; reassertAll();
   if (!quiet) mpNote('');
   mpUi();
 }
-async function mpHost() {
-  mpLeave(true); MP.name = mpName(); mpNote('⏳ Making a room…'); micOn();
+async function mpHost(mode) {
+  mpLeave(true); MP.mode = mode === 'rand' ? 'rand' : 'reg'; MP.modesOpen = false; MP.name = mpName(); mpNote('⏳ Making a room…'); micOn();
   let Peer; try { Peer = await loadPeerJS(); } catch (e) { mpNote('😕 Could not reach the internet. You can still play alone!'); return; }
   const tryCode = (left) => {
     const code = String(Math.floor(1000 + Math.random() * 9000)), peer = new Peer(MP_PREFIX + code);
     peer.on('open', () => {
       MP.peer = peer; MP.host = true; MP.code = code; MP.status = 'host'; MP.myColor = MP_COLORS[0]; MP.me = 'host';
-      mpNote(`🏠 Your room code is ${code}. Tell your friends!`); mpUi(); toast(`🏠 Room ${code} is open! Friends type ${code} to join.`, 6);
+      mpNote(`🏠 Your room code is ${code}. Tell your friends!`); mpUi(); toast(`🏠 Room ${code} is open! Friends type ${code} to join.${MP.mode === 'rand' ? ' 🎲 Random Events: first vote in 30 seconds!' : ''}`, 7); EV.next = 30;
     });
     peer.on('call', voiceAnswer);
     peer.on('connection', conn => {
       conn.on('open', () => {
         if (MP.conns.size >= MP_MAX - 1) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
         const used = new Set([MP.myColor, ...[...MP.conns.values()].map(c => c.color)]), color = MP_COLORS.find(c => !used.has(c));
-        conn.color = color; MP.conns.set(conn.peer, conn); conn.send({ t: 'hi', c: color, code }); sendSnap(conn);
+        conn.color = color; MP.conns.set(conn.peer, conn); conn.send({ t: 'hi', c: color, code, ev: MP.mode }); sendSnap(conn);
         mpUi();
       });
       conn.on('data', d => { if (!d || !MP.conns.has(conn.peer)) return; if (d.t === 's') d.id = conn.peer; else d.from = conn.peer;
@@ -67,7 +67,7 @@ async function mpJoin(code) {
     conn.on('open', () => { MP.hostConn = conn; });
     conn.on('data', d => {
       if (!d) return;
-      if (d.t === 'hi') { clearTimeout(timer); MP.status = 'joined'; MP.code = code; MP.myColor = d.c; MP.me = peer.id; reassertAll(); applyMyColors(); mpNote(`🎉 You're in room ${code}!`); mpUi(); toast(`🎉 Joined room ${code}!`, 4); }
+      if (d.t === 'hi') { clearTimeout(timer); MP.mode = d.ev === 'rand' ? 'rand' : 'reg'; MP.status = 'joined'; MP.code = code; MP.myColor = d.c; MP.me = peer.id; reassertAll(); applyMyColors(); mpNote(`🎉 You're in room ${code}!`); mpUi(); toast(`🎉 Joined room ${code}!`, 4); }
       else if (d.t === 'full') { clearTimeout(timer); fail('😕 That room is full (4 players max).'); }
       else if (d.t === 's') gotState(d);
       else if (d.t === 'bye') byeOther(d.id);
@@ -204,8 +204,8 @@ function stepFriends(dt) {
 /* ---------- the menu: a name box and a big number pad (no keyboard needed) ---------- */
 function mpUi() {
   const st = MP.status, n = MP.others.size;
-  $('mpStart').hidden = st !== 'off'; $('mpPad').hidden = !(st === 'off' && MP.padOpen); $('mpIn').hidden = st === 'off';
-  if (st !== 'off') $('mpInfo').textContent = st === 'host' ? `🏠 Room ${MP.code} · ${MP.conns.size + 1}/4 players` : `🎉 In room ${MP.code} · ${n + 1} players`;
+  $('mpStart').hidden = st !== 'off'; if ($('mpModes')) $('mpModes').hidden = !(st === 'off' && MP.modesOpen); $('mpPad').hidden = !(st === 'off' && MP.padOpen); $('mpIn').hidden = st === 'off';
+  if (st !== 'off') $('mpInfo').textContent = st === 'host' ? `🏠 Room ${MP.code} · ${MP.conns.size + 1}/4 players` : `🎉 In room ${MP.code} · ${n + 1} players`; if (st !== 'off') $('mpInfo').textContent += MP.mode === 'rand' ? ' · 🎲 Random Events' : ' · 🙂 Regular';
   $('mpCode').textContent = (MP.typed + '____').slice(0, 4).split('').join(' ');
   compDraw();
 }
@@ -213,7 +213,8 @@ function mpUi() {
   const nm = $('mpName'); nm.value = store.get('kg-name') || ''; nm.placeholder = MP_NAMES[Math.floor(Math.random() * MP_NAMES.length)];
   nm.addEventListener('keydown', e => e.stopPropagation());
   nm.addEventListener('change', () => { setMyName(nm.value); compDraw(); });
-  $('btnHost').onclick = () => mpHost();
+  $('btnHost').onclick = () => { MP.modesOpen = !MP.modesOpen; MP.padOpen = false; mpUi(); };
+  $('btnRand').onclick = () => mpHost('rand'); $('btnReg').onclick = () => mpHost('reg');
   $('btnJoin').onclick = () => { MP.padOpen = !MP.padOpen; MP.typed = ''; mpUi(); };
   $('btnLeave').onclick = () => { mpLeave(); toast('👋 Left the room.', 2); };
   const pad = $('mpKeys');
