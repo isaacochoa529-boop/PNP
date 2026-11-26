@@ -68,7 +68,7 @@ function launch() {
   avg.multiplyScalar(LAUNCH_MUL / w);
   if (avg.length() > MAX_LAUNCH) avg.setLength(MAX_LAUNCH);
   if (avg.length() < .25) avg.multiplyScalar(.3);     // only a really slow let-go turns into a gentle drop
-  state.vel.copy(avg).multiplyScalar(brJump());
+  state.vel.copy(avg).multiplyScalar(brJump() * modeSpeed());
 }
 
 /* ---------- body collision: feet, middle and head spheres ---------- */
@@ -245,7 +245,7 @@ function stepDesktop(dt) {
   const k = state.keys, J = state.joy, jm = Math.hypot(J.x, J.y);
   let f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0), s = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
   if (jm > .12) { f = -J.y; s = J.x; }   // phone stick: push it all the way to run
-  const sp = k.ShiftLeft || k.ShiftRight || jm > .92 ? 7.5 : jm > .12 ? 4.5 * Math.min(1, jm * 1.3) : 4.5;
+  const sp = (k.ShiftLeft || k.ShiftRight || jm > .92 ? 7.5 : jm > .12 ? 4.5 * Math.min(1, jm * 1.3) : 4.5) * modeSpeed();
   const fx = -Math.sin(state.yaw), fz = -Math.cos(state.yaw), rx = Math.cos(state.yaw), rz = -Math.sin(state.yaw);
   let wx = fx * f + rx * s, wz = fz * f + rz * s; const L = Math.hypot(wx, wz); if (L > 0) { wx /= L; wz /= L; }
   const acc = state.grounded ? (onPuddle() ? 1.1 : 14) : 3.5, v = state.vel;
@@ -526,7 +526,7 @@ function update(dt) {
   const focus = CS.on && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
   sun.position.set(focus.x + 12, focus.y + 24, focus.z + 8); sun.target.position.copy(focus);
   scene.userData.sky.position.copy(focus);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepBeach(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt); stepSwim(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepBeach(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt); stepSwim(dt); stepModes(dt);
 
 }
 window.__kg.calibrate = () => calibrate();
