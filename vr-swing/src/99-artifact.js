@@ -26,9 +26,9 @@ const ARTM = (() => {
   const ring = new THREE.Group(); relic.add(ring);
   for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2, b = new THREE.Mesh(new THREE.SphereGeometry(.022, 10, 8), i % 2 ? wht : blk); b.position.set(Math.cos(a) * .17, 0, Math.sin(a) * .17); ring.add(b); }
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xffffff, transparent: true, opacity: .25, blending: THREE.AdditiveBlending, depthWrite: false })); halo.scale.setScalar(.6); relic.add(halo);
-  const lab = sprite('⚫⚪ THE ARTIFACT', 1.8, '#ffffff', 54); lab.position.y = 1.75; g.add(lab);
+  const lab = sprite('⚫⚪ THE ARTIFACT', 1.8, '#ffffff', 54); lab.position.y = 1.75; g.add(lab); const labMap0 = lab.material.map;
   if (ART.state === 'absorbed') { relic.visible = false; lab.material.map = sprite('⚫⚪ (it\'s inside you now)', 1.8, '#888888', 46).material.map; }
-  return { g, relic, ring, halo, lab, top: V().copy(ART_AT).add(ARENA).setY(.86) };
+  return { g, relic, ring, halo, lab, labMap0, top: V().copy(ART_AT).add(ARENA).setY(.86) };
 })();
 function hasPower(p) { return ART.powers.has(p); }
 function artGrav() { if (!hasPower('fly')) return 1; if (ART.fly) return 0; return ART.flyT > 0 && !state.grounded ? .15 : 1; }
@@ -100,13 +100,18 @@ function artSongPlay() {
 }
 function artCutscene() {
   Object.assign(ART_CS, { on: true, t: 0, pin: rig.position.clone(), yaw: state.xr ? Math.atan2(-camera.getWorldDirection(_ar1).x, -_ar1.z) : state.yaw });
+  // 🎥 THIRD PERSON: a stand-in of you stays where you were, and your view steps back so you watch it happen
+  const fur = myFur(), paw = myPawCol(); ART_CS.actor = makeFriend(fur < 0 ? 0xffffff : fur, paw < 0 ? 0xffffff : paw, ''); ART_CS.actor.label.visible = false;
+  const fwd = V(-Math.sin(ART_CS.yaw), 0, -Math.cos(ART_CS.yaw)), rt = V(Math.cos(ART_CS.yaw), 0, -Math.sin(ART_CS.yaw));
+  ART_CS.cam = V().copy(ART_CS.pin).addScaledVector(fwd, -3.6).addScaledVector(rt, .5); ART_CS.fwd = fwd; ART_CS.rt = rt;
+  ART_CS.avVis = AV.root.visible; AV.root.visible = false;
   if (!state.xr) ART_CS.bars.style.display = 'block', requestAnimationFrame(() => ART_CS.bars.classList.add('on'));
   artCap('Something is happening to you...');
   hands.forEach(h => buzz(h, 1, 900)); ART_CS.song = artSongPlay();
   if (!ART_CS.song && ac) { tone('sawtooth', 50, 120, 1.1, .18); noiseHit(ac.currentTime, 1.1, .12, 'bandpass', 2000, .6); }
 }
 function artEndCutscene() {
-  ART_CS.on = false; ART_CS.bars.classList.remove('on'); setTimeout(() => { ART_CS.bars.style.display = 'none'; }, 500); artCap('');
+  ART_CS.on = false; rig.position.copy(ART_CS.pin); AV.root.visible = ART_CS.avVis !== false; if (ART_CS.actor) { scene.remove(ART_CS.actor.g); ART_CS.actor = null; } ART_CS.bars.classList.remove('on'); setTimeout(() => { ART_CS.bars.style.display = 'none'; }, 500); artCap('');
   (ART_CS.twins || []).forEach(f => { scene.remove(f.g); }); ART_CS.twins = null;
   const P = ART_POWERS.fly; toast(`${P.e} NEW POWER: ${P.n}! ${P.how()}`, 9);
   ARTM.lab.material.map = sprite('⚫⚪ (it\'s inside you now)', 1.8, '#888888', 46).material.map;
@@ -114,13 +119,22 @@ function artEndCutscene() {
 function stepArtCutscene(dt) {
   if (!ART_CS.on) return;
   const C = ART_CS, t0 = C.t; C.t = C.song && ac && ac.state === 'running' ? Math.max(t0, ac.currentTime - ART_SONG.t0) : t0 + dt; const t = C.t, T = ART_T;   // stays in sync with the song
-  rig.position.copy(C.pin); state.vel.set(0, 0, 0); if (state.velBuf) state.velBuf.length = 0;
-  // 0-1.1 s: you SPAZ (screen shake on PC, rumble in VR)
-  if (t < T.spaz && !state.xr) { camera.rotation.x = state.pitch + (Math.random() - .5) * .08; camera.rotation.z = (Math.random() - .5) * .1; }
+  // the camera (you) slowly drifts in toward the stand-in
+  const dolly = Math.min(1, t / T.merge) * .9;
+  rig.position.copy(C.cam).addScaledVector(C.fwd, dolly); state.vel.set(0, 0, 0); if (state.velBuf) state.velBuf.length = 0;
+  if (!state.xr) { rig.rotation.y = Math.atan2(-(C.pin.x - rig.position.x + C.rt.x * .5), -(C.pin.z - rig.position.z + C.rt.z * .5)); camera.position.set(0, 1.25, 0); camera.rotation.set(-.2, 0, 0); hands.forEach(h => { h.paw.visible = false; }); }
+  // the stand-in: SPAZZES, then stands there while the twins come out of it
+  const A = C.actor, sp = t < T.spaz ? 1 : 0;
+  if (A) {
+    const P = V().copy(C.pin); if (sp) P.add(V((Math.random() - .5) * .12, Math.random() * .06, (Math.random() - .5) * .12));
+    artPoseTwin(A, P, C.yaw + Math.PI + (sp ? (Math.random() - .5) * 1.2 : 0), sp ? 3 : .4);
+    if (sp) A.head.rotateZ((Math.random() - .5) * .8);
+  }
+  if (t < T.spaz && !state.xr) camera.rotation.z = (Math.random() - .5) * .03;
   if (t < T.spaz && Math.random() < dt * 20) hands.forEach(h => buzz(h, Math.random(), 50));
   if (t0 < T.spaz && t >= T.spaz) {   // the twins burst out
     C.twins = [artTwin(true), artTwin(false)]; artCap('Two of you...?!');
-    confetti(headWorld(_ar1).clone(), 120, [0x000000, 0xffffff]); if (ac && !C.song) { tone('sine', 300, 1400, .4, .12); tone('square', 200, 60, .4, .1); }
+    confetti(V().copy(C.pin).setY(C.pin.y + (state.bodyH || .85)), 120, [0x000000, 0xffffff]); if (ac && !C.song) { tone('sine', 300, 1400, .4, .12); tone('square', 200, 60, .4, .1); }
     if (!state.xr) camera.rotation.z = 0;
   }
   if (C.twins) {
@@ -128,16 +142,16 @@ function stepArtCutscene(dt) {
     // slide out to the sides (in front of you so you can see them), hold, then rush back in
     const out = t < T.out ? (t - T.spaz) / (T.out - T.spaz) : t < T.back ? 1 : Math.max(0, 1 - (t - T.back) / (T.merge - T.back)), e = out * out * (3 - 2 * out);
     C.twins.forEach((f, i) => {
-      const P = V().copy(rig.position).addScaledVector(rt, (i ? 1 : -1) * 1.3 * e).addScaledVector(fwd, 2.2 * e);
-      artPoseTwin(f, P, C.yaw + Math.PI + (i ? -.5 : .5) * e, e);   // they face you
+      const P = V().copy(C.pin).addScaledVector(rt, (i ? 1 : -1) * 1.2 * e).addScaledVector(fwd, -.5 * e);
+      artPoseTwin(f, P, C.yaw + Math.PI + (i ? .4 : -.4) * e, e);   // side by side with you, facing the camera
     });
     if (t >= 3.6 && t0 < 3.6) artCap('White... and black...');
   }
   if (t0 < T.merge && t >= T.merge) {   // MERGE: blinding flash
     (C.twins || []).forEach(f => scene.remove(f.g)); C.twins = null;
     if (!C.song) sfxChoir(); if (ac && !C.song) { tone('sawtooth', 60, 30, 1.2, .2); tone('sine', 1200, 2400, 1, .08, .1); noiseHit(ac.currentTime, .6, .25, 'highpass', 3000, .5); }
-    hands.forEach(h => buzz(h, 1, 500)); confetti(headWorld(_ar1).clone(), 200, [0x000000, 0xffffff, 0x888888]);
-    artFlash(); artStaticOn(); brBig('⚫⚪ THE ARTIFACT IS PART OF YOU', 3);
+    hands.forEach(h => buzz(h, 1, 500)); confetti(V().copy(C.pin).setY(C.pin.y + (state.bodyH || .85)), 200, [0x000000, 0xffffff, 0x888888]);
+    artFlash(); artStaticOn(); if (A) A.g.traverse(o => { if (o.isMesh && o.material && o.material.color && (o.material === A.fur || A.paws.some(p => p.userData.fur === o.material))) { o.material.map = ART_ST.tex; o.material.color.set(0xffffff); o.material.needsUpdate = true; } }); brBig('⚫⚪ THE ARTIFACT IS PART OF YOU', 3);
     setTimeout(() => { if ($('brBig').textContent.includes('ARTIFACT')) brBig(''); }, 3200);
   }
   if (t > T.end) artEndCutscene();
@@ -157,6 +171,23 @@ function artStaticOn() {
   ART_ST.on = true; artStaticDraw();
   if (AV.ready) [AV.bodyFur, AV.armFur, AV.pawFur].forEach(m => { if (!m) return; m.map = ART_ST.tex; m.color.set(0xffffff); m.needsUpdate = true; });
 }
+function artStaticOff() {
+  ART_ST.on = false;
+  if (AV.ready) [AV.bodyFur, AV.armFur, AV.pawFur].forEach(m => { if (!m) return; m.map = null; m.needsUpdate = true; });
+  applyMyColors();
+}
+// 🔄 GIVE IT BACK: the powers leave you, the static fades, and the Artifact flies back into its altar (so you can pull it again and replay the cutscene)
+function artRemove() {
+  if (ART.state !== 'absorbed' || ART_CS.on) { toast('⚫⚪ The Artifact is still in the altar. Pull it out first!', 3); return; }
+  ART.powers.clear(); ART.fly = false; ART.flyT = 0; ART.state = 'stuck'; ART.k = 0; store.set('kg-art', '0');
+  if (ART_SONG.src) { try { ART_SONG.src.stop(); } catch (e) { } ART_SONG.src = null; }
+  artStaticOff(); ARTM.relic.visible = true; ARTM.relic.position.set(0, .86, 0); ARTM.lab.material.map = ARTM.labMap0;
+  headWorld(_ar1); confetti(_ar1.clone(), 90, [0x000000, 0xffffff]); confetti(ARTM.top.clone(), 90, [0x000000, 0xffffff]);
+  if (ac) { tone('sine', 1400, 200, .7, .12); noiseHit(ac.currentTime, .5, .1, 'lowpass', 800, .6); }
+  hands.forEach(h => buzz(h, .8, 200));
+  toast('🔄 The powers left you! The Artifact is back in its altar. Pull it out again to replay the cutscene.', 6);
+}
+const ART_BTN = plButton(V(ART_AT.x + 1.5, 0, ART_AT.z + .6), -.5, '🔄 GIVE IT BACK', 0x9aa3ae, '#e6e6e6', () => artRemove());
 function artStaticDraw() {
   const c = ART_ST.cv, g = c.getContext('2d'), im = g.createImageData(c.width, c.height), d = im.data, band = Math.random() * c.height | 0;
   for (let y = 0; y < c.height; y++) { const bright = Math.abs(y - band) < 4 ? 60 : 0; for (let x = 0; x < c.width; x++) { const v = Math.min(255, (Math.random() * 255 | 0) + bright), i = (y * c.width + x) * 4; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; } }
@@ -227,4 +258,4 @@ function stepArtifact(dt) {
     } else ART.flyT = Math.max(0, ART.flyT - (state.grounded ? 99 : 0));
   }
 }
-window.__kg.art = { ART, ART_CS, ART_ST, artCutscene, ART_POWERS, artGrab, artDrop, artDesk, artAbsorb, hasPower, stepArtifact, artFlyDesk };
+window.__kg.art = { artRemove, ART, ART_CS, ART_ST, artCutscene, ART_POWERS, artGrab, artDrop, artDesk, artAbsorb, hasPower, stepArtifact, artFlyDesk };
