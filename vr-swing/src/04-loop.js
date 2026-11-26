@@ -249,7 +249,8 @@ function stepDesktop(dt) {
   const fx = -Math.sin(state.yaw), fz = -Math.cos(state.yaw), rx = Math.cos(state.yaw), rz = -Math.sin(state.yaw);
   let wx = fx * f + rx * s, wz = fz * f + rz * s; const L = Math.hypot(wx, wz); if (L > 0) { wx /= L; wz /= L; }
   const acc = state.grounded ? (onPuddle() ? 1.1 : 14) : 3.5, v = state.vel;
-  if (!swimDesk(dt, f, s)) {   // in deep water you swim instead (97-swim)
+  if (artFlyDesk(dt, f, s)) { /* flying with the Artifact's power (99-artifact) */ }
+  else if (!swimDesk(dt, f, s)) {   // in deep water you swim instead (97-swim)
     v.x += (wx * sp - v.x) * Math.min(1, acc * dt); v.z += (wz * sp - v.z) * Math.min(1, acc * dt);
     if (k.Space && BM.nograv && !state.grounded) v.y = 3;
     if (k.Space && state.grounded) { v.y = 5.3 * brJump(); state.grounded = false; sfxTap('grass', .3); }

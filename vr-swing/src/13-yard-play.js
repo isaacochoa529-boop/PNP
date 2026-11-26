@@ -165,6 +165,8 @@ function grabAny(h) {
   if (BM.stop && h.side === 'right') { bmStatue(true); return; }   // stop-motion: R grip freezes another you
   if (BM.grab && bmGrabFriend(h)) return;
   if (rdGrab(h)) return;
+  if (artGrab(h)) return;
+  if (plGrab(h)) return;
   if (toughGrab(h)) return;
   if (holdGrab(h)) return;
   if (state.area === 'arena' && AR.ready && h.tracked) {
@@ -178,6 +180,8 @@ function grabAny(h) {
 }
 function dropAny(h) {
   if (hsDrop(h)) return;
+  if (artDrop(h)) return;
+  if (plDrop(h)) return;
   if (rdDrop(h)) return;
   if (BR.held[h.i] && brDrop(h)) return;
   if (wildDrop(h)) return;
@@ -206,6 +210,8 @@ function deskInteract() {
   if (brDesk()) return;
   if (wildDesk()) return;
   if (partyDesk()) return;
+  if (artDesk()) return;
+  if (plDesk()) return;
   const h = hands[1], hl = hands[0];
   if (state.area === 'arena' && AR.ready) {
     if (cupDesk(h)) return;
