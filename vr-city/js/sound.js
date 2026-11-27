@@ -398,3 +398,38 @@ export function engine(pos, speed, on) {
   eng.g.gain.setTargetAtTime(on ? 0.12 + Math.min(0.15, s * 0.012) : 0, t, 0.15);
   if (eng.p.positionX) { eng.p.positionX.setTargetAtTime(pos.x, t, 0.05); eng.p.positionY.setTargetAtTime(0.8, t, 0.05); eng.p.positionZ.setTargetAtTime(pos.z, t, 0.05); }
 }
+
+// ---------- new monsters ----------
+export function mfx(fx, pos) {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  if (fx === 'static') { const p = spot(pos, 5, 1, 0.5); noise(p, t, 0.35, 6000, 0.7, 'highpass'); tone(p, t, 0.3, 60, 55, 0.3, 'square'); }
+  else if (fx === 'howl' || fx === 'howl2') {   // the Howler's scream
+    const big = fx === 'howl', p = spot(pos, big ? 14 : 20, 0.9, 0.8);
+    const o = ctx.createOscillator(), g = ctx.createGain(), ws = ctx.createWaveShaper();
+    const cv = new Float32Array(256); for (let i = 0; i < 256; i++) cv[i] = Math.tanh((i / 128 - 1) * 8);
+    ws.curve = cv; o.type = 'sawtooth';
+    const d = big ? 2 : 1.3;
+    o.frequency.setValueAtTime(500, t); o.frequency.exponentialRampToValueAtTime(1500, t + 0.3); o.frequency.linearRampToValueAtTime(900, t + d);
+    const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 22; lg.gain.value = 120; lfo.connect(lg); lg.connect(o.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(big ? 0.55 : 0.3, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(ws); ws.connect(g); g.connect(p); o.start(t); o.stop(t + d + 0.1); lfo.start(t); lfo.stop(t + d + 0.1);
+    noise(p, t, d, 3000, 0.4, 'bandpass', 2);
+  } else if (fx === 'howl3') {   // the Brute's roar: low and wet
+    const p = spot(pos, 14, 0.9, 0.8);
+    tone(p, t, 1.6, 70, 38, 0.7, 'sawtooth'); tone(p, t, 1.6, 105, 55, 0.4, 'square'); noise(p, t, 1.4, 500, 0.5, 'lowpass');
+  } else if (fx === 'stomp') { const p = spot(pos, 6, 1, 0.4); tone(p, t, 0.3, 70, 30, 0.7); noise(p, t, 0.2, 200, 0.5, 'lowpass'); }
+  else if (fx === 'smash') {   // wood and brick breaking
+    const p = spot(pos, 10, 1, 0.5);
+    noise(p, t, 0.5, 1800, 0.8, 'bandpass', 0.8); tone(p, t, 0.4, 120, 35, 0.7);
+    for (let i = 0; i < 5; i++) noise(p, t + 0.05 + Math.random() * 0.4, 0.06, 900 + Math.random() * 2500, 0.5, 'bandpass', 3);
+  } else if (fx === 'drop') {   // something big lets go of the ceiling
+    const p = spot(pos, 8, 1, 0.5); tone(p, t, 0.3, 600, 90, 0.5, 'sawtooth'); noise(p, t + 0.2, 0.3, 300, 0.7, 'lowpass');
+  } else if (fx === 'twitch') {   // a dry click-click from above
+    const p = spot(pos, 4, 1, 0.3);
+    for (let i = 0; i < 4; i++) noise(p, t + i * 0.07 + Math.random() * 0.04, 0.03, 3500 + Math.random() * 2500, 0.6, 'bandpass', 6);
+  } else if (fx === 'wisp') {   // a cold whisper-chord
+    const p = spot(pos, 8, 1, 0.5);
+    tone(p, t, 2.2, 880, 870, 0.07, 'sine'); tone(p, t, 2.2, 932, 920, 0.07, 'sine'); tone(p, t, 2.2, 1318, 1290, 0.04, 'sine'); noise(p, t, 2.2, 7000, 0.12, 'highpass');
+  }
+}

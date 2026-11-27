@@ -16,7 +16,14 @@ export const PAGES = [
   ] },
   { title: '🧪 Spawn', buttons: [
     { label: () => '🚗 Spawn car', run: (c) => c.spawnCar() },
-    { label: () => '😈 Spawn monster', run: (c) => c.spawnMonster() },
+    { label: () => '😈 Spawn Crawler', run: (c) => c.spawnMonster() },
+    { label: () => '🕴️ Spawn Stalker', run: (c) => c.spawnMonster('stalker') },
+    { label: () => '😱 Spawn Howler', run: (c) => c.spawnMonster('howler') },
+  ] },
+  { title: '🧪 Spawn 2', buttons: [
+    { label: () => '🔨 Spawn Brute', run: (c) => c.spawnMonster('brute') },
+    { label: () => '🕷️ Spawn Ceiling Dweller', run: (c) => c.spawnMonster('dweller') },
+    { label: () => '👻 Spawn Wisp', run: (c) => c.spawnMonster('wisp') },
   ] },
   { title: '👹 Monsters', buttons: [
     { label: (c) => '🦖 Become monster: ' + (c.S.monster ? 'ON' : 'OFF'), run: (c) => c.toggleMonster() },

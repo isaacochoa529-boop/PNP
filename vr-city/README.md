@@ -27,3 +27,6 @@ Voice chat turns on when you press "Enter the city" (allow the mic).
 - New file? Add its name to the `files` list in `index.html`.
 - Then bump the number in `version.txt` AND in `<meta name="game-version">` in `index.html`.
   Every file gets `?v=<number>` so the update shows up right away; open headsets reload when you leave VR.
+
+## More monsters (v7)
+`js/monsters.js` holds 5 extra monsters: Stalker (freezes when looked at), Howler (screams, sprints, fears your lamp), Brute (slow, smashes walls, ignores light), Ceiling Dweller (drops from building ceilings) and Wisp (kills your lamp and street lights). Spawn them from the admin panel (Spawn / Spawn 2 pages). New player avatar lives in `js/friends.js` (face, clothes, walking legs, finger-curling hands).
