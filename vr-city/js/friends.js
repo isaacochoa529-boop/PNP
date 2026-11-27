@@ -94,7 +94,7 @@ export function makeFriends(scene, beamMat) {
     const f = get(m.id, m.n);
     f.headT.fromArray(m.h, 0); f.qT.fromArray(m.h, 3);
     f.hT[0].fromArray(m.l); f.hT[1].fromArray(m.r);
-    f.ghost = !!m.g; f.light = !!m.lt; f.hidden = !!m.hd; f.hideT = m.ht || 0; f.menu = !!m.m;
+    f.ghost = !!m.g; f.light = !!m.lt; f.hidden = !!m.hd; f.hideT = m.ht || 0; f.menu = !!m.m; f.tb = !!m.tb;
     f.seen = performance.now();
     if (f.fresh) { f.headP.copy(f.headT); f.q.copy(f.qT); f.hP[0].copy(f.hT[0]); f.hP[1].copy(f.hT[1]); f.fresh = false; }
     return f;
@@ -113,6 +113,7 @@ export function makeFriends(scene, beamMat) {
       f.torso.position.set(neck.x, neck.y - 0.22, neck.z); f.torso.rotation.set(0, f.yaw, 0);
       f.pack.position.set(neck.x + Math.sin(f.yaw) * 0.15, neck.y - 0.2, neck.z + Math.cos(f.yaw) * 0.15); f.pack.rotation.y = f.yaw;
       f.legs.position.set(neck.x, neck.y - 0.6, neck.z); f.legs.rotation.y = f.yaw;
+      if (f.tb) { const r = performance.now() / 70; f.torso.rotation.set(r, f.yaw, r * 0.7); f.legs.rotation.set(r * 1.3, f.yaw, 0); }   // WHEEE tumbling
       _side.set(Math.cos(f.yaw), 0, -Math.sin(f.yaw));
       for (let i = 0; i < 2; i++) {
         const A = f.arms[i], sgn = i ? 1 : -1;

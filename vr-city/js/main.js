@@ -7,6 +7,7 @@ import { createNet } from './net.js';
 import { createMover, EYE } from './move.js';
 import { makeFriends } from './friends.js';
 import { makeCreepy } from './creepy.js';
+import { makeCar } from './car.js';
 import { nearSolids, groundAt } from './city.js';
 
 const VERSION = document.querySelector('meta[name="game-version"]')?.content || '0';
@@ -14,7 +15,7 @@ const BATTERY_SECS = 180;   // headlights last 3 minutes. Then the Crawler screa
 const RESTART_SECS = 6;     // pause after everyone is caught
 const RED_CHANCE = 0.2;     // 1 in 5 nights is a RED NIGHT
 const FLARE_SECS = 25, FLARE_RECHARGE = 75;
-const SECRET_TOTAL = 6;
+const SECRET_TOTAL = 7;
 
 const $ = (id) => document.getElementById(id);
 const ui = $('ui'), statusEl = $('status'), hintEl = $('hint'), friendEl = $('friend'), deskHud = $('deskhud');
@@ -65,6 +66,8 @@ parkLight.position.copy(secretSpots.parkLamp);
 const beamMat = new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
 const friends = makeFriends(scene, beamMat);
 const creepy = makeCreepy(scene, SFX);
+const car = makeCar(scene);
+const D = { driving: false, relPos: new THREE.Vector3(), relYaw: 0, moverYaw0: 0, lastSend: 0, honks: [], laLa: false, near: false, latch: {}, hitCd: new Map(), tumbleT: 0 };
 
 // ---------- your hands: black gloves with fingers that curl ----------
 const gloveM = new THREE.MeshLambertMaterial({ color: 0x15151a });
@@ -214,6 +217,13 @@ const net = createNet({
       if (!before) friendJoined(msg);
       if (net.isHost) net.send(msg, from);
     } else if (msg.t === 'w') { if (!net.isHost) applyWorld(msg); }
+    else if (msg.t === 'car') {
+      if (net.isHost) net.send(msg, from);
+      if (msg.id === myId) return;
+      if (msg.drv) { if (D.driving && msg.drv !== myId && msg.drv < myId) exitCar(); car.C.driver = msg.drv; car.C.driverSeen = performance.now(); }
+      else if (car.C.driver === msg.id) car.C.driver = null;
+      if (!D.driving) car.apply(msg);
+    }
     else if (msg.t === 'ev') {
       if (net.isHost) net.send(msg, from);
       onEvent(msg, true);
@@ -247,6 +257,17 @@ function onEvent(e, fromNet) {
       else { say('💀 ' + (friends.list.get(e.who)?.name || 'Your friend') + ' got caught!', 3500); }
       break;
     case 'flare': spawnFlare(e); break;
+    case 'splat': SFX.splat(p); crawler.stun(8); if (e.by === myId || e.by === 'me') found('splat', '🥞 Pancake monster!'); break;
+    case 'pop': SFX.hiss(p); break;
+    case 'honk': SFX.honk(e.la); break;
+    case 'bonk':
+      if (e.who === (myId || 'me') && !D.driving && !S.ghost) {
+        for (const h of hands) { h.stuck = false; h.hold = false; h.cool = 0.6; }
+        mover.vel.set(e.vx * 0.7, 7.5, e.vz * 0.7); mover.grounded = false; mover.wasStuck = false; mover.velBuf.length = 0;
+        D.tumbleT = 2;
+      }
+      SFX.bonk();
+      break;
   }
 }
 function emit(e) {
@@ -256,6 +277,7 @@ function emit(e) {
 
 function gotCaught() {
   if (S.ghost) return;
+  exitCar();
   S.ghost = true;
   mover.ghost = true;
   S.scareT = 1.4;
@@ -268,6 +290,7 @@ function gotCaught() {
 
 // ---------- rounds ----------
 function newRound() {
+  exitCar();
   S.ghost = false; mover.ghost = false; mover.frozen = false;
   S.alive = 0; S.flares = 1; S.flareCd = 0; S.hideT = 0;
   for (const f of flares) scene.remove(f.g);
@@ -346,7 +369,7 @@ function spawnFlare(e) {
   SFX.flareLight(f.pos);
 }
 function throwFlare(h) {
-  if (S.flares <= 0 || S.ghost || !entered) return;
+  if (S.flares <= 0 || S.ghost || !entered || D.driving) return;
   S.flares--;
   S.flareCd = FLARE_RECHARGE;
   const p = h ? h.pos.clone() : camera.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, -0.2, 0));
@@ -425,6 +448,10 @@ function drawWrist() {
     const smell = S.hideT > 30;
     x.fillStyle = smell ? '#ff7050' : '#90c0ff';
     x.fillText(smell ? '👃 It smells you! MOVE!' : '🫣 Hidden (' + Math.floor(40 - S.hideT) + 's)', 22, 215);
+  } else if (D.driving) {
+    x.fillStyle = '#ffd21a'; x.fillText('🚗 TRIGGER gas · B = get out', 22, 215);
+  } else if (D.near) {
+    x.fillStyle = '#ffd21a'; x.fillText('🚗 Press A or X to drive!', 22, 215);
   } else {
     x.fillStyle = S.flares ? '#ff9060' : '#777';
     x.fillText(S.flares ? '🔥 Flare ready (trigger)' : '🔥 Flare in ' + Math.ceil(S.flareCd) + 's', 22, 215);
@@ -433,7 +460,7 @@ function drawWrist() {
   if (flat) {
     deskHud.innerHTML = (S.red ? '🚨 RED NIGHT' : S.battery > 0 ? '🔦 ' + mmss(S.battery) : '😈 HUNTING') +
       ' &nbsp; ⏱ ' + mmss(S.alive) + ' &nbsp; 🏆 ' + mmss(S.best) + '<br>' + (n ? '🟢 Friend connected' : '🟡 No friend yet') +
-      ' &nbsp; ' + (S.hideZone ? (S.hideT > 30 ? '👃 It smells you!' : '🫣 Hidden') : S.flares ? '🔥 F = flare' : '🔥 ' + Math.ceil(S.flareCd) + 's');
+      ' &nbsp; ' + (S.hideZone ? (S.hideT > 30 ? '👃 It smells you!' : '🫣 Hidden') : (D.driving ? '🚗 W/S drive, A/D steer, H honk, E get out' : D.near ? '🚗 E = drive' : S.flares ? '🔥 F = flare' : '🔥 ' + Math.ceil(S.flareCd) + 's'));
   }
 }
 
@@ -479,7 +506,13 @@ function lightning(dt) {
 }
 
 // ---------- PC test mode ----------
-addEventListener('keydown', (e) => { mover.keys[e.code] = true; if (e.code === 'KeyF' && flat) throwFlare(null); });
+addEventListener('keydown', (e) => {
+  mover.keys[e.code] = true;
+  if (!flat || e.repeat) return;
+  if (e.code === 'KeyF') throwFlare(null);
+  if (e.code === 'KeyE') { if (D.driving) exitCar(); else tryEnterCar(); }
+  if (e.code === 'KeyH' && D.driving) honk();
+});
 addEventListener('keyup', (e) => { mover.keys[e.code] = false; });
 addEventListener('mousemove', (e) => {
   if (!flat || !(document.pointerLockElement || e.buttons & 1)) return;
@@ -506,6 +539,101 @@ setInterval(checkVersion, 45000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
 checkVersion();
 
+// ---------- the goofy car 🚗 ----------
+const _cv = new THREE.Vector3(), _cv2 = new THREE.Vector3(), UPV = new THREE.Vector3(0, 1, 0);
+function carMatrix() { return new THREE.Matrix4().compose(new THREE.Vector3(car.C.x, 0, car.C.z), new THREE.Quaternion().setFromAxisAngle(UPV, car.C.yaw), new THREE.Vector3(1, 1, 1)); }
+function tryEnterCar() {
+  if (D.driving || S.ghost || !entered) return;
+  if (car.C.driver && car.C.driver !== myId && performance.now() - car.C.driverSeen < 2000) { SFX.honk(); return; }
+  camera.getWorldPosition(_cv);
+  if (Math.hypot(_cv.x - car.C.x, _cv.z - car.C.z) > 3.2) return;
+  D.driving = true;
+  car.C.driver = myId || 'me';
+  car.C.spd = 0;
+  // put your head on the driver's seat, facing forward
+  const turn = car.C.yaw + Math.PI - rig.rotation.y - Math.atan2(-camera.getWorldDirection(_cv2).x, -_cv2.z) + rig.rotation.y;
+  rig.rotation.y += Math.atan2(Math.sin(turn), Math.cos(turn));
+  rig.updateMatrixWorld();
+  camera.getWorldPosition(_cv);
+  car.seatWorld(_cv2);
+  rig.position.add(_cv2.sub(_cv));
+  D.relPos.copy(rig.position).applyMatrix4(carMatrix().invert());
+  D.relYaw = rig.rotation.y - car.C.yaw;
+  D.moverYaw0 = mover.yaw = rig.rotation.y;
+  SFX.honk();
+}
+function exitCar() {
+  if (!D.driving) return;
+  D.driving = false;
+  car.C.driver = null;
+  car.C.spd = 0;
+  mover.teleport(car.doorWorld(_cv).setY(0.15));
+  if (flat) mover.yaw = rig.rotation.y;
+  if (net.myId) net.send({ t: 'car', id: myId, drv: null, ...car.state() });
+}
+function btn(side, i) {
+  const h = hands.find((q) => q.side === side && q.gp);
+  const b = h && h.gp.buttons[i];
+  return !!(b && b.pressed);
+}
+function edge(key, now) { const was = D.latch[key]; D.latch[key] = now; return now && !was; }
+function honk() {
+  const t = performance.now();
+  D.honks.push(t); D.honks = D.honks.filter((x) => t - x < 5000);
+  if (D.honks.length >= 10 && !D.laLa) { D.laLa = true; found('horn', '🎺 The horn learned a new song…'); }
+  emit({ k: 'honk', la: D.laLa ? 1 : 0 });
+}
+function carButtons() {
+  if (flat) return;
+  const ax = edge('ax', btn('right', 4) || btn('left', 4)), by = edge('by', btn('right', 5) || btn('left', 5));
+  if (D.driving) { if (by) exitCar(); else if (ax) honk(); }
+  else if (ax && D.near) tryEnterCar();
+}
+function driveTick(dt, now) {
+  if (!flat) mover.handsOnly(dt);
+  const inp = { gas: 0, brake: 0, steer: 0 };
+  if (flat) {
+    const k = mover.keys;
+    inp.gas = k.KeyW ? 1 : 0; inp.brake = k.KeyS ? 1 : 0; inp.steer = (k.KeyD ? 1 : 0) - (k.KeyA ? 1 : 0);
+  } else {
+    const L = hands.find((h) => h.side === 'left' && h.gp), R = hands.find((h) => h.side === 'right' && h.gp);
+    inp.gas = R ? R.trigV : 0; inp.brake = L ? L.trigV : 0;
+    if (L && L.gp.axes.length >= 4 && Math.abs(L.gp.axes[2]) > 0.15) inp.steer = L.gp.axes[2];
+    if (L && R && L.gripV > 0.5 && R.gripV > 0.5) {   // both hands on the wheel: turn it like a real one
+      const dy = R.pos.y - L.pos.y, dx = Math.hypot(R.pos.x - L.pos.x, R.pos.z - L.pos.z);
+      inp.steer = Math.max(-1, Math.min(1, -Math.atan2(dy, dx) * 1.6));
+    }
+  }
+  if (car.drive(dt, inp)) { SFX.crash(); for (const h of hands) { const a = h.gp?.hapticActuators?.[0]; if (a) try { a.pulse(0.8, 120); } catch (e) {} } }
+  // you ride along
+  rig.position.copy(D.relPos).applyMatrix4(carMatrix());
+  rig.rotation.y = car.C.yaw + D.relYaw + (flat ? mover.yaw - D.moverYaw0 : 0);
+  if (flat) camera.rotation.x = mover.pitch;
+  // run stuff over!
+  const [fx, fz] = car.fwd(), sp = Math.abs(car.C.spd);
+  const bx = car.C.x + fx * 1.3 * Math.sign(car.C.spd || 1), bz = car.C.z + fz * 1.3 * Math.sign(car.C.spd || 1);
+  if (sp > 3 && crawler.model.root.visible && crawler.C.stunT <= 0) {
+    const c = crawler.C.vis;
+    if (Math.hypot(c.x - bx, c.z - bz) < 2.1 && Math.abs(c.y) < 1.5) emit({ k: 'splat', x: c.x, y: c.y, z: c.z, by: myId || 'me' });
+  }
+  for (const f of friends.list.values()) {
+    if (f.ghost || f.menu) continue;
+    if ((D.hitCd.get(f.id) || 0) > now) continue;
+    if (Math.hypot(f.headP.x - bx, f.headP.z - bz) < 1.7) {
+      D.hitCd.set(f.id, now + 2000);
+      emit({ k: 'bonk', who: f.id, vx: fx * car.C.spd, vz: fz * car.C.spd });
+    }
+  }
+  if (net.myId && now - D.lastSend > 66) { D.lastSend = now; net.send({ t: 'car', id: myId, drv: myId, ...car.state() }); }
+}
+function carShow(dt, now) {
+  if (car.C.driver && car.C.driver !== (myId || 'me') && now - (car.C.driverSeen || 0) > 2500) car.C.driver = null;
+  car.show(dt, D.driving);
+  D.near = entered && !D.driving && !S.ghost && Math.hypot(headPos.x - car.C.x, headPos.z - car.C.z) < 3.2;
+  D.tumbleT = Math.max(0, D.tumbleT - dt);
+  SFX.engine({ x: car.C.x, z: car.C.z }, car.C.spd, !!car.C.driver);
+}
+
 // ---------- main loop ----------
 const headPos = new THREE.Vector3(), headDir = new THREE.Vector3(), headQ = new THREE.Quaternion(), headUp = new THREE.Vector3();
 let last = performance.now(), lastPose = 0, lastHud = 0;
@@ -517,7 +645,8 @@ function frame(now) {
   if (net.myId) myId = net.myId;
 
   // you
-  if (entered) { if (flat) mover.flatStep(dt); else mover.step(dt); }
+  if (entered) { if (D.driving) driveTick(dt, now); else if (flat) mover.flatStep(dt); else mover.step(dt); }
+  if (entered) carButtons();
   camera.getWorldPosition(headPos);
   camera.getWorldDirection(headDir);
   camera.getWorldQuaternion(headQ);
@@ -592,6 +721,7 @@ function frame(now) {
   scene.background.copy(scene.fog.color);
 
   // the Crawler
+  carShow(dt, now);
   crawler.show(dt, headPos, (p, front) => { if (p.distanceTo(headPos) < 45) SFX.step(p, front); });
   const cp = crawler.C.vis, dist = cp.distanceTo(headPos);
   SFX.tick(dt, cp, Math.max(0, Math.min(1, 1 - (dist - 4) / 26)), S.hunting, crawler.model.root.visible);
@@ -617,7 +747,7 @@ function frame(now) {
     const Rh = hands[1].tracked ? hands[1].pos : headPos.clone().add(new THREE.Vector3(0.2, -0.45, -0.1));
     const r3 = (v) => [+v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3)];
     net.send({ t: 'p', id: myId, n: myName, h: [...r3(headPos), ...headQ.toArray().map((v) => +v.toFixed(4))], l: r3(L), r: r3(Rh),
-      g: S.ghost ? 1 : 0, lt: S.lightOn ? 1 : 0, hd: S.hideZone ? 1 : 0, ht: +S.hideT.toFixed(1), m: entered ? 0 : 1 });
+      g: S.ghost ? 1 : 0, tb: D.tumbleT > 0 ? 1 : 0, lt: S.lightOn ? 1 : 0, hd: S.hideZone ? 1 : 0, ht: +S.hideT.toFixed(1), m: entered ? 0 : 1 });
   }
 
   checkSecrets(dt, headDir, handPts);
@@ -703,4 +833,4 @@ setStatus();
 renderer.setAnimationLoop(frame);
 
 // test hooks
-window.__city = { S, H, crawler, mover, friends, net, rig, camera, scene, renderer, throwFlare, say, emit, hideZoneAt, flares };
+window.__city = { car, D, tryEnterCar, exitCar, S, H, crawler, mover, friends, net, rig, camera, scene, renderer, throwFlare, say, emit, hideZoneAt, flares };

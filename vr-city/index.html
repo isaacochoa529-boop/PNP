@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<meta name="game-version" content="4">
+<meta name="game-version" content="5">
 <title>Abandoned City 🌃</title>
 <style>
   html, body { margin: 0; height: 100%; background: #05060c; color: #ddd; font-family: system-ui, sans-serif; overflow: hidden; }
@@ -27,7 +27,7 @@
   (function () {
     var v = document.querySelector('meta[name="game-version"]').content;
     var base = new URL('js/', location.href).href;
-    var files = ['main', 'city', 'textures', 'crawler', 'sound', 'net', 'move', 'friends', 'creepy'];
+    var files = ['main', 'city', 'textures', 'crawler', 'sound', 'net', 'move', 'friends', 'creepy', 'car'];
     var map = { imports: {
       'three': 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/'
@@ -54,6 +54,7 @@
     <span>🔦</span><span>Your head lamp scares it away for 3 minutes. Then it HUNTS.</span>
     <span>🏚️</span><span>Hide inside open buildings. But don't stay too long… it can smell you.</span>
     <span>🔥</span><span>Pull the <b>TRIGGER</b> to throw a flare. It won't come near it.</span>
+    <span>🚗</span><span>A yellow clown car waits in the park! Press <b>A/X</b> next to it to drive. Run over the monster (and your friend 😈).</span>
     <span>⌚</span><span>Look at your left wrist for your lights, timer and friend.</span>
   </div>
   <button id="mic" class="small">🎙️ Turn on voice chat</button>
