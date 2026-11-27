@@ -655,7 +655,9 @@ function stepRagdolls(dt) {
     const pl = rdPulled(rd); rd.heavy = pl.any && !pl.pinBody; rd.heldNow = pl.any;
     if (pl.any) { rd.asleep = false; rd.calm = 0; rd.anchor = null; if (pl.pinBody) rd.stand = Math.max(0, rd.stand - dt * 4); else rd.stand = Math.min(rd.stand, .8); }
     else if ((rd.calm += dt) > 2.5) rd.stand = Math.min(1, rd.stand + dt * .8);
-    if (!rd.asleep) for (let i = 0; i < n; i++) rdStep(rd, RD_STEP);
+    // far away from you and nobody is pulling it: it waits right where it is (saves a lot on Quest), wakes when you come back
+    const farOff = !pl.any && rd.P[0].p.distanceToSquared(_hp) > 50 * 50;
+    if (!rd.asleep && !farOff) for (let i = 0; i < n; i++) rdStep(rd, RD_STEP);
     if (rd.P[0].p.y < -60) { rdKill(rd); continue; }
     // stretch sounds + yells, and stuffing leaking out of the seam
     for (const gname in rd.G) {
@@ -666,7 +668,7 @@ function stepRagdolls(dt) {
         if (HZ.on) rfxAdd(p, _rfV, .01, .008, .01, pick([0x7a0f14, 0x9b1b1f]), 8, 9.8, .3, rd.floor, 1); else rfxAdd(p, _rfV, .013, .011, .013, 0xffffff, 12, 3.2, 1.8, rd.floor);
       }
     }
-    if (!rd.asleep || rd.squash > 0) rdDraw(rd, dt);
+    if ((!rd.asleep && !farOff) || rd.squash > 0) rdDraw(rd, dt);
   }
   stepCheese(dt);
 }
