@@ -6,6 +6,7 @@ import * as SFX from './sound.js';
 import { createNet } from './net.js';
 import { createMover, EYE } from './move.js';
 import { makeFriends } from './friends.js';
+import { makeCreepy } from './creepy.js';
 import { nearSolids, groundAt } from './city.js';
 
 const VERSION = document.querySelector('meta[name="game-version"]')?.content || '0';
@@ -13,7 +14,7 @@ const BATTERY_SECS = 180;   // headlights last 3 minutes. Then the Crawler screa
 const RESTART_SECS = 6;     // pause after everyone is caught
 const RED_CHANCE = 0.2;     // 1 in 5 nights is a RED NIGHT
 const FLARE_SECS = 25, FLARE_RECHARGE = 75;
-const SECRET_TOTAL = 5;
+const SECRET_TOTAL = 6;
 
 const $ = (id) => document.getElementById(id);
 const ui = $('ui'), statusEl = $('status'), hintEl = $('hint'), friendEl = $('friend'), deskHud = $('deskhud');
@@ -28,9 +29,9 @@ try { renderer.xr.setFoveation(1); } catch (e) {}
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-const FOG = new THREE.Color(0x0b0f1a), FOG_RED = new THREE.Color(0x1c0508);
+const FOG = new THREE.Color(0x080b13), FOG_RED = new THREE.Color(0x1c0508);
 scene.background = FOG.clone();
-scene.fog = new THREE.FogExp2(FOG.clone(), 0.024);
+scene.fog = new THREE.FogExp2(FOG.clone(), 0.03);
 const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.04, 700);
 const rig = new THREE.Group();
 rig.add(camera);
@@ -63,6 +64,7 @@ const crawler = makeCrawler(scene);
 parkLight.position.copy(secretSpots.parkLamp);
 const beamMat = new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
 const friends = makeFriends(scene, beamMat);
+const creepy = makeCreepy(scene, SFX);
 
 // ---------- your hands: black gloves with fingers that curl ----------
 const gloveM = new THREE.MeshLambertMaterial({ color: 0x15151a });
@@ -451,6 +453,7 @@ function checkSecrets(dt, headDir, handPts) {
   if (S.moonT > 8) found('moon', '🌙 The moon stares back…');
   for (const p of handPts) {
     if (secretSpots.musicBox && p.distanceTo(secretSpots.musicBox) < 0.35 && !S.secrets.has('musicbox')) { SFX.musicBox(secretSpots.musicBox); found('musicbox', '🎶 A music box…'); }
+    if (secretSpots.roofDoll && p.distanceTo(secretSpots.roofDoll) < 0.35 && !S.secrets.has('roofdoll')) { SFX.giggle(secretSpots.roofDoll); found('roofdoll', '🪆 How did the doll get up here?'); }
     if (secretSpots.phone && p.distanceTo(secretSpots.phone) < 0.3 && !S.secrets.has('phone')) { SFX.ringPhone(secretSpots.phone); found('phone', '☎️ Someone is calling…'); }
     if (secretSpots.teddy && p.distanceTo(secretSpots.teddy) < 0.3 && teddyAwake <= 0) {
       teddyAwake = 4; SFX.squeak();
@@ -471,7 +474,7 @@ function lightning(dt) {
   if (boltT <= 0) { boltT = 45 + Math.random() * 60; flashT = 0.5; setTimeout(() => SFX.thunder(), 1200 + Math.random() * 1500); }
   flashT = Math.max(0, flashT - dt);
   const fl = flashT > 0.38 || (flashT > 0.12 && flashT < 0.22) ? 1 : 0;
-  hemi.intensity = 0.9 + fl * 3.5;
+  hemi.intensity = 0.6 + fl * 3.5;
   hemi.color.setHex(S.red ? 0x7a3040 : 0x46587e);
 }
 
@@ -566,13 +569,18 @@ function frame(now) {
   const bat = S.battery;
   let on = !S.ghost && (S.red || bat > 0);
   if (on && !S.red && bat < 12) on = Math.sin(now / 37) + Math.sin(now / 91) > -0.6 - bat / 12;
+  // your lamp stutters when it is close
+  if (on && crawler.model.root.visible && crawler.C.vis.distanceTo(headPos) < 14 && Math.random() < 0.12) on = false;
   S.lightOn = on;
   headlight.intensity = on ? (S.red ? 28 : 40) : 0;
   headlight.color.setHex(S.red ? 0xffb0a0 : 0xfff0d0);
 
   // the world
   const t = now / 1000;
-  city.update(dt, t, headPos, S.red);
+  const cDist = crawler.C.vis.distanceTo(headPos);
+  const dread = crawler.model.root.visible ? Math.max(0, Math.min(1, 1 - (cDist - 6) / 22)) : 0;
+  city.update(dt, t, headPos, S.red, dread);
+  if (entered) creepy.update(dt, { head: headPos, dir: headDir, hunting: S.hunting, crawlerDist: cDist, ghost: S.ghost });
   sky.update(dt, t, headPos, S.red);
   mist.update(dt, headPos, S.red);
   crickets.update(dt, headPos, handPts, onSquish);

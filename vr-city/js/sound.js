@@ -309,3 +309,51 @@ export function squeak() {
   const o = tone(master, t, 0.35, 900, 1400, 0.25, 'triangle');
   o.frequency.setValueAtTime(900, t); o.frequency.linearRampToValueAtTime(1500, t + 0.15); o.frequency.linearRampToValueAtTime(1100, t + 0.33);
 }
+
+// ---------- creepy extras ----------
+// a breathy whisper from somewhere near you (shaped noise that sounds like "sss... hhh...")
+export function whisper(pos) {
+  if (!ctx) return;
+  const p = spot(pos, 2, 1.3, 0.5), t0 = ctx.currentTime;
+  const n = 4 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < n; i++) {
+    const t = t0 + i * (0.16 + Math.random() * 0.12);
+    noise(p, t, 0.12 + Math.random() * 0.15, 2000 + Math.random() * 2500, 0.18, 'bandpass', 5 + Math.random() * 6);
+  }
+}
+// old wood creaking
+export function creak(pos) {
+  if (!ctx) return;
+  const p = spot(pos, 4, 1, 0.6), t = ctx.currentTime, dur = 0.8 + Math.random() * 0.8;
+  const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(70 + Math.random() * 40, t);
+  o.frequency.linearRampToValueAtTime(110 + Math.random() * 60, t + dur);
+  const lfo = ctx.createOscillator(), lg = ctx.createGain();
+  lfo.frequency.value = 18 + Math.random() * 12; lg.gain.value = 25;
+  lfo.connect(lg); lg.connect(o.frequency);
+  f.type = 'bandpass'; f.frequency.value = 900; f.Q.value = 4;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.1); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(f); f.connect(g); g.connect(p);
+  o.start(t); o.stop(t + dur + 0.05); lfo.start(t); lfo.stop(t + dur + 0.05);
+}
+// a little kid giggling far away
+export function giggle(pos) {
+  if (!ctx) return;
+  const p = spot(pos, 6, 1, 0.9), t0 = ctx.currentTime;
+  for (let i = 0; i < 5; i++) {
+    const t = t0 + i * 0.13, f = 700 - i * 40;
+    const o = tone(p, t, 0.1, f, f * 0.8, 0.18, 'triangle');
+    void o;
+    noise(p, t, 0.08, 3000, 0.05, 'bandpass', 3);
+  }
+}
+// a door slamming somewhere in the city
+export function slam(pos) {
+  if (!ctx) return;
+  const p = spot(pos, 10, 1, 1.0), t = ctx.currentTime;
+  tone(p, t, 0.4, 120, 40, 0.8);
+  noise(p, t, 0.25, 900, 0.7);
+}
+// a quiet low "la... la..." that comes from very far away (it's out there somewhere)
+export function farSing(pos) { sing(pos); }
