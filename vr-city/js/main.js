@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { buildCity, makeSky, makeMist, makeCrickets, SPAWN, HALF, hideZoneAt, secretSpots } from './city.js';
 import { makeCrawler, buildCrawlerModel } from './crawler.js';
 import * as SFX from './sound.js';
+import { makeMonster, MONSTER_TYPES } from './monsters.js';
 import { createNet } from './net.js';
 import { createMover, EYE } from './move.js';
 import { makeFriends } from './friends.js';
@@ -202,14 +203,19 @@ const hands = mover.hands;
 
 // ---------- extra monsters (spawned from the admin panel) ----------
 const extras = [];   // { id, c }
-function addExtra(id, x, z, snap) {
-  if (extras.some((e) => e.id === id) || extras.length >= 4) return;
-  const c = makeCrawler(scene, { noLight: true });
+function addExtra(id, tp, x, z, snap) {
+  if (extras.some((e) => e.id === id) || extras.length >= 8) return;
+  const c = MONSTER_TYPES.includes(tp) ? makeMonster(scene, tp) : makeCrawler(scene, { noLight: true });
   if (snap) c.applyRemote(snap); else c.reset(x, z);
-  extras.push({ id, c });
+  extras.push({ id, c, tp });
 }
 function clearExtras() { for (const e of extras) e.c.remove(); extras.length = 0; }
 const allMonsters = () => { const l = []; if (crawler.model.root.visible) l.push(crawler); for (const e of extras) l.push(e.c); return l; };
+
+const wispNearLate = () => { for (const ex of extras) if (ex.tp === 'wisp' && ex.c.C.vis.distanceTo(camera.getWorldPosition(_wv)) < 14) return true; return false; };
+const _wv = new THREE.Vector3();
+const buzz = (a, ms) => { for (const h of hands) { const ac = h.gp?.hapticActuators?.[0]; if (ac) try { ac.pulse(a, ms); } catch (e) {} } };
+const shake = (p) => { const d = p.x === undefined ? 99 : Math.hypot(p.x - camera.position.x, p.z - camera.position.z); if (d < 20) buzz(Math.max(0.2, 1 - d / 20), 160); };
 
 // ---------- network ----------
 function setStatus() {
@@ -269,11 +275,12 @@ function onEvent(e, fromNet) {
       else { say('💀 ' + (friends.list.get(e.who)?.name || 'Your friend') + ' got caught!', 3500); }
       break;
     case 'flare': spawnFlare(e); break;
+    case 'mfx': SFX.mfx(e.fx, p); if (e.fx === 'smash' || e.fx === 'stomp' || e.fx === 'drop') shake(p); break;
     // ----- admin-only events (ignored unless the sender says they're the admin) -----
     case 'spawnmon':
       if (!e.adm) break;
-      if (e.main) { S.noMain = false; crawler.reset(e.x, e.z); } else addExtra(e.id, e.x, e.z);
-      SFX.roar(p);
+      if (e.main) { S.noMain = false; crawler.reset(e.x, e.z); } else addExtra(e.id, e.tp, e.x, e.z);
+      if (!e.tp || e.tp === 'brute') SFX.roar(p); else if (e.tp === 'howler') SFX.mfx('howl2', p); else if (e.tp === 'wisp') SFX.mfx('wisp', p); else SFX.mfx('static', p);
       break;
     case 'rmmon':
       if (!e.adm) break;
@@ -294,7 +301,7 @@ function onEvent(e, fromNet) {
       }
       SFX.bonk();
       break;
-    case 'splat': SFX.splat(p); for (const m of allMonsters()) if (Math.hypot(m.C.vis.x - e.x, m.C.vis.z - e.z) < 3) m.stun(8); if (e.by === myId || e.by === 'me') found('splat', '🥞 Pancake monster!'); break;
+    case 'splat': SFX.splat(p); for (const m of allMonsters()) if (!m.immune && Math.hypot(m.C.vis.x - e.x, m.C.vis.z - e.z) < 3) m.stun(8); if (e.by === myId || e.by === 'me') found('splat', '🥞 Pancake monster!'); break;
     case 'pop': SFX.hiss(p); break;
     case 'honk': SFX.honk(e.la); break;
     case 'bonk':
@@ -352,7 +359,7 @@ function applyWorld(m) {
   if (m.m) crawler.applyRemote(m.m); else crawler.model.root.visible = false;
   if (m.x) {
     const ids = new Set(m.x.map((q) => q.id));
-    for (const q of m.x) { const ex = extras.find((e) => e.id === q.id); if (ex) ex.c.applyRemote(q); else addExtra(q.id, 0, 0, q); }
+    for (const q of m.x) { const ex = extras.find((e) => e.id === q.id); if (ex) ex.c.applyRemote(q); else addExtra(q.id, q.tp, 0, 0, q); }
     for (let i = extras.length - 1; i >= 0; i--) if (!ids.has(extras[i].id)) { extras[i].c.remove(); extras.splice(i, 1); }
   }
 }
@@ -395,7 +402,7 @@ function hostTick(now, dt, list) {
   if (S.rid !== H.rid) { S.rid = H.rid; newRound(); }
   if (now - H.lastW > 100) {
     H.lastW = now;
-    net.send({ t: 'w', rid: H.rid, el: +el.toFixed(2), red: H.red, bat: +bat.toFixed(1), hunt: hunting, m: S.noMain ? null : crawler.snapshot(), x: extras.map((e) => ({ id: e.id, ...e.c.snapshot() })) });
+    net.send({ t: 'w', rid: H.rid, el: +el.toFixed(2), red: H.red, bat: +bat.toFixed(1), hunt: hunting, m: S.noMain ? null : crawler.snapshot(), x: extras.map((e) => ({ id: e.id, tp: e.tp, ...e.c.snapshot() })) });
   }
 }
 
@@ -669,7 +676,7 @@ function driveTick(dt, now) {
   const bx = car.C.x + fx * 1.3 * Math.sign(car.C.spd || 1), bz = car.C.z + fz * 1.3 * Math.sign(car.C.spd || 1);
   if (sp > 3) for (const m of allMonsters()) {
     const c = m.C.vis;
-    if (m.C.stunT <= 0 && Math.hypot(c.x - bx, c.z - bz) < 2.1 && Math.abs(c.y) < 1.5) {
+    if (!m.immune && m.C.stunT <= 0 && Math.hypot(c.x - bx, c.z - bz) < 2.1 && Math.abs(c.y) < 1.5) {
       m.stun(8);   // only for the one hit; the others keep chasing
       emit({ k: 'splat', x: c.x, y: c.y, z: c.z, by: myId || 'me' });
     }
@@ -702,12 +709,12 @@ const adminCtx = {
     emit({ k: 'carspawn', x, z, yaw: Math.atan2(fw.x, fw.z) + Math.PI / 2 });
     adminPanel.say('🚗 Car spawned!');
   },
-  spawnMonster() {
+  spawnMonster(tp) {
     const fw = camera.getWorldDirection(new THREE.Vector3()); fw.y = 0; fw.normalize();
     const x = Math.max(-HALF + 4, Math.min(HALF - 4, headPos.x + fw.x * 22)), z = Math.max(-HALF + 4, Math.min(HALF - 4, headPos.z + fw.z * 22));
-    if (S.noMain) emit({ k: 'spawnmon', main: 1, x, z });
-    else if (extras.length >= 4) { adminPanel.say('Max 4 extra monsters'); return; }
-    else emit({ k: 'spawnmon', id: 'x' + Date.now(), x, z });
+    if (!tp && S.noMain) emit({ k: 'spawnmon', main: 1, x, z });
+    else if (extras.length >= 8) { adminPanel.say('Max 8 extra monsters'); return; }
+    else emit({ k: 'spawnmon', id: 'x' + Date.now(), tp: tp || 'crawler', x, z });
     adminPanel.say('😈 Monster spawned!');
   },
   removeMonsters() { emit({ k: 'rmmon' }); adminPanel.say('🧹 All monsters gone'); },
@@ -817,6 +824,7 @@ function frame(now) {
   // your lamp stutters when it is close
   if (on && crawler.model.root.visible && crawler.C.vis.distanceTo(headPos) < 14 && Math.random() < 0.12) on = false;
   if (S.monster) on = false;   // monsters don't need a lamp
+  if (on && wispNearLate()) on = Math.random() < 0.08;   // the Wisp drinks your light
   S.lightOn = on;
   headlight.intensity = on ? (S.red ? 28 : 40) : 0;
   headlight.color.setHex(S.red ? 0xffb0a0 : 0xfff0d0);
@@ -825,7 +833,9 @@ function frame(now) {
   const t = now / 1000;
   let cDist = 999, cNear = crawler.C.vis;
   for (const m of allMonsters()) { const d = m.C.vis.distanceTo(headPos); if (d < cDist) { cDist = d; cNear = m.C.vis; } }
-  const dread = cDist < 999 ? Math.max(0, Math.min(1, 1 - (cDist - 6) / 22)) : 0;
+  let wispNear = false;
+  for (const ex of extras) if (ex.tp === 'wisp' && ex.c.C.vis.distanceTo(headPos) < 14) wispNear = true;
+  const dread = Math.max(wispNear ? 0.95 : 0, cDist < 999 ? Math.max(0, Math.min(1, 1 - (cDist - 6) / 22)) : 0);
   city.update(dt, t, headPos, S.red, dread);
   if (entered) creepy.update(dt, { head: headPos, dir: headDir, hunting: S.hunting, crawlerDist: cDist, ghost: S.ghost });
   sky.update(dt, t, headPos, S.red);
@@ -841,7 +851,10 @@ function frame(now) {
   // the Crawler
   carShow(dt, now);
   adminFrame(dt, now);
-  const stepFx = (p, front) => { if (p.distanceTo(headPos) < 45) SFX.step(p, front); };
+  const stepFx = (p, front, tp) => {
+    if (p.distanceTo(headPos) >= 45) return;
+    if (tp === 'brute') { SFX.mfx('stomp', p); if (p.distanceTo(headPos) < 14) buzz(0.7, 90); } else SFX.step(p, front);
+  };
   crawler.show(dt, headPos, stepFx);
   for (const ex of extras) ex.c.show(dt, headPos, stepFx);
   SFX.tick(dt, cNear, Math.max(0, Math.min(1, 1 - (cDist - 4) / 26)), S.hunting || extras.length > 0, cDist < 999);
@@ -866,7 +879,7 @@ function frame(now) {
     const L = hands[0].tracked ? hands[0].pos : headPos.clone().add(new THREE.Vector3(-0.2, -0.45, -0.1));
     const Rh = hands[1].tracked ? hands[1].pos : headPos.clone().add(new THREE.Vector3(0.2, -0.45, -0.1));
     const r3 = (v) => [+v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3)];
-    net.send({ t: 'p', id: myId, n: myName, h: [...r3(headPos), ...headQ.toArray().map((v) => +v.toFixed(4))], l: r3(L), r: r3(Rh),
+    net.send({ t: 'p', id: myId, n: myName, h: [...r3(headPos), ...headQ.toArray().map((v) => +v.toFixed(4))], l: r3(L), r: r3(Rh), gp: [+(hands[0].gripV || 0).toFixed(2), +(hands[1].gripV || 0).toFixed(2)],
       g: S.ghost ? 1 : 0, mo: S.monster ? 1 : 0, tb: D.tumbleT > 0 ? 1 : 0, lt: S.lightOn ? 1 : 0, hd: S.hideZone ? 1 : 0, ht: +S.hideT.toFixed(1), m: entered ? 0 : 1 });
   }
 
