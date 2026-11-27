@@ -3,36 +3,64 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<meta name="game-version" content="1">
+<meta name="game-version" content="2">
 <title>Abandoned City 🌃</title>
 <style>
   html, body { margin: 0; height: 100%; background: #05060c; color: #ddd; font-family: system-ui, sans-serif; overflow: hidden; }
   canvas { display: block; }
-  #ui { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: rgba(5,6,12,.9); z-index: 5; text-align: center; padding: 16px; }
-  #ui h1 { font-size: 30px; margin: 0; color: #d34; }
-  #ui p { margin: 0; max-width: 520px; line-height: 1.4; }
-  #ui button { font-size: 22px; padding: 14px 26px; border-radius: 14px; border: 2px solid #a22; background: #1d0a0c; color: #fff; cursor: pointer; }
-  #ui button.small { font-size: 16px; border-color: #335; background: #0c1020; }
-  #status { position: fixed; left: 10px; top: 10px; font-size: 14px; color: #9c9; z-index: 4; text-shadow: 0 0 4px #000; }
+  #ui { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; z-index: 5; text-align: center; padding: 16px;
+        background: radial-gradient(ellipse at 50% 30%, rgba(60,10,16,.55), rgba(5,6,12,.96) 70%); }
+  #ui h1 { font-size: 40px; margin: 0; color: #e0303c; letter-spacing: 2px; text-shadow: 0 0 18px #900, 0 0 2px #000; font-family: Georgia, serif; }
+  #ui .sub { font-size: 15px; opacity: .75; margin-top: -8px; }
+  #ui p { margin: 0; max-width: 560px; line-height: 1.45; }
+  #ui button { font-size: 24px; padding: 14px 30px; border-radius: 14px; border: 2px solid #b22; background: #22090c; color: #fff; cursor: pointer; }
+  #ui button:active { transform: scale(.97); }
+  #ui button.small { font-size: 17px; border-color: #335; background: #0c1020; }
+  #friend { font-size: 19px; font-weight: bold; padding: 8px 16px; border-radius: 10px; background: #1a1a10; color: #ee8; }
+  #friend.good { background: #0d2a14; color: #7f7; }
+  .how { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; text-align: left; font-size: 15px; max-width: 520px; background: rgba(0,0,0,.35); padding: 12px 16px; border-radius: 12px; }
+  #status { position: fixed; left: 10px; top: 10px; font-size: 13px; color: #9c9; z-index: 6; text-shadow: 0 0 4px #000; }
+  #deskhud { display: none; position: fixed; left: 10px; bottom: 10px; font-size: 16px; color: #eee; z-index: 4; background: rgba(0,0,0,.5); padding: 8px 12px; border-radius: 10px; }
 </style>
-<script type="importmap">
-{ "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-} }
+<script>
+  // Cache-busting: every game file gets ?v=<version>, so a new update shows up right away.
+  (function () {
+    var v = document.querySelector('meta[name="game-version"]').content;
+    var base = new URL('js/', location.href).href;
+    var files = ['main', 'city', 'textures', 'crawler', 'sound', 'net', 'move', 'friends'];
+    var map = { imports: {
+      'three': 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
+      'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/'
+    } };
+    files.forEach(function (f) { map.imports[base + f + '.js'] = base + f + '.js?v=' + v; });
+    var s = document.createElement('script');
+    s.type = 'importmap';
+    s.textContent = JSON.stringify(map);
+    document.currentScript.after(s);
+  })();
 </script>
 </head>
 <body>
 <div id="status">🔎 Looking for your friend…</div>
+<div id="deskhud"></div>
 <div id="ui">
-  <h1>🌃 The Abandoned City</h1>
-  <p>Stars 🌟, crickets 🦗, and something that sings "la la la!" 😈</p>
-  <p>Put on your headset. Your headlights keep the monsters away… for a while 🔦</p>
+  <h1>🌃 THE ABANDONED CITY</h1>
+  <div class="sub">Hollow Creek · pop. 0</div>
+  <div id="friend">🔎 Looking for your friend…</div>
+  <p>Stars 🌟, crickets 🦗, and something that sings <i>"la la la"</i> in the dark 😈</p>
+  <div class="how">
+    <span>🦍</span><span>Slap the ground and push to run. Push down hard to jump. Push off walls!</span>
+    <span>✊</span><span>Hold <b>GRIP</b> on a wall or roof to grab it and climb.</span>
+    <span>🔦</span><span>Your head lamp scares it away for 3 minutes. Then it HUNTS.</span>
+    <span>🏚️</span><span>Hide inside open buildings. But don't stay too long… it can smell you.</span>
+    <span>🔥</span><span>Pull the <b>TRIGGER</b> to throw a flare. It won't come near it.</span>
+    <span>⌚</span><span>Look at your left wrist for your lights, timer and friend.</span>
+  </div>
   <button id="mic" class="small">🎙️ Turn on voice chat</button>
   <button id="go">🚪 Enter the city</button>
   <p id="hint" style="font-size:14px;opacity:.7"></p>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
-<script type="module" src="js/main.js"></script>
+<script type="module">import './js/main.js';</script>
 </body>
 </html>
