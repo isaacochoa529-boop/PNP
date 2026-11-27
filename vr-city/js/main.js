@@ -118,7 +118,8 @@ wrist.m.rotation.x = -Math.PI / 2;
 gloves[0].add(wrist.m);
 const toast = canvasPlane(0.8, 0.25, 1024, 320);
 toast.m.position.set(0, 0.13, -0.9);
-camera.add(toast.m);
+// subtitles removed (Isaiah asked): the toast is no longer shown on your face
+toast.m.visible = false;
 const veil = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), new THREE.MeshBasicMaterial({ color: 0xff0020, transparent: true, opacity: 0, depthTest: false, fog: false }));
 veil.position.z = -0.3; veil.renderOrder = 999;
 camera.add(veil);
