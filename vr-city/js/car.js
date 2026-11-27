@@ -120,6 +120,7 @@ export function makeCar(scene) {
   const seat = new THREE.Vector3(-0.42, 1.65, -0.35);
   function seatWorld(out) { return out.copy(seat).applyAxisAngle(new THREE.Vector3(0, 1, 0), C.yaw).add(new THREE.Vector3(C.x, 0, C.z)); }
   function doorWorld(out) { return out.set(-1.9, 0, -0.3).applyAxisAngle(new THREE.Vector3(0, 1, 0), C.yaw).add(new THREE.Vector3(C.x, 0, C.z)); }
+  function place(x, z, yaw) { C.x = C.tx = x; C.z = C.tz = z; C.yaw = C.tyaw = yaw; C.spd = 0; C.steer = 0; C.driver = null; }
   function reset() { C.x = C.tx = START.x; C.z = C.tz = START.z; C.yaw = C.tyaw = START.yaw; C.spd = 0; C.steer = 0; }
-  return { C, root, drive, show, state, apply, seatWorld, doorWorld, fwd, reset };
+  return { C, root, drive, show, state, apply, seatWorld, doorWorld, fwd, reset, place };
 }
