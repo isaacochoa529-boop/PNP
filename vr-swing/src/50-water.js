@@ -210,8 +210,8 @@ function gooStep(dt) {
     o[i] = p[i]; o[i + 1] = p[i + 1]; o[i + 2] = p[i + 2]; p[i] += v[i] * dt; p[i + 1] += v[i + 1] * dt; p[i + 2] += v[i + 2] * dt;
   }
   gooCols(); gooBounds();
-  for (let i = 0; i < n * 3; i += 3) { const s2 = v[i] * v[i] + v[i + 1] * v[i + 1] + v[i + 2] * v[i + 2]; if (s2 > mv) mv = s2; }
-  GOO.moving = mv;
+  let sum = 0; for (let i = 0; i < n * 3; i += 3) { const s2 = v[i] * v[i] + v[i + 1] * v[i + 1] + v[i + 2] * v[i + 2]; sum += s2; if (s2 > mv) mv = s2; }
+  GOO.moving = mv; GOO.mean = n ? sum / n : 0;
 }
 function gooFill() {   // a full pool to start with, settled so it isn't jumpy
   GOO.n = 0; const S = 16, sp = (POOL.W - .16) / S;
@@ -298,6 +298,8 @@ function stepPoolThings(dt) {
 }
 const SW_KEYS = [{}, {}, {}];
 function stepGoo(dt) {
+  // a calm, full pool that nothing is touching naps (it was the biggest cost in the yard); anything touching it wakes it up
+  if (!GOO.cols.length && !GOO.dirty && GOO.n >= GOO.MAX && GOO.mean < .003 && GOO.moving < .08) { if ((GOO.calm = (GOO.calm || 0) + dt) > 1.5) return; } else GOO.calm = 0;
   const st = dt > .02 ? 4 : 2, sdt = Math.min(dt, 1 / 30) / st;
   for (let s = 0; s < st; s++) gooStep(sdt);
   // blobs that flew over the rim and out: they become drops (and puddles where they land)

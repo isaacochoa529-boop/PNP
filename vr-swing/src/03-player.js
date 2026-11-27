@@ -167,17 +167,21 @@ const selfie = (() => {
   addCol({ t: 0, x: g.position.x, y: 1.3, z: g.position.z, hx: .92, hy: 1.3, hz: .12, yaw: g.rotation.y, tag: 'wood' });
   const cam = new THREE.PerspectiveCamera(48, 384 / 540, .05, 80); cam.layers.enable(SELF_LAYER);
   g.updateMatrixWorld(true); g.localToWorld(cam.position.set(0, 1.35, .15));
-  const look = V(), _sh = V(); let frame = 0;
+  const look = V(), _sh = V(), _sd = V(), _sf = V(); let frame = 0, drawn = false;
   return {
     g, near: false,
+    // runs right AFTER the main picture, so every world matrix is already fresh (no second pass over the whole world)
     update() {
       headWorld(_sh); this.near = _sh.distanceTo(cam.position) < 9 && state.mode === 'play';
-      if (!this.near || (frame++ & 1)) return;                       // only when you're close, every other frame
-      look.lerp(_sh.clone().add(V(0, -.25, 0)), look.lengthSq() ? .25 : 1); cam.lookAt(look);
-      const xrOn = renderer.xr.enabled, shadowAuto = renderer.shadowMap.autoUpdate, prev = renderer.getRenderTarget();
-      renderer.xr.enabled = false; renderer.shadowMap.autoUpdate = false; screen.visible = false;
+      if (!this.near || (frame++ % (state.xr ? 3 : 2))) return;      // only when you're close, every 2nd frame (every 3rd in VR)
+      camera.getWorldDirection(_sf); _sd.subVectors(cam.position, _sh).normalize();
+      if (drawn && _sd.dot(_sf) < .15) return;                       // you're not looking at it: keep the last picture
+      drawn = true;
+      _sd.copy(_sh); _sd.y -= .25; look.lerp(_sd, look.lengthSq() ? .25 : 1); cam.lookAt(look);
+      const xrOn = renderer.xr.enabled, shadowAuto = renderer.shadowMap.autoUpdate, prev = renderer.getRenderTarget(), mwa = scene.matrixWorldAutoUpdate;
+      renderer.xr.enabled = false; renderer.shadowMap.autoUpdate = false; screen.visible = false; scene.matrixWorldAutoUpdate = false;
       renderer.setRenderTarget(rt); renderer.render(scene, cam); renderer.setRenderTarget(prev);
-      renderer.xr.enabled = xrOn; renderer.shadowMap.autoUpdate = shadowAuto; screen.visible = true;
+      renderer.xr.enabled = xrOn; renderer.shadowMap.autoUpdate = shadowAuto; screen.visible = true; scene.matrixWorldAutoUpdate = mwa;
     },
   };
 })();

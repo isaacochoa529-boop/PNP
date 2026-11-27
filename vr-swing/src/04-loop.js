@@ -528,7 +528,7 @@ function update(dt) {
   const focus = (CS.on || huCam()) && !state.xr ? CS.cam.position : rig.position;   // the story camera can fly far from you
   sun.position.set(focus.x + 12, focus.y + 24, focus.z + 8); sun.target.position.copy(focus);
   scene.userData.sky.position.copy(focus);
-  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepBeach(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt); stepSwim(dt); stepModes(dt); stepHunt(dt);
+  stepHorror(dt); stepExtras(dt); mpSend(dt); stepFriends(dt); stepComputer(dt); stepShared(dt); stepFigRemote(dt); stepTouchUi(); stepMyColors(); stepVoice(dt); stepBerryMenu(dt); pcStep(dt); stepWater(dt); stepRoyale(dt); stepStory(dt); stepWilds(dt); stepBeach(dt); stepParty(dt); stepRagdolls(dt); stepClaude(dt); stepSpawn(dt); stepClaudeEars(dt); stepClaudeEarsRec(dt); stepVad(dt); stepSwim(dt); stepModes(dt); stepHunt(dt); stepPerf(dt);
 
 }
 window.__kg.calibrate = () => calibrate();
@@ -537,5 +537,5 @@ window.__kg.start = () => { state.mode = 'play'; $('menu').hidden = true; resetR
 window.__kg.renderOnce = () => renderer.render(scene, camera); window.__kg.scene = scene; window.__kg.renderer = renderer;
 window.__kg.respawn = respawn; window.__kg.props = props; window.__kg.grab = grabProp; window.__kg.drop = dropProp; window.__kg.pawHit = pawHit; window.__kg.tris = tris;
 updateHud();
-renderer.setAnimationLoop(() => { if (window.__kg.paused) return; update(Math.min(.05, clock.getDelta())); selfie.update(); csRender(); });
+renderer.setAnimationLoop(() => { if (window.__kg.paused) return; update(Math.min(.05, clock.getDelta())); perfFrame(); csRender(); selfie.update(); });
 
