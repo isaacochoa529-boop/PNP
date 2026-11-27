@@ -17,7 +17,7 @@ const V = () => new THREE.Vector3();
 export function createMover({ rig, camera, renderer, onSlap, onLand }) {
   const M = {
     vel: V(), grounded: false, wasStuck: false, velBuf: [], ghost: false, frozen: false,
-    turnLatch: false, flat: false, keys: {}, yaw: 0, pitch: 0, speed: 0,
+    turnLatch: false, boost: 1, flat: false, keys: {}, yaw: 0, pitch: 0, speed: 0,
   };
   const hands = [0, 1].map((i) => ({
     i, grip: renderer.xr.getControllerGrip(i), ctrl: renderer.xr.getController(i),
@@ -162,8 +162,8 @@ export function createMover({ rig, camera, renderer, onSlap, onLand }) {
       if (M.wasStuck && M.velBuf.length) {   // let go mid-push: LAUNCH
         const v = V();
         for (const b of M.velBuf) v.add(b);
-        v.multiplyScalar(JUMP_BOOST / M.velBuf.length);
-        if (v.length() > MAX_SPEED) v.setLength(MAX_SPEED);
+        v.multiplyScalar(JUMP_BOOST * M.boost / M.velBuf.length);
+        if (v.length() > MAX_SPEED * M.boost) v.setLength(MAX_SPEED * M.boost);
         M.vel.copy(v);
         M.grounded = false;
       }
@@ -181,7 +181,7 @@ export function createMover({ rig, camera, renderer, onSlap, onLand }) {
       if (Math.hypot(ax, ay) > 0.2) {
         camera.getWorldDirection(_fw); _fw.y = 0; _fw.normalize();
         _rt.crossVectors(_fw, UP);
-        const sp = (M.grounded ? 2.0 : 0.8) * dt;
+        const sp = (M.grounded ? 2.0 : 0.8) * M.boost * dt;
         rig.position.addScaledVector(_rt, ax * sp).addScaledVector(_fw, -ay * sp);
       }
     }
@@ -273,7 +273,7 @@ export function createMover({ rig, camera, renderer, onSlap, onLand }) {
       return;
     }
     const f = (k.KeyW ? 1 : 0) - (k.KeyS ? 1 : 0), s = (k.KeyD ? 1 : 0) - (k.KeyA ? 1 : 0);
-    const sp = k.ShiftLeft ? 5.5 : 3.2;
+    const sp = (k.ShiftLeft ? 5.5 : 3.2) * M.boost;
     const fx = -Math.sin(M.yaw), fz = -Math.cos(M.yaw), rx = Math.cos(M.yaw), rz = -Math.sin(M.yaw);
     const wx = (fx * f + rx * s) * sp, wz = (fz * f + rz * s) * sp;
     const a = M.grounded ? 12 : 2;

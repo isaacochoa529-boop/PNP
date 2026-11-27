@@ -1,6 +1,7 @@
 // Your friends in the city: a body that follows their head, two gloved hands with arms,
 // a glowing head lamp with a light beam, a name tag, and their voice coming from their mouth.
 import * as THREE from 'three';
+import { buildCrawlerModel } from './crawler.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const SEG = new THREE.CylinderGeometry(1, 1, 1, 8, 1).translate(0, 0.5, 0);
@@ -71,7 +72,8 @@ export function makeFriends(scene, beamMat) {
     const tag = label(name);
     g.add(tag);
     scene.add(g);
-    return { id, name, g, head, torso, pack, legs, arms, tag, beam, mouth,
+    const monM = buildCrawlerModel(1.35); monM.root.visible = false; scene.add(monM.root);   // admin can become the monster
+    return { monM, id, name, g, head, torso, pack, legs, arms, tag, beam, mouth,
       headT: new THREE.Vector3(), qT: new THREE.Quaternion(), hT: [new THREE.Vector3(), new THREE.Vector3()],
       headP: new THREE.Vector3(), q: new THREE.Quaternion(), hP: [new THREE.Vector3(), new THREE.Vector3()],
       seen: 0, fresh: true, ghost: false, light: true, hidden: false, audio: null, talk: 0, yaw: 0 };
@@ -85,7 +87,7 @@ export function makeFriends(scene, beamMat) {
   function drop(id) {
     const f = list.get(id);
     if (!f) return;
-    scene.remove(f.g);
+    scene.remove(f.g, f.monM.root);
     if (f.audio) { try { f.audio.srcObject = null; f.audio.remove(); } catch (e) {} }
     list.delete(id);
   }
@@ -94,7 +96,7 @@ export function makeFriends(scene, beamMat) {
     const f = get(m.id, m.n);
     f.headT.fromArray(m.h, 0); f.qT.fromArray(m.h, 3);
     f.hT[0].fromArray(m.l); f.hT[1].fromArray(m.r);
-    f.ghost = !!m.g; f.light = !!m.lt; f.hidden = !!m.hd; f.hideT = m.ht || 0; f.menu = !!m.m; f.tb = !!m.tb;
+    f.ghost = !!m.g; f.light = !!m.lt; f.hidden = !!m.hd; f.hideT = m.ht || 0; f.menu = !!m.m; f.tb = !!m.tb; f.mon = !!m.mo;
     f.seen = performance.now();
     if (f.fresh) { f.headP.copy(f.headT); f.q.copy(f.qT); f.hP[0].copy(f.hT[0]); f.hP[1].copy(f.hT[1]); f.fresh = false; }
     return f;
@@ -133,7 +135,15 @@ export function makeFriends(scene, beamMat) {
         f.wasGhost = f.ghost;
         f.g.traverse((o) => { if (o.isMesh && o.material !== f.beam.material) { o.material = o.material.clone(); o.material.transparent = f.ghost; o.material.opacity = f.ghost ? 0.3 : 1; } });
       }
-      f.g.visible = !f.menu;
+      f.g.visible = !f.menu && !f.mon;
+      f.monM.root.visible = f.mon && !f.menu;
+      if (f.monM.root.visible) {   // a real Crawler body follows their head
+        const hsp = f.lastHead ? Math.hypot(f.headP.x - f.lastHead.x, f.headP.z - f.lastHead.z) / Math.max(dt, 1e-3) : 0;
+        (f.lastHead = f.lastHead || new THREE.Vector3()).copy(f.headP);
+        f.monM.root.position.set(f.headP.x, Math.max(0, f.headP.y - 1.0), f.headP.z);
+        f.monM.root.rotation.y = Math.atan2(_fw.x, _fw.z);
+        f.monM.animate({ dt, spd: Math.min(5, hsp), hunting: true, lookAt: null, rear: 0, jaw: f.talk > 0 ? 0.5 : 0 });
+      }
       // voice: louder when close, and their mouth moves while they talk
       if (f.audio && listener) {
         const d = listener.distanceTo(f.headP);

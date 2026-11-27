@@ -233,6 +233,7 @@ export function makeCrawler(scene, hooks = {}) {
   root.visible = false;
   scene.add(root);
   const eyeLight = new THREE.PointLight(0xff1a2a, 0, 9, 2);
+  eyeLight.visible = !hooks.noLight;   // extra monsters share light (Quest stays smooth)
   scene.add(eyeLight);
   // dizzy stars that circle its head when it gets run over
   const stars = new THREE.Group();
@@ -512,6 +513,7 @@ export function makeCrawler(scene, hooks = {}) {
     eyeLight.intensity = root.visible ? (hunting ? 2.6 : 1.0) : 0;
   }
   function sang() { C.singFx = 1.1; }
+  function remove() { scene.remove(root, eyeLight, stars); }
   function stun(secs) { C.stunT = secs; C.climbing = false; C.pitch = 0; }
 
   function snapshot() {
@@ -523,5 +525,5 @@ export function makeCrawler(scene, hooks = {}) {
     if (!root.visible) { root.visible = true; C.vis.copy(C.pos); }
   }
 
-  return { reset, update, show, snapshot, applyRemote, sang, stun, spawnSpot, C, model };
+  return { reset, update, show, snapshot, applyRemote, sang, stun, remove, spawnSpot, C, model };
 }

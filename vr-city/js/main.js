@@ -8,6 +8,7 @@ import { createMover, EYE } from './move.js';
 import { makeFriends } from './friends.js';
 import { makeCreepy } from './creepy.js';
 import { makeCar } from './car.js';
+import { checkAdmin, makeAdminPanel } from './admin.js';
 import { nearSolids, groundAt } from './city.js';
 
 const VERSION = document.querySelector('meta[name="game-version"]')?.content || '0';
@@ -150,7 +151,7 @@ const S = {
   voice: false, veil: 0, scareT: 0,
   hideZone: null, hideT: 0, flares: 1, flareCd: 0, lightOn: true,
   toast: '', toastUntil: 0, toastStart: 0, link: 'search', linkText: '🔎 Looking for your friend…',
-  wasFriends: 0,
+  wasFriends: 0, admin: false, boost: false, monster: false, noMain: false,
 };
 // host only: round clock + crawler brain
 const H = { started: false, rid: Math.floor(Math.random() * 1e6), t0: 0, red: false, screamed: false, restartAt: 0, lastW: 0, caught: new Set() };
@@ -198,6 +199,17 @@ const mover = createMover({
   onLand: () => SFX.land(),
 });
 const hands = mover.hands;
+
+// ---------- extra monsters (spawned from the admin panel) ----------
+const extras = [];   // { id, c }
+function addExtra(id, x, z, snap) {
+  if (extras.some((e) => e.id === id) || extras.length >= 4) return;
+  const c = makeCrawler(scene, { noLight: true });
+  if (snap) c.applyRemote(snap); else c.reset(x, z);
+  extras.push({ id, c });
+}
+function clearExtras() { for (const e of extras) e.c.remove(); extras.length = 0; }
+const allMonsters = () => { const l = []; if (crawler.model.root.visible) l.push(crawler); for (const e of extras) l.push(e.c); return l; };
 
 // ---------- network ----------
 function setStatus() {
@@ -257,7 +269,32 @@ function onEvent(e, fromNet) {
       else { say('💀 ' + (friends.list.get(e.who)?.name || 'Your friend') + ' got caught!', 3500); }
       break;
     case 'flare': spawnFlare(e); break;
-    case 'splat': SFX.splat(p); crawler.stun(8); if (e.by === myId || e.by === 'me') found('splat', '🥞 Pancake monster!'); break;
+    // ----- admin-only events (ignored unless the sender says they're the admin) -----
+    case 'spawnmon':
+      if (!e.adm) break;
+      if (e.main) { S.noMain = false; crawler.reset(e.x, e.z); } else addExtra(e.id, e.x, e.z);
+      SFX.roar(p);
+      break;
+    case 'rmmon':
+      if (!e.adm) break;
+      S.noMain = true; crawler.model.root.visible = false; clearExtras();
+      break;
+    case 'carspawn':
+      if (!e.adm) break;
+      if (D.driving) exitCar();
+      car.place(e.x, e.z, e.yaw);
+      SFX.honk();
+      break;
+    case 'shove':
+      if (!e.adm || S.admin) break;   // only the admin can push, and nobody pushes the admin
+      if (e.who === (myId || 'me') && !D.driving && !S.ghost) {
+        for (const h of hands) { h.stuck = false; h.hold = false; h.cool = 0.6; }
+        mover.vel.set(e.vx, 5.5, e.vz); mover.grounded = false; mover.wasStuck = false; mover.velBuf.length = 0;
+        D.tumbleT = 1.5;
+      }
+      SFX.bonk();
+      break;
+    case 'splat': SFX.splat(p); for (const m of allMonsters()) if (Math.hypot(m.C.vis.x - e.x, m.C.vis.z - e.z) < 3) m.stun(8); if (e.by === myId || e.by === 'me') found('splat', '🥞 Pancake monster!'); break;
     case 'pop': SFX.hiss(p); break;
     case 'honk': SFX.honk(e.la); break;
     case 'bonk':
@@ -271,6 +308,7 @@ function onEvent(e, fromNet) {
   }
 }
 function emit(e) {
+  if (S.admin) e.adm = 1;
   net.send({ t: 'ev', ...e });
   onEvent(e, false);
 }
@@ -291,6 +329,7 @@ function gotCaught() {
 // ---------- rounds ----------
 function newRound() {
   exitCar();
+  S.noMain = false; clearExtras();
   S.ghost = false; mover.ghost = false; mover.frozen = false;
   S.alive = 0; S.flares = 1; S.flareCd = 0; S.hideT = 0;
   for (const f of flares) scene.remove(f.g);
@@ -302,23 +341,29 @@ function startRound(now) {
   H.rid++;
   H.t0 = now;
   H.red = Math.random() < RED_CHANCE;
-  H.screamed = false; H.restartAt = 0; H.caught.clear();
+  H.screamed = false; H.restartAt = 0; H.caught.clear(); S.noMain = false;
   const p = crawler.spawnSpot(SPAWN);
   crawler.reset(p.x, p.z);
 }
 function applyWorld(m) {
   S.red = m.red; S.el = m.el; S.battery = m.bat; S.hunting = m.hunt;
   if (m.rid !== S.rid) { S.rid = m.rid; newRound(); }
-  crawler.applyRemote(m.m);
+  S.noMain = !m.m;
+  if (m.m) crawler.applyRemote(m.m); else crawler.model.root.visible = false;
+  if (m.x) {
+    const ids = new Set(m.x.map((q) => q.id));
+    for (const q of m.x) { const ex = extras.find((e) => e.id === q.id); if (ex) ex.c.applyRemote(q); else addExtra(q.id, 0, 0, q); }
+    for (let i = extras.length - 1; i >= 0; i--) if (!ids.has(extras[i].id)) { extras[i].c.remove(); extras.splice(i, 1); }
+  }
 }
 
 function players(headPos, headDir) {
   const list = [];
-  if (entered) list.push({ id: myId || 'me', pos: headPos.clone(), dir: headDir.clone(), hidden: !!S.hideZone, hideT: S.hideT, ghost: S.ghost, light: S.lightOn });
+  if (entered) list.push({ id: myId || 'me', pos: headPos.clone(), dir: headDir.clone(), hidden: !!S.hideZone, hideT: S.hideT, ghost: S.ghost || S.monster, mon: S.monster, light: S.lightOn });
   for (const f of friends.list.values()) {
     if (f.menu) continue;
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(f.q);
-    list.push({ id: f.id, pos: f.headP, dir, hidden: f.hidden, hideT: f.hideT || 0, ghost: f.ghost || H.caught.has(f.id), light: f.light });
+    list.push({ id: f.id, pos: f.headP, dir, hidden: f.hidden, hideT: f.hideT || 0, ghost: f.ghost || f.mon || H.caught.has(f.id), mon: f.mon, light: f.light });
   }
   return list;
 }
@@ -333,21 +378,24 @@ function hostTick(now, dt, list) {
   for (const p of list) if (H.caught.has(p.id)) p.ghost = true;
   const lights = list.filter((p) => !p.ghost).map((p) => ({ pos: p.pos, dir: p.dir, on: p.light && bat > 0 }));
   const fl = flares.filter((f) => f.landed && f.t < FLARE_SECS).map((f) => ({ x: f.pos.x, z: f.pos.z }));
-  const evs = crawler.update(dt, now, { players: list, hunting, red: H.red, lights, flares: fl });
-  for (const e of evs) {
-    if (e.k === 'catch') {
-      if (H.caught.has(e.who)) continue;
-      H.caught.add(e.who);
-      emit({ k: 'catch', who: e.who });
-    } else emit(e);
-  }
+  const brain = (evs) => {
+    for (const e of evs) {
+      if (e.k === 'catch') {
+        if (H.caught.has(e.who)) continue;
+        H.caught.add(e.who);
+        emit({ k: 'catch', who: e.who });
+      } else emit(e);
+    }
+  };
+  if (!S.noMain) brain(crawler.update(dt, now, { players: list, hunting, red: H.red, lights, flares: fl }));
+  for (const ex of extras) brain(ex.c.update(dt, now, { players: list, hunting: true, red: false, lights, flares: fl }));
   // everyone caught (and someone was playing)? new night soon
-  const playing = list.length;
-  if (playing && !H.restartAt && list.every((p) => p.ghost)) H.restartAt = now + RESTART_SECS * 1000;
+  const real = list.filter((p) => !p.mon);
+  if (real.length && !H.restartAt && real.every((p) => p.ghost)) H.restartAt = now + RESTART_SECS * 1000;
   if (S.rid !== H.rid) { S.rid = H.rid; newRound(); }
   if (now - H.lastW > 100) {
     H.lastW = now;
-    net.send({ t: 'w', rid: H.rid, el: +el.toFixed(2), red: H.red, bat: +bat.toFixed(1), hunt: hunting, m: crawler.snapshot() });
+    net.send({ t: 'w', rid: H.rid, el: +el.toFixed(2), red: H.red, bat: +bat.toFixed(1), hunt: hunting, m: S.noMain ? null : crawler.snapshot(), x: extras.map((e) => ({ id: e.id, ...e.c.snapshot() })) });
   }
 }
 
@@ -369,7 +417,7 @@ function spawnFlare(e) {
   SFX.flareLight(f.pos);
 }
 function throwFlare(h) {
-  if (S.flares <= 0 || S.ghost || !entered || D.driving) return;
+  if (S.flares <= 0 || S.ghost || !entered || D.driving || S.monster || adminPanel.open) return;
   S.flares--;
   S.flareCd = FLARE_RECHARGE;
   const p = h ? h.pos.clone() : camera.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, -0.2, 0));
@@ -448,6 +496,8 @@ function drawWrist() {
     const smell = S.hideT > 30;
     x.fillStyle = smell ? '#ff7050' : '#90c0ff';
     x.fillText(smell ? '👃 It smells you! MOVE!' : '🫣 Hidden (' + Math.floor(40 - S.hideT) + 's)', 22, 215);
+  } else if (S.monster) {
+    x.fillStyle = '#ff5060'; x.fillText('🦖 YOU ARE THE MONSTER', 22, 215);
   } else if (D.driving) {
     x.fillStyle = '#ffd21a'; x.fillText('🚗 TRIGGER gas · B = get out', 22, 215);
   } else if (D.near) {
@@ -510,6 +560,11 @@ addEventListener('keydown', (e) => {
   mover.keys[e.code] = true;
   if (!flat || e.repeat) return;
   if (e.code === 'KeyF') throwFlare(null);
+  if (S.admin) {
+    if (e.code === 'KeyP') adminPanel.toggle(headPos, headDir, true);
+    else if (adminPanel.open && e.key >= '1' && e.key <= '4') adminPanel.key(+e.key);
+    else if (adminPanel.open && (e.key === '[' || e.key === ']')) adminPanel.key(e.key);
+  }
   if (e.code === 'KeyE') { if (D.driving) exitCar(); else tryEnterCar(); }
   if (e.code === 'KeyH' && D.driving) honk();
 });
@@ -612,9 +667,12 @@ function driveTick(dt, now) {
   // run stuff over!
   const [fx, fz] = car.fwd(), sp = Math.abs(car.C.spd);
   const bx = car.C.x + fx * 1.3 * Math.sign(car.C.spd || 1), bz = car.C.z + fz * 1.3 * Math.sign(car.C.spd || 1);
-  if (sp > 3 && crawler.model.root.visible && crawler.C.stunT <= 0) {
-    const c = crawler.C.vis;
-    if (Math.hypot(c.x - bx, c.z - bz) < 2.1 && Math.abs(c.y) < 1.5) emit({ k: 'splat', x: c.x, y: c.y, z: c.z, by: myId || 'me' });
+  if (sp > 3) for (const m of allMonsters()) {
+    const c = m.C.vis;
+    if (m.C.stunT <= 0 && Math.hypot(c.x - bx, c.z - bz) < 2.1 && Math.abs(c.y) < 1.5) {
+      m.stun(8);   // only for the one hit; the others keep chasing
+      emit({ k: 'splat', x: c.x, y: c.y, z: c.z, by: myId || 'me' });
+    }
   }
   for (const f of friends.list.values()) {
     if (f.ghost || f.menu) continue;
@@ -632,6 +690,64 @@ function carShow(dt, now) {
   D.near = entered && !D.driving && !S.ghost && Math.hypot(headPos.x - car.C.x, headPos.z - car.C.z) < 3.2;
   D.tumbleT = Math.max(0, D.tumbleT - dt);
   SFX.engine({ x: car.C.x, z: car.C.z }, car.C.spd, !!car.C.driver);
+}
+
+// ---------- 👑 admin (only you, the owner) ----------
+const adminCtx = {
+  S,
+  toggleBoost() { S.boost = !S.boost; adminPanel.say(S.boost ? '🚀 Zoom!' : 'Boost off'); },
+  spawnCar() {
+    const fw = camera.getWorldDirection(new THREE.Vector3()); fw.y = 0; fw.normalize();
+    const x = Math.max(-HALF + 4, Math.min(HALF - 4, headPos.x + fw.x * 6)), z = Math.max(-HALF + 4, Math.min(HALF - 4, headPos.z + fw.z * 6));
+    emit({ k: 'carspawn', x, z, yaw: Math.atan2(fw.x, fw.z) + Math.PI / 2 });
+    adminPanel.say('🚗 Car spawned!');
+  },
+  spawnMonster() {
+    const fw = camera.getWorldDirection(new THREE.Vector3()); fw.y = 0; fw.normalize();
+    const x = Math.max(-HALF + 4, Math.min(HALF - 4, headPos.x + fw.x * 22)), z = Math.max(-HALF + 4, Math.min(HALF - 4, headPos.z + fw.z * 22));
+    if (S.noMain) emit({ k: 'spawnmon', main: 1, x, z });
+    else if (extras.length >= 4) { adminPanel.say('Max 4 extra monsters'); return; }
+    else emit({ k: 'spawnmon', id: 'x' + Date.now(), x, z });
+    adminPanel.say('😈 Monster spawned!');
+  },
+  removeMonsters() { emit({ k: 'rmmon' }); adminPanel.say('🧹 All monsters gone'); },
+  toggleMonster() {
+    S.monster = !S.monster;
+    if (S.monster) { exitCar(); say('🦖 You are the monster!'); }
+    adminPanel.say(S.monster ? '🦖 You are the monster! Catch your friend!' : 'Back to human');
+  },
+};
+const adminPanel = makeAdminPanel(scene, camera, adminCtx);
+checkAdmin().then((ok) => { S.admin = ok; if (ok) { hintEl.textContent = '👑 Admin mode is ON. Click your LEFT thumbstick to open the panel.'; console.log('admin on'); } });
+const shoveCd = new Map();
+function adminFrame(dt, now) {
+  mover.boost = (S.boost || S.monster) ? 1.6 : 1;
+  if (!S.admin || !entered) return;
+  adminPanel.update(headPos);
+  if (!flat) {
+    const L = hands.find((h) => h.side === 'left' && h.gp);
+    if (edge('stick', !!(L && L.gp.buttons[3] && L.gp.buttons[3].pressed))) adminPanel.toggle(headPos, headDir, false);
+    for (const h of hands) if (h.tracked) adminPanel.poke(h.i, h.pos);
+  }
+  // PUSH: only the admin can shove people. Swing a hand into your friend.
+  for (const f of friends.list.values()) {
+    if (f.ghost || f.menu || (shoveCd.get(f.id) || 0) > now) continue;
+    let from = null, sp = 0;
+    if (flat) { if (mover.keys.KeyX && f.headP.distanceTo(headPos) < 3) { from = headPos; sp = 5; } }
+    else for (const h of hands) { if (h.tracked && h.vel.length() > 1.4 && h.pos.distanceTo(_cv.set(f.headP.x, f.headP.y - 0.3, f.headP.z)) < 0.55) { from = h.pos; sp = h.vel.length(); break; } }
+    if (!from) continue;
+    shoveCd.set(f.id, now + 1500);
+    const dx = f.headP.x - from.x, dz = f.headP.z - from.z, d = Math.hypot(dx, dz) || 1, k = Math.min(9, 3 + sp * 1.2);
+    emit({ k: 'shove', who: f.id, vx: dx / d * k, vz: dz / d * k });
+  }
+  // MONSTER MODE: touch your friend and they're caught
+  if (S.monster) for (const f of friends.list.values()) {
+    if (f.ghost || f.menu || (shoveCd.get('c' + f.id) || 0) > now) continue;
+    if (Math.hypot(f.headP.x - headPos.x, f.headP.z - headPos.z) < 1.5 && Math.abs(f.headP.y - headPos.y) < 1.8) {
+      shoveCd.set('c' + f.id, now + 3000);
+      emit({ k: 'catch', who: f.id });
+    }
+  }
 }
 
 // ---------- main loop ----------
@@ -700,14 +816,16 @@ function frame(now) {
   if (on && !S.red && bat < 12) on = Math.sin(now / 37) + Math.sin(now / 91) > -0.6 - bat / 12;
   // your lamp stutters when it is close
   if (on && crawler.model.root.visible && crawler.C.vis.distanceTo(headPos) < 14 && Math.random() < 0.12) on = false;
+  if (S.monster) on = false;   // monsters don't need a lamp
   S.lightOn = on;
   headlight.intensity = on ? (S.red ? 28 : 40) : 0;
   headlight.color.setHex(S.red ? 0xffb0a0 : 0xfff0d0);
 
   // the world
   const t = now / 1000;
-  const cDist = crawler.C.vis.distanceTo(headPos);
-  const dread = crawler.model.root.visible ? Math.max(0, Math.min(1, 1 - (cDist - 6) / 22)) : 0;
+  let cDist = 999, cNear = crawler.C.vis;
+  for (const m of allMonsters()) { const d = m.C.vis.distanceTo(headPos); if (d < cDist) { cDist = d; cNear = m.C.vis; } }
+  const dread = cDist < 999 ? Math.max(0, Math.min(1, 1 - (cDist - 6) / 22)) : 0;
   city.update(dt, t, headPos, S.red, dread);
   if (entered) creepy.update(dt, { head: headPos, dir: headDir, hunting: S.hunting, crawlerDist: cDist, ghost: S.ghost });
   sky.update(dt, t, headPos, S.red);
@@ -722,9 +840,11 @@ function frame(now) {
 
   // the Crawler
   carShow(dt, now);
-  crawler.show(dt, headPos, (p, front) => { if (p.distanceTo(headPos) < 45) SFX.step(p, front); });
-  const cp = crawler.C.vis, dist = cp.distanceTo(headPos);
-  SFX.tick(dt, cp, Math.max(0, Math.min(1, 1 - (dist - 4) / 26)), S.hunting, crawler.model.root.visible);
+  adminFrame(dt, now);
+  const stepFx = (p, front) => { if (p.distanceTo(headPos) < 45) SFX.step(p, front); };
+  crawler.show(dt, headPos, stepFx);
+  for (const ex of extras) ex.c.show(dt, headPos, stepFx);
+  SFX.tick(dt, cNear, Math.max(0, Math.min(1, 1 - (cDist - 4) / 26)), S.hunting || extras.length > 0, cDist < 999);
 
   // friends
   friends.update(dt, headPos);
@@ -747,7 +867,7 @@ function frame(now) {
     const Rh = hands[1].tracked ? hands[1].pos : headPos.clone().add(new THREE.Vector3(0.2, -0.45, -0.1));
     const r3 = (v) => [+v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3)];
     net.send({ t: 'p', id: myId, n: myName, h: [...r3(headPos), ...headQ.toArray().map((v) => +v.toFixed(4))], l: r3(L), r: r3(Rh),
-      g: S.ghost ? 1 : 0, tb: D.tumbleT > 0 ? 1 : 0, lt: S.lightOn ? 1 : 0, hd: S.hideZone ? 1 : 0, ht: +S.hideT.toFixed(1), m: entered ? 0 : 1 });
+      g: S.ghost ? 1 : 0, mo: S.monster ? 1 : 0, tb: D.tumbleT > 0 ? 1 : 0, lt: S.lightOn ? 1 : 0, hd: S.hideZone ? 1 : 0, ht: +S.hideT.toFixed(1), m: entered ? 0 : 1 });
   }
 
   checkSecrets(dt, headDir, handPts);
@@ -833,4 +953,4 @@ setStatus();
 renderer.setAnimationLoop(frame);
 
 // test hooks
-window.__city = { car, D, tryEnterCar, exitCar, S, H, crawler, mover, friends, net, rig, camera, scene, renderer, throwFlare, say, emit, hideZoneAt, flares };
+window.__city = { adminPanel, adminCtx, extras, car, D, tryEnterCar, exitCar, S, H, crawler, mover, friends, net, rig, camera, scene, renderer, throwFlare, say, emit, hideZoneAt, flares };
