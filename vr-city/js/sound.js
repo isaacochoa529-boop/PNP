@@ -357,3 +357,44 @@ export function slam(pos) {
 }
 // a quiet low "la... la..." that comes from very far away (it's out there somewhere)
 export function farSing(pos) { sing(pos); }
+
+// ---------- the goofy car ----------
+export function honk(laLa = false) {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  if (laLa) { [659, 587, 523].forEach((f, i) => { tone(master, t + i * 0.22, 0.2, f, f, 0.25, 'square'); tone(master, t + i * 0.22, 0.2, f * 1.26, f * 1.26, 0.15, 'square'); }); return; }
+  tone(master, t, 0.35, 392, 380, 0.3, 'square'); tone(master, t, 0.35, 494, 480, 0.2, 'square');
+}
+export function splat(pos) {
+  if (!ctx) return;
+  const p = spot(pos, 6, 0.8), t = ctx.currentTime;
+  noise(p, t, 0.35, 700, 0.9);
+  tone(p, t, 0.25, 220, 60, 0.6);
+  const o = tone(p, t + 0.15, 0.6, 200, 200, 0.35, 'sine');   // boiiing
+  o.frequency.setValueAtTime(200, t + 0.15); o.frequency.exponentialRampToValueAtTime(900, t + 0.35); o.frequency.exponentialRampToValueAtTime(300, t + 0.7);
+}
+export function bonk() {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  tone(master, t, 0.12, 900, 300, 0.5, 'square');
+  const o = tone(master, t + 0.1, 1.0, 400, 400, 0.3, 'sine');   // slide whistle up: WHEEE
+  o.frequency.setValueAtTime(400, t + 0.1); o.frequency.exponentialRampToValueAtTime(1800, t + 1.0);
+}
+export function crash() { if (!ctx) return; const t = ctx.currentTime; noise(master, t, 0.4, 1500, 0.6); tone(master, t, 0.3, 100, 40, 0.5); }
+// engine hum: call every frame with the car position and speed
+let eng = null;
+export function engine(pos, speed, on) {
+  if (!ctx) return;
+  if (!eng) {
+    const o = ctx.createOscillator(), o2 = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+    o.type = 'sawtooth'; o2.type = 'square'; f.type = 'lowpass'; f.frequency.value = 500; g.gain.value = 0;
+    const p = ctx.createPanner(); p.panningModel = 'HRTF'; p.refDistance = 4; p.rolloffFactor = 1.2;
+    o.connect(f); o2.connect(f); f.connect(g); g.connect(p); p.connect(master);
+    o.start(); o2.start();
+    eng = { o, o2, g, p };
+  }
+  const t = ctx.currentTime, s = Math.abs(speed);
+  eng.o.frequency.setTargetAtTime(38 + s * 6, t, 0.1); eng.o2.frequency.setTargetAtTime(19 + s * 3, t, 0.1);
+  eng.g.gain.setTargetAtTime(on ? 0.12 + Math.min(0.15, s * 0.012) : 0, t, 0.15);
+  if (eng.p.positionX) { eng.p.positionX.setTargetAtTime(pos.x, t, 0.05); eng.p.positionY.setTargetAtTime(0.8, t, 0.05); eng.p.positionZ.setTargetAtTime(pos.z, t, 0.05); }
+}

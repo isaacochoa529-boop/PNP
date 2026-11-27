@@ -234,6 +234,13 @@ export function makeCrawler(scene, hooks = {}) {
   scene.add(root);
   const eyeLight = new THREE.PointLight(0xff1a2a, 0, 9, 2);
   scene.add(eyeLight);
+  // dizzy stars that circle its head when it gets run over
+  const stars = new THREE.Group();
+  const starM = new THREE.MeshBasicMaterial({ color: 0xffe040 });
+  const starG = new THREE.OctahedronGeometry(0.09, 0);
+  for (let i = 0; i < 5; i++) { const m = new THREE.Mesh(starG, starM); m.position.set(Math.cos(i / 5 * 6.28) * 0.55, Math.sin(i * 2) * 0.08, Math.sin(i / 5 * 6.28) * 0.55); stars.add(m); }
+  stars.visible = false;
+  scene.add(stars);
 
   const C = {
     pos: new THREE.Vector3(), vis: new THREE.Vector3(), vy: 0,
@@ -242,7 +249,7 @@ export function makeCrawler(scene, hooks = {}) {
     singT: 10, scaredT: 0, flee: new THREE.Vector2(), lastSeen: -1e9, lastSeenPos: new THREE.Vector3(),
     stalkT: 20, stalkWho: null, lungeT: 0, lungeCd: 0, rearT: 0, roarCd: 0,
     stuckT: 0, stuckFrom: new THREE.Vector3(), detourT: 0, detour: new THREE.Vector2(),
-    climbing: false, entering: null, exiting: null, sniffT: 0, jaw: 0, singFx: 0,
+    climbing: false, entering: null, exiting: null, sniffT: 0, jaw: 0, singFx: 0, stunT: 0, squash: 0, hostStun: false,
   };
   const R = 0.45;   // body radius
 
@@ -302,6 +309,13 @@ export function makeCrawler(scene, hooks = {}) {
   // Host only. world = { players:[{id,pos,dir,hidden,hideT,ghost}], hunting, red, lights:[{pos,dir,on}], flares:[{x,z}] }
   function update(dt, now, world) {
     const ev = [];
+    C.hostStun = true;
+    // squished flat by a car: lies there dizzy, then pops back up and runs off
+    if (C.stunT > 0) {
+      C.stunT -= dt; C.spd = 0; C.lungeT = 0;
+      if (C.stunT <= 0) { C.mode = 'wander'; C.goal.copy(onStreet()); C.scaredT = 2; C.flee.set(Math.sin(C.yaw), Math.cos(C.yaw)); ev.push({ k: 'pop', x: C.pos.x, y: C.pos.y, z: C.pos.z }); }
+      return ev;
+    }
     C.scaredT = Math.max(0, C.scaredT - dt);
     C.lungeT = Math.max(0, C.lungeT - dt);
     C.lungeCd = Math.max(0, C.lungeCd - dt);
@@ -479,6 +493,16 @@ export function makeCrawler(scene, hooks = {}) {
     root.rotation.set(0, C.visYaw, 0);
     root.rotateX(C.visPitch);
     if (C.climbing) root.position.y += 0.3;
+    // flat as a pancake 🥞 with dizzy stars
+    const flat = C.stunT > 0 ? 1 : 0;
+    C.squash += (flat - C.squash) * Math.min(1, dt * (flat ? 20 : 4));
+    root.scale.set(1.35 * (1 + C.squash * 0.5), 1.35 * (1 - C.squash * 0.86), 1.35 * (1 + C.squash * 0.3));
+    stars.visible = C.squash > 0.5;
+    if (stars.visible) {
+      stars.position.set(C.vis.x, C.vis.y + 0.6, C.vis.z);
+      stars.rotation.y += dt * 4;
+    }
+    if (C.stunT > 0 && !C.hostStun) C.stunT -= dt;
     lookAt = looker && looker.distanceTo(C.vis) < 25 ? looker : null;
     C.singFx = Math.max(0, C.singFx - dt);
     model.animate({ dt, spd: C.climbing ? 2 : C.spd, hunting: C.mode === 'hunt', lookAt, rear: C.rearT > 0 ? 1 : 0,
@@ -488,15 +512,16 @@ export function makeCrawler(scene, hooks = {}) {
     eyeLight.intensity = root.visible ? (hunting ? 2.6 : 1.0) : 0;
   }
   function sang() { C.singFx = 1.1; }
+  function stun(secs) { C.stunT = secs; C.climbing = false; C.pitch = 0; }
 
   function snapshot() {
-    return { x: +C.pos.x.toFixed(2), y: +C.pos.y.toFixed(2), z: +C.pos.z.toFixed(2), yaw: +C.yaw.toFixed(2), mode: C.mode, spd: +C.spd.toFixed(2), cl: C.climbing ? 1 : 0, r: C.rearT > 0 ? 1 : 0 };
+    return { x: +C.pos.x.toFixed(2), y: +C.pos.y.toFixed(2), z: +C.pos.z.toFixed(2), yaw: +C.yaw.toFixed(2), mode: C.mode, spd: +C.spd.toFixed(2), cl: C.climbing ? 1 : 0, r: C.rearT > 0 ? 1 : 0, st: +Math.max(0, C.stunT).toFixed(1) };
   }
   function applyRemote(m) {
     C.pos.set(m.x, m.y || 0, m.z);
-    C.yaw = m.yaw; C.mode = m.mode; C.spd = m.spd; C.climbing = !!m.cl; C.pitch = m.cl ? -Math.PI / 2 : 0; C.rearT = m.r ? 0.2 : 0;
+    C.yaw = m.yaw; C.mode = m.mode; C.spd = m.spd; C.climbing = !!m.cl; C.pitch = m.cl ? -Math.PI / 2 : 0; C.rearT = m.r ? 0.2 : 0; C.stunT = m.st || 0;
     if (!root.visible) { root.visible = true; C.vis.copy(C.pos); }
   }
 
-  return { reset, update, show, snapshot, applyRemote, sang, spawnSpot, C, model };
+  return { reset, update, show, snapshot, applyRemote, sang, stun, spawnSpot, C, model };
 }

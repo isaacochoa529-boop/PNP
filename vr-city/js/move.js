@@ -286,6 +286,12 @@ export function createMover({ rig, camera, renderer, onSlap, onLand }) {
     M.speed = Math.hypot(M.vel.x, M.vel.z);
   }
 
+  // just read the hands (used while you sit in the car)
+  M.handsOnly = (dt) => {
+    sample(dt); rig.updateMatrixWorld();
+    for (const h of hands) { if (!h.tracked) continue; rig.localToWorld(h.target.copy(h.local)); h.pos.copy(h.target); h.prev.copy(h.pos); h.last.copy(h.pos); h.stuck = false; h.ready = true; }
+    M.vel.set(0, 0, 0); M.velBuf.length = 0;
+  };
   M.hands = hands;
   M.step = step;
   M.flatStep = flatStep;
