@@ -5,7 +5,7 @@
 // of the city, and chunks far away in the fog are switched off. That keeps it smooth on Quest.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeTextures, graffiti, signTex } from './textures.js';
+import { makeTextures, graffiti, signTex, handprints } from './textures.js';
 
 export const PITCH = 52;                            // distance between block centres
 export const HALF = 3 * PITCH + 30;                 // city edge (7 x 7 blocks)
@@ -153,6 +153,8 @@ function makeMaterials() {
     yellow: lam({ color: 0x8a7a2a }),
     red: lam({ color: 0x5a1010 }),
     cloth: lam({ color: 0x3a2030 }),
+    porcelain: lam({ color: 0xc8c0b4 }),
+    hairDoll: lam({ color: 0x2a1a0e }),
     awning: lam({ color: 0x4a1a1a, side: THREE.DoubleSide }),
     glass: new THREE.MeshPhongMaterial({ color: 0x0a0e14, specular: 0x1a2230, shininess: 30 }),
     lit: new THREE.MeshBasicMaterial({ color: 0xc07a30 }),
@@ -256,7 +258,39 @@ const GRAFFITI_TEXT = [
   ['KEEP YOUR LIGHT ON', '#30a0c0'], ['IT CLIMBS', '#b0101a'], ['HIDE. MOVE. HIDE.', '#c8c8c8'],
   ['IT SMELLS YOU', '#b0101a'], ['WE WERE HERE', '#60c060'], ['RUN', '#b0101a'], ['THEY SING AT NIGHT', '#a050c0'],
 ];
-let graffitiMats = [];
+let graffitiMats = [], creepyMats = [], handMats = [];
+const CREEPY_TEXT = ['I SEE YOU', "IT'S INSIDE", 'DONT LET IT SING', 'COUNT TO TEN', 'LA LA LA LA LA', 'BEHIND YOU', 'IT HEARD YOU', 'NO ONE LEFT'];
+
+// a broken porcelain doll: cracked white face, black empty eyes, torn dress. Sometimes the head fell off.
+function doll(x, y, z, rotY) {
+  const c = Math.cos(rotY), s = Math.sin(rotY), at = (lx, lz) => [x + lx * c + lz * s, z - lx * s + lz * c];
+  const headOff = R() < 0.35;
+  geo(M.cloth, new THREE.ConeGeometry(0.12, 0.26, 8), x, y + 0.13, z);
+  geo(M.porcelain, SPH, x, y + 0.29, z, 0.09, 0.1, 0.08);
+  for (const sd of [-1, 1]) { const [ax, az] = at(sd * 0.1, 0.02); box(M.porcelain, ax, y + 0.18, az, 0.03, 0.14, 0.03, [0, rotY, sd * 0.5]); }
+  for (const sd of [-1, 1]) { const [lx, lz] = at(sd * 0.05, 0.1); box(M.porcelain, lx, y + 0.02, lz, 0.035, 0.035, 0.16, [0, rotY, 0]); }
+  let [hx, hz] = at(0, 0), hy = y + 0.42;
+  if (headOff) { [hx, hz] = at(0.25, 0.15); hy = y + 0.06; }
+  geo(M.porcelain, SPH, hx, hy, hz, 0.12, 0.12, 0.12);
+  geo(M.hairDoll, SPH, hx, hy + 0.03, hz, 0.13, 0.1, 0.13);
+  for (const sd of [-1, 1]) { const [ex, ez] = at(sd * 0.035, 0.11); box(M.black, ex + (hx - x), hy + 0.01, ez + (hz - z), 0.025, 0.03, 0.01, [0, rotY, 0]); }
+}
+// scary stuff inside a hiding building: handprints + writing on an inside wall, and a doll on the floor
+function creepyInside(b, door) {
+  const face = pick(facesBut(door));
+  const o = T_W + 0.03;
+  const inner = { n: [null, b.z0 + o, 's'], s: [null, b.z1 - o, 'n'], w: [b.x0 + o, null, 'e'], e: [b.x1 - o, null, 'w'] }[face];
+  const alongX = face === 'n' || face === 's';
+  const lo = (alongX ? b.x0 : b.z0) + 2, hi = (alongX ? b.x1 : b.z1) - 2;
+  if (hi > lo) {
+    const a = rr(lo, hi);
+    const cx = alongX ? a : inner[0], cz = alongX ? inner[1] : a;
+    if (R() < 0.75) decal(pick(handMats), cx, rr(0.9, 1.6), cz, 1.3, 1.3, inner[2]);
+    const a2 = rr(lo, hi);
+    if (R() < 0.6) decal(pick(creepyMats), alongX ? a2 : inner[0], rr(1.4, 2.0), alongX ? inner[1] : a2, 2.6, 1.0, inner[2]);
+  }
+  if (R() < 0.55) doll(rr(b.x0 + 1.2, b.x1 - 1.2), 0.15, rr(b.z0 + 1.2, b.z1 - 1.2), R() * 6.28);
+}
 
 // furniture inside hide buildings (low colliders so hands bump them)
 function bed(x, z, rotY) {
@@ -354,13 +388,14 @@ function house(b, door, wm) {
     box(M.wood, (door === 'w' ? b.x0 : door === 'e' ? b.x1 : at) + ox, 1.35, (door === 'n' ? b.z0 : door === 's' ? b.z1 : at) + oz, 0.12, 2.7, 0.12, null, true, 'wood');
   }
   // inside: wood floor, bed, table, shelf, rug
-  boxC(M.planks, b.x0 + T_W, b.x1 - T_W, 0, 0.06, b.z0 + T_W, b.z1 - T_W, true, 'floor');
+  boxC(M.planks, b.x0 + T_W, b.x1 - T_W, 0.1, 0.15, b.z0 + T_W, b.z1 - T_W, true, 'floor');
   const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
   const far = { n: [0, 1], s: [0, -1], w: [1, 0], e: [-1, 0] }[door];
   bed(cx + far[0] * ((b.x1 - b.x0) / 2 - 1.5) + (far[0] ? 0 : 1.5), cz + far[1] * ((b.z1 - b.z0) / 2 - 1.5) + (far[1] ? 0 : 1.5), !far[1]);
   table(cx - (far[1] ? 2 : 0), cz - (far[0] ? 2 : 0));
   shelf(b.x0 + 0.6, cz + 1.5, false);
   box(M.cloth, cx, 0.07, cz, 2.2, 0.01, 1.6);
+  creepyInside(b, door);
   return addHideZone(b, h, dp, 'house');
 }
 
@@ -415,10 +450,11 @@ function shop(b, door, wm, n) {
   const sm = lam({ map: signTex([{ text: SIGNS[n % SIGNS.length], y: 128, size: 120 }], '#16120e', '#c8b070') });
   decal(sm, alongX ? at : base + out * 0.05, 3.75, alongX ? base + out * 0.05 : at, Math.min(6, sw + 1), 0.8, door);
   // inside: shelves + counter
-  boxC(M.concrete, b.x0 + T_W, b.x1 - T_W, 0, 0.05, b.z0 + T_W, b.z1 - T_W, true, 'floor');
+  boxC(M.concrete, b.x0 + T_W, b.x1 - T_W, 0.1, 0.15, b.z0 + T_W, b.z1 - T_W, true, 'floor');
   const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
   for (let i = -1; i <= 1; i++) shelf(cx + (alongX ? i * 2.5 : 0), cz + (alongX ? 0 : i * 2.5), alongX, 1.5);
   const dp = doorPoints(door, dAt, b);
+  creepyInside(b, door);
   return addHideZone(b, h, dp, 'shop');
 }
 
@@ -430,7 +466,7 @@ function warehouse(b, door, wm) {
   box(M.rust, alongX ? at : base, 2.9, alongX ? base : at, alongX ? W + 0.2 : 0.1, 1.0, alongX ? 0.1 : W + 0.2);
   windowsOn(b, facesBut(door), 1, 4, 1.6, 0.8, 4, null, 0.0);
   flatRoof(b, h, M.metal);
-  boxC(M.concrete, b.x0 + T_W, b.x1 - T_W, 0, 0.05, b.z0 + T_W, b.z1 - T_W, true, 'floor');
+  boxC(M.concrete, b.x0 + T_W, b.x1 - T_W, 0.1, 0.15, b.z0 + T_W, b.z1 - T_W, true, 'floor');
   for (let i = 0; i < 9; i++) {
     const x = rr(b.x0 + 1.5, b.x1 - 1.5), z = rr(b.z0 + 1.5, b.z1 - 1.5);
     const dp = doorPoints(door, at, b);
@@ -438,6 +474,7 @@ function warehouse(b, door, wm) {
     crate(x, 0.05, z, rr(0.7, 1.2));
     if (R() < 0.4) crate(x, 1.05, z, 0.7);
   }
+  creepyInside(b, door);
   return addHideZone(b, h, doorPoints(door, at, b), 'warehouse');
 }
 
@@ -454,7 +491,7 @@ function church(b, door, isFirst) {
   geo(M.roof, CONE4, tx, h + 9, tz, 3.6, 6, 3.6, [0, Math.PI / 4, 0]);
   box(M.dark, tx, h + 13.2, tz, 0.15, 1.6, 0.15); box(M.dark, tx, h + 13.5, tz, 0.9, 0.15, 0.15);
   // inside: pews, altar, candles
-  boxC(M.planks, b.x0 + T_W, b.x1 - T_W, 0, 0.05, b.z0 + T_W, b.z1 - T_W, true, 'floor');
+  boxC(M.planks, b.x0 + T_W, b.x1 - T_W, 0.1, 0.15, b.z0 + T_W, b.z1 - T_W, true, 'floor');
   const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2, dir = { n: [0, 1], s: [0, -1], w: [1, 0], e: [-1, 0] }[door];
   for (let i = 0; i < 4; i++) for (const s of [-1, 1]) {
     const px = cx + (dir[0] ? dir[0] * (i * 2 - 3) : s * 1.8), pz = cz + (dir[1] ? dir[1] * (i * 2 - 3) : s * 1.8);
@@ -468,6 +505,7 @@ function church(b, door, isFirst) {
     box(M.white, x, 1.15, z, 0.06, 0.2, 0.06); box(M.candle, x, 1.28, z, 0.03, 0.05, 0.03);
   }
   if (isFirst) secretSpots.musicBox = new THREE.Vector3(ax, 1.15, az);
+  creepyInside(b, door);
   return addHideZone(b, h, doorPoints(door, at, b), 'church');
 }
 
@@ -533,6 +571,8 @@ function gasStation(cx, cz) {
   box(M.pole, cx - 9, 3, cz - 6, 0.3, 6, 0.3, null, true, 'metal');
   decal(sm, cx - 9, 6.5, cz - 6.2, 3, 1.5, 'n');
   decal(sm, cx - 9, 6.5, cz - 5.8, 3, 1.5, 's');
+  doll(cx + 5.5, 5.0, cz + 3.5, 2.6);   // someone left a doll up on the canopy...
+  secretSpots.roofDoll = new THREE.Vector3(cx + 5.5, 5.3, cz + 3.5);
   const b = { x0: cx - 4, x1: cx + 4, z0: cz + 8, z1: cz + 14 };
   return shop(b, 'n', M.plaster3, 0);
 }
@@ -689,6 +729,9 @@ function teddy(x, y, z) {
 export function buildCity(scene) {
   R = rng(20251127);
   makeMaterials();
+  const tMat = (tex) => new THREE.MeshLambertMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+  creepyMats = CREEPY_TEXT.map((t, i) => tMat(graffiti(t, '#6a0408', 70 + i)));
+  handMats = [0, 1, 2].map((i) => tMat(handprints(90 + i)));
   graffitiMats = GRAFFITI_TEXT.map(([t, c], i) => new THREE.MeshLambertMaterial({ map: graffiti(t, c, 40 + i), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
 
   // ground (asphalt everywhere) and the city edge
@@ -767,6 +810,7 @@ export function buildCity(scene) {
           void zone;
           // graffiti on a wall that's not the door
           if (kind !== 'ruin' && R() < 0.55) graffitiOn(pick(facesBut(door)), b, rr(1.2, 2.2), pick(graffitiMats));
+          if (kind !== 'ruin' && R() < 0.3) graffitiOn(pick(facesBut(door)), b, rr(0.8, 1.6), pick(handMats));
           // stuff around the building
           if (R() < 0.5) dumpster(b.x0 - 0.9 > cx - 21 ? b.x0 - 1 : b.x1 + 1, (b.z0 + b.z1) / 2 + rr(-2, 2), false);
           if (R() < 0.3) barrel(rr(b.x0, b.x1), b.z1 + 1.2 < cz + 21 ? b.z1 + 1.2 : b.z0 - 1.2, R() < 0.3);
@@ -853,10 +897,12 @@ export function buildCity(scene) {
 
   // flicker the lamps in three groups
   const flick = [1, 1, 1];
-  function update(dt, t, camPos, red) {
+  function update(dt, t, camPos, red, dread = 0) {
     for (let g = 0; g < 3; g++) {
       const n = Math.sin(t * (7 + g * 3)) * Math.sin(t * (2.3 + g)) + Math.sin(t * 0.7 + g * 2);
       flick[g] = n > 1.2 ? 0.15 : n > 1.0 ? 0.5 : 1;
+      // when it is close, the lamps sputter and die
+      if (dread > 0.15) flick[g] = Math.random() < dread * 1.3 ? 0 : flick[g] * (Math.random() < 0.5 ? 0.3 : 1);
       const c = red ? 0xff3030 : 0xffd9a0;
       M.bulbs[g].color.setHex(c).multiplyScalar(flick[g]);
       M.shafts[g].color.setHex(c);

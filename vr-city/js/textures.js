@@ -282,3 +282,24 @@ export function signTex(lines, bg = '#1c2a22', fg = '#d8d2b8') {
     }
   }, 31);
 }
+
+// Bloody handprints smeared on a wall (transparent background)
+export function handprints(seed = 9) {
+  return canvasTex(256, 256, (x, w, h, R) => {
+    x.clearRect(0, 0, w, h);
+    const n = 3 + Math.floor(R() * 4);
+    for (let i = 0; i < n; i++) {
+      const cx = 30 + R() * (w - 60), cy = 40 + R() * (h - 80), s = 0.7 + R() * 0.5, rot = (R() - 0.5) * 1.2;
+      x.save(); x.translate(cx, cy); x.rotate(rot); x.scale(s, s);
+      x.fillStyle = `rgba(${90 + R() * 40},5,8,${0.75 + R() * 0.2})`;
+      x.beginPath(); x.ellipse(0, 10, 16, 20, 0, 0, 7); x.fill();   // palm
+      for (let f = 0; f < 4; f++) { x.beginPath(); x.ellipse(-12 + f * 8, -18 - (f === 1 || f === 2 ? 6 : 0), 3.5, 12, (f - 1.5) * 0.12, 0, 7); x.fill(); }
+      x.beginPath(); x.ellipse(18, 4, 4, 10, 0.9, 0, 7); x.fill();   // thumb
+      // a smear dragging down
+      const g = x.createLinearGradient(0, 20, 0, 90);
+      g.addColorStop(0, 'rgba(110,5,8,0.6)'); g.addColorStop(1, 'rgba(110,5,8,0)');
+      x.fillStyle = g; x.fillRect(-12, 20, 24, 70);
+      x.restore();
+    }
+  }, seed);
+}
